@@ -132,7 +132,7 @@ import ContextTranscript
     }
     #expect(view.transcript.string.contains(String(repeating: "x", count: 40_000)))
     view.update(items: [TranscriptItem(id: "new", kind: "user", text: "Другой чат")], conversationID: "second", followOutput: true)
-    #expect(view.transcript.string == "Ты\nДругой чат\n\n")
+    #expect(view.transcript.string == "Ты\nДругой чат\n" + L10n.text("Копировать", "Copy") + "\n\n")
 }
 
 @Test @MainActor func expandingActionsDoesNotLoseFollowingMessages() {
@@ -245,4 +245,47 @@ import ContextTranscript
         view.cacheDisplay(in: view.bounds, to: bitmap)
         try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path + ".timing.png"))
     }
+}
+
+@Test @MainActor func copyMessageWritesOnlyItsFullSourceTextAndTracksUpdates() throws {
+    let pasteboard = NSPasteboard.withUniqueName()
+    defer { pasteboard.releaseGlobally() }
+    let view = TranscriptScrollView(pasteboard: pasteboard)
+    view.frame = NSRect(x: 0, y: 0, width: 600, height: 500)
+    let body = "  Полный ответ 👋\n\n**Текст** и [ссылка](https://example.com)\n```swift\nlet n = 1\n```\n"
+    var items = [TranscriptItem(id: "u", kind: "user", text: "Мой вопрос"),
+                 TranscriptItem(id: "comment", kind: "assistant", text: "Проверяю"),
+                 TranscriptItem(id: "tool", kind: "activity", text: "Служебный вывод"),
+                 TranscriptItem(id: "answer", kind: "assistant", text: body,
+                    timing: ResponseTiming(startedAt: Date(timeIntervalSince1970: 100), completedAt: Date(timeIntervalSince1970: 167)))]
+    view.update(items: items, conversationID: "copy", followOutput: false)
+    let storage = try #require(view.transcript.textStorage)
+    var copyLinks: [String] = []
+    storage.enumerateAttribute(.link, in: NSRange(location: 0, length: storage.length)) { value, _, _ in
+        if let value = value as? String, value.hasPrefix("contextdesk-copy:") { copyLinks.append(value) }
+    }
+    #expect(copyLinks == ["contextdesk-copy:u", "contextdesk-copy:comment", "contextdesk-copy:answer"])
+    _ = view.textView(view.transcript, clickedOnLink: "contextdesk-metrics:answer", at: 0)
+    _ = view.textView(view.transcript, clickedOnLink: "contextdesk-copy:answer", at: 0)
+    #expect(pasteboard.string(forType: .string) == body)
+    _ = view.textView(view.transcript, clickedOnLink: "contextdesk-copy:u", at: 0)
+    #expect(pasteboard.string(forType: .string) == "Мой вопрос")
+    items[3].text += "Продолжение"
+    view.update(items: items, conversationID: "copy", followOutput: false)
+    _ = view.textView(view.transcript, clickedOnLink: "contextdesk-copy:answer", at: 0)
+    #expect(pasteboard.string(forType: .string) == body + "Продолжение")
+    let changes = pasteboard.changeCount
+    _ = view.textView(view.transcript, clickedOnLink: "contextdesk-copy:tool", at: 0)
+    _ = view.textView(view.transcript, clickedOnLink: "contextdesk-copy:unknown", at: 0)
+    #expect(pasteboard.changeCount == changes)
+    if let path = ProcessInfo.processInfo.environment["CONTEXTDESK_RENDER_PATH"] {
+        view.drawsBackground = true; view.backgroundColor = .windowBackgroundColor
+        view.layoutSubtreeIfNeeded()
+        let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path + ".copy.png"))
+    }
+    view.update(items: [], conversationID: "other", followOutput: false)
+    _ = view.textView(view.transcript, clickedOnLink: "contextdesk-copy:answer", at: 0)
+    #expect(pasteboard.changeCount == changes)
 }

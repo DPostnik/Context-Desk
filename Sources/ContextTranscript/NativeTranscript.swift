@@ -32,6 +32,7 @@ public struct NativeTranscript: NSViewRepresentable {
 
 @MainActor public final class TranscriptScrollView: WidthBoundTextScrollView, NSTextViewDelegate {
     public let transcript: NSTextView
+    private let pasteboard: NSPasteboard
     private var previous: [TranscriptItem] = []
     private var ranges: [NSRange] = []
     private var conversationID: String?
@@ -48,7 +49,8 @@ public struct NativeTranscript: NSViewRepresentable {
     public private(set) var editCount = 0
     public let workingIndicator = NSHostingView(rootView: ChatLoadingIndicator())
 
-    public init() {
+    public init(pasteboard: NSPasteboard = .general) {
+        self.pasteboard = pasteboard
         // TextKit 1's non-contiguous layout avoids laying out an entire long
         // transcript to display a small viewport.
         let storage = NSTextStorage(), manager = BubbleLayoutManager()
@@ -182,9 +184,13 @@ public struct NativeTranscript: NSViewRepresentable {
               let container = transcript.textContainer, contentSize.height > 0 else { return false }
         let range = ranges[index]
         let text = storage.string as NSString
-        // Trailing blank paragraphs are spacing, not part of the answer to read.
+        // Copy controls and trailing blank paragraphs are not part of the answer to read.
+        var bodyRange = range
+        storage.enumerateAttribute(.messageCopy, in: range) { value, copyRange, _ in
+            if value != nil { bodyRange.length = min(bodyRange.length, copyRange.location - range.location) }
+        }
         let lastContent = text.rangeOfCharacter(from: CharacterSet.whitespacesAndNewlines.inverted,
-                                               options: .backwards, range: range)
+                                               options: .backwards, range: bodyRange)
         guard lastContent.location != NSNotFound else { return false }
         let end = NSMaxRange(lastContent)
         manager.ensureLayout(for: container)
@@ -308,6 +314,15 @@ public struct NativeTranscript: NSViewRepresentable {
             result.append(isCode ? NSAttributedString(string: block, attributes: attributes)
                           : TranscriptLinks.render(block, attributes: attributes))
         }
+        if (item.kind == "user" || item.kind == "assistant"), !item.text.isEmpty {
+            if !result.string.hasSuffix("\n") { result.append(NSAttributedString(string: "\n")) }
+            result.append(NSAttributedString(string: L10n.text("Копировать", "Copy"), attributes: [
+                .font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor,
+                .link: "contextdesk-copy:" + item.id,
+                .toolTip: L10n.text("Скопировать полный текст сообщения", "Copy the full message text"),
+                .messageCopy: true
+            ]))
+        }
         result.append(NSAttributedString(string: "\n\n", attributes: [.font: NSFont.systemFont(ofSize: 14)]))
         applyMessageStyle(item, to: result, range: NSRange(location: 0, length: result.length))
         return result
@@ -335,6 +350,13 @@ public struct NativeTranscript: NSViewRepresentable {
             header.paragraphSpacing = outgoing ? 6 : 16
             text.addAttribute(.paragraphStyle, value: header, range: headerRange)
         }
+        text.enumerateAttribute(.messageCopy, in: range) { value, copyRange, _ in
+            guard value != nil else { return }
+            let footer = paragraph.mutableCopy() as! NSMutableParagraphStyle
+            footer.lineSpacing = 0
+            footer.paragraphSpacingBefore = 4
+            text.addAttribute(.paragraphStyle, value: footer, range: copyRange)
+        }
         // Leave the final empty paragraph outside the bubble as inter-message spacing.
         text.addAttribute(.messageBubble, value: item.id, range: NSRange(location: range.location, length: range.length - 1))
         text.addAttribute(.outgoingBubble, value: outgoing, range: NSRange(location: range.location, length: range.length - 1))
@@ -342,6 +364,15 @@ public struct NativeTranscript: NSViewRepresentable {
 
     public func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
         let value = (link as? URL)?.absoluteString ?? (link as? String) ?? ""
+        if value.hasPrefix("contextdesk-copy:") {
+            let id = String(value.dropFirst("contextdesk-copy:".count))
+            guard let item = previous.first(where: { $0.id == id && ($0.kind == "user" || $0.kind == "assistant") }),
+                  !item.text.isEmpty else { return true }
+            // Copy the source body only, never rendered headers, disclosures or adjacent messages.
+            pasteboard.clearContents()
+            pasteboard.setString(item.text, forType: .string)
+            return true
+        }
         if value.hasPrefix("contextdesk-metrics:") {
             let id = String(value.dropFirst("contextdesk-metrics:".count))
             guard let index = previous.firstIndex(where: { $0.id == id && $0.timing != nil }),
@@ -384,6 +415,7 @@ private final class TranscriptTextView: NSTextView {
 }
 
 private extension NSAttributedString.Key {
+    static let messageCopy = NSAttributedString.Key("ContextDeskMessageCopy")
     static let responseHeader = NSAttributedString.Key("ContextDeskResponseHeader")
     static let responseSeparator = NSAttributedString.Key("ContextDeskResponseSeparator")
     static let messageBubble = NSAttributedString.Key("ContextDeskMessageBubble")
