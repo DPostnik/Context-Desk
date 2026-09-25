@@ -85,8 +85,11 @@ import ContextTranscript
         TranscriptItem(id: "next", kind: "assistant", text: "Следующий ответ")]
     view.update(items: items, conversationID: "t", followOutput: false)
     #expect(view.transcript.string.components(separatedBy: "Codex\n").count - 1 == 2)
+    let rendered = view.transcript.string as NSString
+    #expect(rendered.range(of: timing.label()).location < rendered.range(of: "Начинаю проверку.").location)
+    #expect(view.transcript.string.components(separatedBy: timing.label()).count - 1 == 1)
     #expect(!view.transcript.string.contains(timing.tokens!.detail()))
-    _ = view.textView(view.transcript, clickedOnLink: "contextdesk-metrics:final", at: 0)
+    _ = view.textView(view.transcript, clickedOnLink: "contextdesk-metrics:a", at: 0)
     #expect(view.transcript.string.contains(timing.tokens!.detail()))
     _ = view.textView(view.transcript, clickedOnLink: "contextdesk-action:tool", at: 0)
     #expect(view.transcript.string.contains("Run checks"))
@@ -108,7 +111,7 @@ import ContextTranscript
         view.cacheDisplay(in: view.bounds, to: bitmap)
         try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path + ".details.png"))
     }
-    _ = view.textView(view.transcript, clickedOnLink: "contextdesk-metrics:final", at: 0)
+    _ = view.textView(view.transcript, clickedOnLink: "contextdesk-metrics:a", at: 0)
     #expect(!view.transcript.string.contains(timing.tokens!.detail()))
     #expect(view.transcript.string.contains("Следующий ответ — продолжение"))
 }

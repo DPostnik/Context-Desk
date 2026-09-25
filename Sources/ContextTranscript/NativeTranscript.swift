@@ -40,6 +40,8 @@ public struct NativeTranscript: NSViewRepresentable {
     private var wasWorking = false
     private var expandedActions: Set<String> = []
     private var expandedMetrics: Set<String> = []
+    private var copyFeedback: (id: String, succeeded: Bool)?
+    private var copyFeedbackTask: Task<Void, Never>?
     private var needsEndScroll = false
     private var unreadCompletionID: String?
     private var unreadResponseItemID: String?
@@ -106,6 +108,11 @@ public struct NativeTranscript: NSViewRepresentable {
         let switched = self.conversationID != conversationID
         if switched || finished { expandedActions.removeAll() }
         if switched { expandedMetrics.removeAll() }
+        if let feedback = copyFeedback,
+           switched || previous.first(where: { $0.id == feedback.id })?.text != items.first(where: { $0.id == feedback.id })?.text {
+            copyFeedbackTask?.cancel()
+            copyFeedback = nil
+        }
         let resumeFollowing = followOutput && !followed
         followed = followOutput
         guard switched || finished || items != previous else {
@@ -243,10 +250,12 @@ public struct NativeTranscript: NSViewRepresentable {
             // may omit phase, so fall back to its last non-commentary assistant item.
             let finalAnswer = active ? nil : (segment.last { $0.kind == "assistant" && $0.phase == "final_answer" && !$0.text.isEmpty }
                 ?? segment.last { $0.kind == "assistant" && $0.phase != "commentary" && !$0.text.isEmpty })
+            let responseTiming = segment.last(where: { $0.kind == "assistant" && $0.timing != nil })?.timing
             var inserted = false
             var showedAuthor = false
             for var item in segment {
                 if item.kind == "assistant" {
+                    item.timing = showedAuthor ? nil : responseTiming
                     item.showsAuthor = !showedAuthor
                     item.showsCopyControl = item.id == finalAnswer?.id
                     showedAuthor = true
@@ -323,17 +332,27 @@ public struct NativeTranscript: NSViewRepresentable {
         }
         if (item.kind == "user" || item.kind == "assistant"), item.showsCopyControl, !item.text.isEmpty {
             if !result.string.hasSuffix("\n") { result.append(NSAttributedString(string: "\n")) }
-            let description = L10n.text("Скопировать полный текст сообщения", "Copy the full message text")
+            let feedback = copyFeedback.flatMap { $0.id == item.id ? $0.succeeded : nil }
+            let feedbackText = feedback.map { $0 ? L10n.text("Скопировано", "Copied") : L10n.text("Не удалось скопировать", "Could not copy") }
+            let description = feedbackText ?? L10n.text("Скопировать полный текст сообщения", "Copy the full message text")
+            let color: NSColor = feedback.map { $0 ? .systemGreen : .systemRed } ?? .secondaryLabelColor
+            let symbol = feedback.map { $0 ? "checkmark" : "exclamationmark.circle" } ?? "doc.on.doc"
             let attachment = NSTextAttachment()
-            attachment.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: description)?
+            attachment.image = NSImage(systemSymbolName: symbol, accessibilityDescription: description)?
                 .withSymbolConfiguration(.init(pointSize: 14, weight: .regular)
-                    .applying(.init(paletteColors: [.secondaryLabelColor])))
+                    .applying(.init(paletteColors: [color])))
             attachment.bounds = NSRect(x: 0, y: -3, width: 18, height: 18)
             let icon = NSMutableAttributedString(attachment: attachment)
             icon.addAttributes([
                 .link: "contextdesk-copy:" + item.id, .toolTip: description, .messageCopy: true
             ], range: NSRange(location: 0, length: icon.length))
             result.append(icon)
+            if let feedbackText {
+                result.append(NSAttributedString(string: " " + feedbackText, attributes: [
+                    .font: NSFont.systemFont(ofSize: 11), .foregroundColor: color,
+                    .link: "contextdesk-copy:" + item.id, .messageCopy: true
+                ]))
+            }
         }
         result.append(NSAttributedString(string: "\n\n", attributes: [.font: NSFont.systemFont(ofSize: 14)]))
         applyMessageStyle(item, to: result, range: NSRange(location: 0, length: result.length))
@@ -374,6 +393,21 @@ public struct NativeTranscript: NSViewRepresentable {
         text.addAttribute(.outgoingBubble, value: outgoing, range: NSRange(location: range.location, length: range.length - 1))
     }
 
+    private func rerenderItem(id: String) {
+        guard let index = previous.firstIndex(where: { $0.id == id }), ranges.indices.contains(index),
+              let storage = transcript.textStorage else { return }
+        let origin = contentView.bounds.origin
+        let rendered = render(previous[index], expanded: expandedActions.contains(id))
+        let oldRange = ranges[index], delta = rendered.length - oldRange.length
+        storage.replaceCharacters(in: oldRange, with: rendered)
+        ranges[index].length = rendered.length
+        for next in (index + 1)..<ranges.count { ranges[next].location += delta }
+        editCount += 1
+        needsLayout = true
+        contentView.scroll(to: origin)
+        reflectScrolledClipView(contentView)
+    }
+
     public func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
         let value = (link as? URL)?.absoluteString ?? (link as? String) ?? ""
         if value.hasPrefix("contextdesk-copy:") {
@@ -382,7 +416,18 @@ public struct NativeTranscript: NSViewRepresentable {
                   item.showsCopyControl, !item.text.isEmpty else { return true }
             // Copy the source body only, never rendered headers, disclosures or adjacent messages.
             pasteboard.clearContents()
-            pasteboard.setString(item.text, forType: .string)
+            let succeeded = pasteboard.setString(item.text, forType: .string)
+            let previousID = copyFeedback?.id
+            copyFeedbackTask?.cancel()
+            copyFeedback = (id, succeeded)
+            if let previousID, previousID != id { rerenderItem(id: previousID) }
+            rerenderItem(id: id)
+            copyFeedbackTask = Task { [weak self] in
+                do { try await Task.sleep(for: .seconds(2)) } catch { return }
+                guard let self else { return }
+                self.copyFeedback = nil
+                self.rerenderItem(id: id)
+            }
             return true
         }
         if value.hasPrefix("contextdesk-metrics:") {

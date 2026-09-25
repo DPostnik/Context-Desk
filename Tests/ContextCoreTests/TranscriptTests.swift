@@ -274,7 +274,7 @@ import ContextTranscript
         icons += 1
     }
     #expect(icons == 2)
-    _ = view.textView(view.transcript, clickedOnLink: "contextdesk-metrics:answer", at: 0)
+    _ = view.textView(view.transcript, clickedOnLink: "contextdesk-metrics:comment", at: 0)
     _ = view.textView(view.transcript, clickedOnLink: "contextdesk-copy:answer", at: 0)
     #expect(pasteboard.string(forType: .string) == body)
     _ = view.textView(view.transcript, clickedOnLink: "contextdesk-copy:u", at: 0)
@@ -329,4 +329,32 @@ import ContextTranscript
     view.update(items: [TranscriptItem(id: "old1", kind: "assistant", text: "Старый прогресс"),
                        TranscriptItem(id: "old2", kind: "assistant", text: "Старый итог")], conversationID: "history", followOutput: false)
     #expect(try copyLinks() == ["contextdesk-copy:old2"])
+}
+
+@Test @MainActor func copyFeedbackConfirmsSuccessThenResetsWithoutChangingClipboard() async throws {
+    let pasteboard = NSPasteboard.withUniqueName()
+    defer { pasteboard.releaseGlobally() }
+    let view = TranscriptScrollView(pasteboard: pasteboard)
+    view.frame = NSRect(x: 0, y: 0, width: 500, height: 400)
+    let items = [TranscriptItem(id: "u", kind: "user", text: "Вопрос"),
+                 TranscriptItem(id: "a", kind: "assistant", text: "Ответ")]
+    view.update(items: items, conversationID: "t", followOutput: false)
+    let copied = L10n.text("Скопировано", "Copied")
+    _ = view.textView(view.transcript, clickedOnLink: "contextdesk-copy:a", at: 0)
+    #expect(view.transcript.string.contains(copied))
+    #expect(pasteboard.string(forType: .string) == "Ответ")
+    _ = view.textView(view.transcript, clickedOnLink: "contextdesk-copy:u", at: 0)
+    #expect(view.transcript.string.components(separatedBy: copied).count - 1 == 1)
+    #expect(pasteboard.string(forType: .string) == "Вопрос")
+    for _ in 0..<60 {
+        if !view.transcript.string.contains(copied) { break }
+        try await Task.sleep(for: .milliseconds(50))
+    }
+    #expect(!view.transcript.string.contains(copied))
+    #expect(pasteboard.string(forType: .string) == "Вопрос")
+    #expect(view.transcript.string.contains("Ответ"))
+    _ = view.textView(view.transcript, clickedOnLink: "contextdesk-copy:a", at: 0)
+    view.update(items: items, conversationID: "other", followOutput: false)
+    #expect(!view.transcript.string.contains(copied))
+    #expect(pasteboard.string(forType: .string) == "Ответ")
 }
