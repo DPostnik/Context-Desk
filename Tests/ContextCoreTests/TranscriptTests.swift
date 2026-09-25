@@ -231,7 +231,7 @@ import ContextTranscript
     let view = TranscriptScrollView()
     view.frame = NSRect(x: 0, y: 0, width: 760, height: 400)
     let timing = ResponseTiming(startedAt: Date(timeIntervalSince1970: 100), completedAt: Date(timeIntervalSince1970: 167))
-    view.update(items: [TranscriptItem(id: "a", kind: "assistant", text: "Готово. Ответ отделён от действий тонкой границей.\nDone. The answer has a clear header.", timing: timing)], conversationID: "t", followOutput: false)
+    view.update(items: [TranscriptItem(id: "a", kind: "assistant", text: "Готово. Ответ отделён от действий тонкой границей.\n\nDone. The answer has a clear header.", timing: timing)], conversationID: "t", followOutput: false)
     view.layoutSubtreeIfNeeded()
     #expect(view.transcript.string.contains(timing.label()))
     #expect(view.transcript.string.contains(L10n.date(timing.completedAt)))

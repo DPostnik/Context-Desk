@@ -261,7 +261,7 @@ public struct NativeTranscript: NSViewRepresentable {
     private func render(_ item: TranscriptItem, expanded: Bool) -> NSAttributedString {
         let result = NSMutableAttributedString()
         let paragraph = NSMutableParagraphStyle()
-        paragraph.lineSpacing = item.kind == "activity" ? 1 : 4; paragraph.paragraphSpacing = item.kind == "activity" ? 2 : 8
+        paragraph.lineSpacing = item.kind == "activity" ? 1 : 4; paragraph.paragraphSpacing = item.kind == "activity" ? 2 : 0
         paragraph.lineBreakMode = .byWordWrapping
         if item.kind == "loading" {
             return NSAttributedString(string: "      " + item.text + "\n\n", attributes: [
@@ -323,7 +323,8 @@ public struct NativeTranscript: NSViewRepresentable {
         paragraph.headIndent = paragraph.firstLineHeadIndent
         paragraph.tailIndent = outgoing ? -16 : -4
         paragraph.lineSpacing = 4
-        paragraph.paragraphSpacing = 8
+        // Markdown already carries blank lines; do not add spacing to every newline.
+        paragraph.paragraphSpacing = 0
         paragraph.lineBreakMode = .byWordWrapping
         text.addAttribute(.paragraphStyle, value: paragraph, range: range)
         text.enumerateAttribute(.responseHeader, in: range) { value, headerRange, _ in
