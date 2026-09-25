@@ -98,6 +98,8 @@ def main():
             shutil.copy2(Path(bin_path) / 'ContextDesk', OUT / 'ContextDesk')
         else:
             command = [swift, 'test', '--sdk', sdk, '--disable-xctest', '--force-resolved-versions']
+            if macros.is_dir():
+                command += ['-Xswiftc', '-plugin-path', '-Xswiftc', macros]
             if test_flags:
                 command += ['-Xswiftc', '-F', '-Xswiftc', frameworks, '-Xlinker', '-F', '-Xlinker', frameworks, '-Xlinker', '-rpath', '-Xlinker', frameworks, '-Xlinker', '-rpath', '-Xlinker', developer / 'Library/Developer/usr/lib']
             run(command)
@@ -116,14 +118,14 @@ def main():
             work = Path(tmp)
             base = [compiler, '-sdk', sdk, '-swift-version', '6', '-target', target, '-parse-as-library', '-I', work, '-I', ROOT / 'Sources/CSQLite', '-L', work]
             base += ['-Onone', '-enable-testing'] if args.task == 'test' else ['-O']
-            modules = [('TOMLDecoder', '.build/checkouts/TOMLDecoder/Sources/TOMLDecoder'), ('ContextCore', 'Sources/ContextCore'), ('HeadroomIntegration', 'Sources/HeadroomIntegration'), ('ContextTranscript', 'Sources/ContextTranscript')]
+            modules = [('TOMLDecoder', '.build/checkouts/TOMLDecoder/Sources/TOMLDecoder'), ('ContextCore', 'Sources/ContextCore'), ('ContextTranscript', 'Sources/ContextTranscript')]
             if args.task == 'test':
                 modules.append(('ContextDesk', 'Sources/ContextDesk'))
             for name, folder in modules:
                 print(f'Compiling {name}', flush=True)
                 flags = ['-Xfrontend', '-entry-point-function-name', '-Xfrontend', 'ContextDesk_main'] if name == 'ContextDesk' else []
                 run(base + flags + ['-emit-library', '-static', '-emit-module', '-module-name', name, '-emit-module-path', work / (name + '.swiftmodule'), '-o', work / ('lib' + name + '.a')] + sources(folder))
-            libraries = ['-lHeadroomIntegration', '-lContextTranscript', '-lContextCore', '-lTOMLDecoder']
+            libraries = ['-lContextTranscript', '-lContextCore', '-lTOMLDecoder']
             if args.task == 'build':
                 run(base + ['-module-name', 'ContextDesk'] + sources('Sources/ContextDesk') + libraries + ['-o', work / 'ContextDesk'])
                 shutil.copy2(work / 'ContextDesk', OUT / 'ContextDesk')

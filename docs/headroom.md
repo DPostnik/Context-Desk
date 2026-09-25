@@ -1,6 +1,6 @@
 # Headroom integration — 2026-09-25
 
-Headroom is an optional external dependency. Direct mode requires neither this integration nor Python. The Swift adapter lives in `Sources/HeadroomIntegration`; the installer, runner and pinned third-party requirements are separate from the app bundle. Other experimental providers can be implemented as separate adapters without adding their runtime dependencies to the base app. No generic plugin loader is implemented.
+Headroom is an independent provider plugin. The app has no Headroom-specific Swift dependency; it discovers the separately installed manifest through the generic host. All provider-specific code and installation live in [`plugins/headroom`](../plugins/headroom/README.md). See the [versioned plugin protocol](provider-plugins.md).
 
 ## Request path
 
@@ -12,11 +12,11 @@ Headroom does not run Codex and does not index an entire project merely because 
 
 - Codex compatibility target: `0.155.0-alpha.16.4` (existing official app binary).
 - Headroom: `headroom-ai[proxy]==0.38.0`; reviewed upstream commit `3aa501285705949a123444a5c102d6bbc000afd9`.
-- Python: 3.12; all 92 Python packages pinned with artifact hashes in `integrations/headroom/headroom.lock`.
+- Python: 3.12; all 92 Python packages pinned with artifact hashes in `plugins/headroom/headroom.lock`.
 - Installation: `zsh scripts/install-headroom.sh`, using uv. No service, launch agent, global provider setup, or second automation scheduler.
-- Runtime location: `~/Library/Application Support/Context Desk/headroom/`.
+- Runtime location: `~/Library/Application Support/Context Desk/plugins/headroom/`.
 - The app launches the proxy with a minimal environment. Config, caches, state and diagnostic logs are scoped to this directory. Full-message logs, telemetry, update checks, subscription polling and traffic learning are disabled.
-- The process binds a kernel-assigned port on 127.0.0.1. A per-launch instance ID, version and profile are checked before configuring Codex. The app terminates its child on shutdown; the child also watches its parent for unexpected exit.
+- The process binds a kernel-assigned port on 127.0.0.1. The host validates the per-launch instance ID and plugin protocol/version before configuring Codex; the plugin validates its pinned Headroom version and chooses its fixed compression profile. The app terminates its child on shutdown; the child also watches its parent for unexpected exit.
 
 Run `zsh scripts/install-headroom.sh` after changing the runner or the dependency lock. Installation does not touch `~/.codex` or existing Codex credentials.
 
@@ -34,12 +34,12 @@ The app supplies `contextdesk_headroom` through process-local Codex overrides, w
 
 Headroom retry handling is disabled; the custom Codex provider's request and stream retry limits are zero. A missing/stopped proxy never falls back to Direct. New Headroom sends are blocked and queued work pauses after a detected proxy failure. No turn is automatically replayed after an ambiguous transport failure.
 
-## Verification
+## Historical verification (before independent plugin extraction)
 
 Executed a real, ephemeral, read-only Codex turn using only this application's existing authentication:
 
 ```sh
-swift run context-probe --headroom \
+swift run context-probe --plugin headroom \
   --home "$HOME/Library/Application Support/Context Desk/codex" --smoke-test
 ```
 
@@ -55,3 +55,5 @@ Not yet established: remote compaction end to end, representative long-task toke
 - [Headroom proxy documentation](https://docs.headroomlabs.ai/docs/proxy).
 - [Reviewed Codex integration source](https://github.com/headroomlabs-ai/headroom/tree/3aa501285705949a123444a5c102d6bbc000afd9/headroom/providers/codex).
 - [Remote-compaction provider-name issue #3407](https://github.com/headroomlabs-ai/headroom/issues/3407).
+
+Current plugin extraction validation is recorded in `improvements.md`; the historical real-request measurements above were not repeated by this change.

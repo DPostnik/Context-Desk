@@ -16,7 +16,7 @@ The app script builds a complete temporary bundle, signs it and verifies the sig
 
 ## Toolchain repair — 2026-09-25
 
-Installed Apple’s `Command Line Tools for Xcode 27.0-27.0` using `softwareupdate --install`. The package completed successfully without a macOS update or restart. `xcrun swiftc --version` now reports Apple Swift 6.4 (`swiftlang-6.4.0.34.1`), and `xcrun swift package --version` starts successfully (`Swift 6.4.0-dev`). The SDK probe now type-checks an actual SwiftUI view using `@State`, not only imports. CLT 27 lacks the `SwiftUIMacros` plugin needed by SDK 27, so this probe rejects that SDK and selects the installed compatible macOS 26.5 SDK. The app builds successfully with SwiftPM again. Test results are recorded in `improvements.md`.
+Installed Apple’s `Command Line Tools for Xcode 27.0-27.0` using `softwareupdate --install`. The package completed successfully without a macOS update or restart. `xcrun swiftc --version` now reports Apple Swift 6.4 (`swiftlang-6.4.0.34.1`), and `xcrun swift package --version` starts successfully (`Swift 6.4.0-dev`). The SDK probe now type-checks an actual SwiftUI view using `@State`, not only imports. CLT 27 lacks the `SwiftUIMacros` plugin needed by SDK 27, so this probe rejects that SDK and selects the installed compatible macOS 26.5 SDK. The app builds successfully with SwiftPM again. The SwiftPM test command explicitly receives the installed Testing macro plugin path, as does the preflight probe; relying on cached macro discovery fails on a clean target rebuild under CLT. Test results are recorded in `improvements.md`.
 
 ## Previous toolchain problem (before repair)
 

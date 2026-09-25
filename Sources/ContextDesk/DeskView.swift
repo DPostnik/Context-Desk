@@ -515,8 +515,8 @@ struct ChatView: View {
                 .frame(maxWidth: .infinity).padding(.horizontal, 24).padding(.top, 10)
             }
             HStack {
-                Text(model.currentRoute.title).help(model.currentRoute == .headroom ? model.headroomMessage : L10n.text("Этот разговор подключён напрямую. Для Headroom создай новый чат.", "This conversation connects directly. Create a new chat to use Headroom."))
-                if model.currentRoute == .headroom && model.headroomStatus == nil {
+                Text(model.routeTitle(model.currentRoute)).help(model.routeMessage(model.currentRoute))
+                if !model.routeIsAvailable(model.currentRoute) {
                     Text(L10n.text("Недоступен", "Unavailable")).foregroundStyle(.orange)
                 }
                 Button { showingUsage.toggle() } label: {
@@ -664,16 +664,30 @@ struct SettingsView: View {
             }
             Section(L10n.text("Внешние интеграции", "External integrations")) {
                 Picker(L10n.text("Новые разговоры", "New conversations"), selection: Binding(get: { model.defaultRoute }, set: { model.selectDefaultRoute($0) })) {
-                    ForEach(RequestRoute.allCases, id: \.self) { Text($0.title).tag($0) }
+                    ForEach(model.availableRoutes, id: \.self) { Text(model.routeTitle($0)).tag($0) }
                 }.pointingHandCursor()
-                Text(model.headroomMessage).font(.callout).foregroundStyle(.secondary)
-                if let status = model.headroomStatus {
-                    LabeledContent(L10n.text("Версия Headroom", "Headroom version"), value: status.version)
-                    LabeledContent(L10n.text("Запросов через прокси", "Proxied requests"), value: String(status.requests))
-                    LabeledContent(L10n.text("Убрано токенов", "Tokens removed"), value: String(status.tokensSaved))
-                    Text(L10n.text("Счётчики за текущий запуск прокси, для всех разговоров. Это не экономия лимита подписки.", "Counters cover all conversations in the current proxy session. They do not represent subscription limit savings."))
-                        .font(.caption).foregroundStyle(.secondary)
+                Text(model.routeMessage(model.defaultRoute)).font(.callout).foregroundStyle(.secondary)
+                ForEach(model.plugins) { plugin in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("\(plugin.manifest.title) · \(plugin.manifest.version)").font(.headline)
+                        Text(model.routeMessage(plugin.route)).font(.caption).foregroundStyle(.secondary)
+                        if let status = model.pluginStatuses[plugin.id] {
+                            ForEach(status.metrics) { metric in
+                                LabeledContent(metric.title, value: String(metric.value))
+                            }
+                        }
+                    }
                 }
+                ForEach(model.pluginIssues, id: \.self) { Text($0).font(.caption).foregroundStyle(.orange) }
+                Button("Обновить список плагинов") { model.refreshPlugins() }.disabled(model.anyBusy || model.connecting)
+                Button("Открыть папку плагинов") {
+                    do {
+                        try FileManager.default.createDirectory(at: model.pluginDirectory, withIntermediateDirectories: true)
+                        NSWorkspace.shared.open(model.pluginDirectory)
+                    } catch { model.error = error.localizedDescription }
+                }
+                Text("Установи плагин отдельно, обнови список и переподключись. Запускаются только плагины выбранного маршрута и сохранённых разговоров.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Text(L10n.text("Маршрут сохраняется для каждого разговора. Чтобы изменить его, создай новый чат.", "The route is saved for each conversation. Create a new chat to change it."))
                     .font(.caption).foregroundStyle(.secondary)
             }

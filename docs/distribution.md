@@ -16,7 +16,7 @@ open 'build/Context Desk.app'
 
 To install the built app, quit it with Cmd+Q, then copy `build/Context Desk.app` to your user Applications folder (`~/Applications`). Reopen the installed copy. The bundle is ad-hoc signed, not notarized; this is a local/developer distribution, not a notarized public release.
 
-Direct mode does not install or launch Headroom. Its optional installer is `scripts/install-headroom.sh`; external dependencies and the runner are in `integrations/headroom`, and the Swift adapter is in `Sources/HeadroomIntegration`. See `headroom.md`. No automatic installation or replacement of external providers takes place.
+Direct mode does not install or launch Headroom. Its optional installer is `plugins/headroom/install.sh`; the independent plugin manifest, external dependencies and runner are in `plugins/headroom`. The app contains only a generic provider-plugin host. See `headroom.md`. No automatic installation or replacement of external providers takes place.
 
 ## Packaging
 

@@ -1,6 +1,5 @@
 import AppKit
 import Foundation
-import HeadroomIntegration
 import SwiftUI
 import UserNotifications
 import ContextCore
@@ -33,10 +32,13 @@ private struct ChatRunState {
 }
 
 @MainActor final class DeskModel: ObservableObject {
-    @Published var headroomStatus: HeadroomStatus?
-    @Published var headroomMessage = L10n.text("Headroom не запущен", "Headroom is not running")
-    private let headroom = HeadroomRuntime()
-    private var headroomTask: Task<Void, Never>?
+    @Published private(set) var plugins: [ProviderPlugin] = []
+    @Published private(set) var pluginIssues: [String] = []
+    @Published private(set) var pluginStatuses: [String: PluginStatus] = [:]
+    @Published private(set) var pluginMessages: [String: String] = [:]
+    let pluginDirectory: URL
+    private var pluginRuntimes: [String: ProviderPluginRuntime] = [:]
+    private var pluginTask: Task<Void, Never>?
     @Published var notices: [DeskNotice] = []
     @Published private(set) var unreadResponseItems: [String: String] = [:]
     private var notifiedTurns: Set<String> = []
@@ -92,9 +94,12 @@ private struct ChatRunState {
     private var booted = false
     let connection: CodexConnection
     let store: AppStore
-    init(connection: CodexConnection = CodexConnection(), store: AppStore = AppStore(file: Locations.root.appendingPathComponent("metadata.sqlite"))) {
+    init(connection: CodexConnection = CodexConnection(), store: AppStore = AppStore(file: Locations.root.appendingPathComponent("metadata.sqlite")),
+         pluginDirectory: URL = PluginCatalog.defaultDirectory) {
         self.connection = connection
         self.store = store
+        self.pluginDirectory = pluginDirectory
+        refreshPlugins()
     }
 
     var selectedProject: Project? { state.projects.first { $0.id == projectID } }
@@ -102,7 +107,7 @@ private struct ChatRunState {
     var chats: [Chat] { state.chats.filter { $0.projectID == projectID && !$0.isArchived }.sorted { $0.updated > $1.updated } }
     var currentAction: PendingAction? { pending.first { $0.threadID == chatID } }
     var currentUsage: UsageSnapshot? { chatID.flatMap { usage[$0] } }
-    var canSend: Bool { !selectedChatIsArchived && !isChangingChat(currentRunKey) && (currentRoute == .direct || headroomStatus != nil) && connected && authenticated && selectedProject != nil && !sending && !loadingChat && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    var canSend: Bool { !selectedChatIsArchived && !isChangingChat(currentRunKey) && routeIsAvailable(currentRoute) && connected && authenticated && selectedProject != nil && !sending && !loadingChat && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     var supportedEfforts: [String] {
         models.first { $0["model"].string == state.model }?["supportedReasoningEfforts"].array.compactMap { $0["reasoningEffort"].string } ?? []
     }
@@ -127,68 +132,102 @@ private struct ChatRunState {
     }
     var defaultRoute: RequestRoute { state.defaultRoute ?? .direct }
     var currentRoute: RequestRoute { selectedChat.map { $0.route ?? .direct } ?? defaultRoute }
-    var needsHeadroom: Bool { defaultRoute == .headroom || state.chats.contains { $0.route == .headroom } }
-    func selectDefaultRoute(_ route: RequestRoute) {
-        state.defaultRoute = route
-        if route == .headroom && headroomStatus == nil {
-            headroomMessage = L10n.text("Для Headroom нужна отдельная установка. После установки переподключись в настройках.", "Headroom requires a separate installation. Reconnect in Settings after installing it.")
-        }
-        persist()
+    var neededPluginIDs: Set<String> {
+        Set(([defaultRoute] + state.chats.compactMap(\.route)).filter { $0 != .direct }.map(\.rawValue))
+    }
+    var availableRoutes: [RequestRoute] {
+        [.direct] + Set(plugins.map(\.route) + [defaultRoute, currentRoute] + state.chats.compactMap(\.route))
+            .filter { $0 != .direct }.sorted { $0.rawValue < $1.rawValue }
+    }
+    func routeTitle(_ route: RequestRoute) -> String {
+        route == .direct ? "Напрямую" : plugins.first(where: { $0.id == route.rawValue })?.manifest.title ?? "\(route.rawValue) (не установлен)"
+    }
+    func routeIsAvailable(_ route: RequestRoute) -> Bool { route == .direct || pluginStatuses[route.rawValue] != nil }
+    func routeMessage(_ route: RequestRoute) -> String {
+        if route == .direct { return "Прямое подключение" }
+        return pluginMessages[route.rawValue] ?? (plugins.contains { $0.id == route.rawValue }
+            ? "Переподключись, чтобы запустить выбранный плагин" : "Плагин не установлен. Маршрут разговора сохранён.")
+    }
+    func refreshPlugins() {
+        guard !anyBusy, !connecting else { return }
+        let catalog = PluginCatalog.scan(directory: pluginDirectory)
+        plugins = catalog.plugins; pluginIssues = catalog.issues
+    }
+    func selectDefaultRoute(_ route: RequestRoute) { state.defaultRoute = route; persist() }
+    private func stopPlugins() async {
+        pluginTask?.cancel(); pluginTask = nil
+        for runtime in pluginRuntimes.values { await runtime.stop() }
+        pluginRuntimes.removeAll(); pluginStatuses.removeAll()
     }
     func connect() async {
         guard !connecting, !anyBusy else { return }
+        refreshPlugins()
         connecting = true; connected = false
         clearLimits()
         defer { connecting = false }
-        headroomTask?.cancel(); headroomTask = nil
         await connection.stop(); loadedThreads.removeAll()
+        await stopPlugins()
+        pluginMessages.removeAll()
         var arguments: [String] = []
-        headroomStatus = nil
-        if needsHeadroom {
-            do {
-                headroomMessage = L10n.text("Запускаю Headroom…", "Starting Headroom…")
-                let endpoint = try await headroom.start()
-                arguments = try RequestRoute.providerArguments(endpoint: endpoint)
-                headroomStatus = try await headroom.status()
-                headroomMessage = L10n.text("Headroom подключён · сжатие без потери данных", "Headroom connected · lossless compression")
-            } catch {
-                headroomStatus = nil
-                headroomMessage = error.localizedDescription
+        for id in neededPluginIDs.sorted() {
+            guard let plugin = plugins.first(where: { $0.id == id }) else {
+                pluginMessages[id] = "Плагин не установлен. Установи его и переподключись."
+                continue
             }
-        } else {
-            await headroom.stop()
-            headroomMessage = L10n.text("Headroom — необязательная внешняя интеграция, отключена", "Headroom is an optional external integration and is disabled")
+            let runtime = ProviderPluginRuntime(plugin: plugin)
+            do {
+                let endpoint = try await runtime.start()
+                let status = try await runtime.status()
+                arguments += try plugin.providerArguments(endpoint: endpoint)
+                pluginStatuses[id] = status
+                pluginMessages[id] = pluginStatuses[id]?.detail
+                pluginRuntimes[id] = runtime
+            } catch {
+                await runtime.stop()
+                pluginMessages[id] = error.localizedDescription
+            }
         }
         do {
             try await connection.start(executable: Locations.codexExecutable(), home: Locations.codexHome, extraArguments: arguments)
             connected = true
             clearConnectionError()
             await refreshAccount()
-            if headroomStatus != nil {
-                headroomTask = Task { [weak self] in
+            if !pluginRuntimes.isEmpty {
+                pluginTask = Task { [weak self] in
                     while !Task.isCancelled {
                         do { try await Task.sleep(for: .seconds(5)) } catch { return }
                         guard let self else { return }
-                        do { self.headroomStatus = try await self.headroom.status() }
-                        catch {
-                            self.headroomStatus = nil
-                            self.headroomMessage = L10n.text("Headroom недоступен. Переподключись в настройках.", "Headroom is unavailable. Reconnect in Settings.")
-                            for chat in self.state.chats where chat.route == .headroom {
-                                self.runs[chat.id, default: ChatRunState()].queuePaused = true
+                        for id in self.pluginRuntimes.keys.sorted() {
+                            guard let runtime = self.pluginRuntimes[id] else { continue }
+                            do {
+                                let status = try await runtime.status()
+                                guard !Task.isCancelled else { return }
+                                self.pluginStatuses[id] = status
+                                self.pluginMessages[id] = self.pluginStatuses[id]?.detail
+                            } catch {
+                                guard !Task.isCancelled else { return }
+                                self.pluginStatuses[id] = nil
+                                self.pluginMessages[id] = error.localizedDescription
+                                await runtime.stop()
+                                self.pluginRuntimes[id] = nil
+                                let affected = self.state.chats.filter { $0.route?.rawValue == id }
+                                for chat in affected { self.runs[chat.id, default: ChatRunState()].queuePaused = true }
+                                if affected.contains(where: { self.isBusy(threadID: $0.id) }) {
+                                    await self.connection.stop()
+                                    self.connected = false
+                                    self.resetRuns(); self.pending.removeAll()
+                                    self.error = "Плагин отключился. Запрос не повторён."
+                                    return
+                                }
                             }
-                            if self.state.chats.contains(where: { $0.route == .headroom && self.isBusy(threadID: $0.id) }) {
-                                await self.connection.stop()
-                                self.connected = false
-                                self.resetRuns()
-                                self.pending.removeAll()
-                                self.error = L10n.text("Headroom отключился. Запрос не повторён.", "Headroom disconnected. The request was not retried.")
-                            }
-                            return
                         }
                     }
                 }
             }
-        } catch { connected = false; self.error = error.localizedDescription }
+        } catch {
+            connected = false; self.error = error.localizedDescription
+            await stopPlugins()
+        }
     }
     func refreshAccount() async {
         do {
@@ -426,9 +465,10 @@ private struct ChatRunState {
         guard !isChangingChat(threadID), !isArchived(threadID), !run.queuePaused, !run.running, !run.sending, connected, authenticated,
               let next = queuedMessages.first(where: { $0.threadID == threadID }),
               let project = state.projects.first(where: { $0.id == next.projectID }) else { return }
-        if state.chats.first(where: { $0.id == threadID })?.route == .headroom && headroomStatus == nil {
+        let route = state.chats.first(where: { $0.id == threadID })?.route ?? .direct
+        if !routeIsAvailable(route) {
             runs[threadID, default: ChatRunState()].queuePaused = true
-            error = headroomMessage; return
+            error = routeMessage(route); return
         }
         runs[threadID, default: ChatRunState()].sending = true
         defer {
@@ -484,7 +524,10 @@ private struct ChatRunState {
         let access = project.accessMode ?? .standard
         let route = threadID == nil ? defaultRoute : (state.chats.first { $0.id == threadID }?.route ?? .direct)
         do {
-            if route == .headroom { headroomStatus = try await headroom.status() }
+            if route != .direct {
+                guard let runtime = pluginRuntimes[route.rawValue], routeIsAvailable(route) else { throw ClientFailure(routeMessage(route)) }
+                pluginStatuses[route.rawValue] = try await runtime.status()
+            }
             var id = threadID
             if id == nil {
                 var params = access.threadParameters
@@ -643,9 +686,8 @@ private struct ChatRunState {
         } catch { self.error = error.localizedDescription }
     }
     func shutdown() async {
-        headroomTask?.cancel(); headroomTask = nil
         await connection.stop()
-        await headroom.stop()
+        await stopPlugins()
     }
     private func persist() { let snapshot = state; Task { do { try await store.save(snapshot) } catch { self.error = error.localizedDescription } } }
 

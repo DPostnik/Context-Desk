@@ -1,4 +1,4 @@
-"""App-owned Headroom sidecar. No global Codex setup or credential handling."""
+"""Standalone Context Desk provider plugin, protocol v1. No credential handling."""
 import argparse
 import asyncio
 import importlib.metadata
@@ -57,9 +57,12 @@ def main():
     @app.get("/contextdesk/status")
     async def status():
         metrics = app.state.proxy.metrics
-        return {"instance": args.instance, "version": version, "profile": "cache-lossless",
-                "requests": metrics.requests_total, "failed": metrics.requests_failed,
-                "tokensSaved": metrics.tokens_saved_total}
+        return {"protocolVersion": 1, "pluginID": "headroom", "pluginVersion": "1.0.0",
+                "instance": args.instance, "detail": f"Headroom {version} · сжатие без потери данных",
+                "metrics": [
+                    {"id": "requests", "title": "Запросов через прокси", "value": metrics.requests_total},
+                    {"id": "failed", "title": "Ошибок", "value": metrics.requests_failed},
+                    {"id": "tokensSaved", "title": "Убрано токенов за запуск", "value": metrics.tokens_saved_total}] }
 
     # Headroom mounts its dashboard at /; put our health route before that mount.
     app.router.routes.insert(0, app.router.routes.pop())
@@ -79,7 +82,10 @@ def main():
             if task.done():
                 await task
                 return
-            ready.write_text(json.dumps({"port": port, "instance": args.instance}))
+            temporary = ready.with_suffix(".tmp")
+            temporary.write_text(json.dumps({"protocolVersion": 1, "pluginID": "headroom",
+                                             "port": port, "instance": args.instance}))
+            temporary.replace(ready)
             while not task.done():
                 if os.getppid() != args.parent:
                     server.should_exit = True

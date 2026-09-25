@@ -11,3 +11,7 @@ __pycache__/
 *.pyc
 .env
 .env.*
+
+# Installed plugin runtimes never belong in source control.
+plugins/*/venv/
+plugins/*/data/

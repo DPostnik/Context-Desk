@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "headroom",
+  "title": "Headroom",
+  "version": "1.0.0",
+  "executable": "venv/bin/python",
+  "arguments": ["headroom_server.py"]
+}

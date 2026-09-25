@@ -2,6 +2,8 @@
 
 A personal native macOS client for Codex. SwiftUI/AppKit, Foundation processes and SQLite; no Electron, browser engine or local web server.
 
+Provider integrations are independently installed process plugins; see the [plugin protocol](docs/provider-plugins.md).
+
 See the [improvement log](docs/improvements.md) for changes, unresolved findings, and links to archived discussion evidence.
 
 Context Desk is a standalone native macOS client for Codex. It connects directly by default. Headroom is an optional, separately installed external integration; Python and Headroom are not required to build or run the app in Direct mode.
@@ -16,7 +18,7 @@ The bundled app is ad-hoc signed for this Mac, not notarized for distribution. I
 
 ## Optional external integration: Headroom
 
-Headroom is installed once with `zsh scripts/install-headroom.sh` (requires `uv` and Python 3.12). Dependencies are pinned with hashes in `integrations/headroom/headroom.lock`. The app starts/stops the proxy itself on a dynamically assigned loopback port. It does not run `headroom init` or edit global Codex settings.
+The standalone Headroom plugin is installed with `zsh plugins/headroom/install.sh` (requires `uv` and Python 3.12). Dependencies are pinned with hashes in `plugins/headroom/headroom.lock`. The generic plugin host starts/stops the separately installed proxy on a dynamically assigned loopback port. It does not run `headroom init` or edit global Codex settings.
 
 New installations default to **Напрямую**. Explicitly saved choices and existing chat routes are preserved. Install Headroom separately only if you want it, select it in Settings → Внешние интеграции, and reconnect before creating a new Headroom chat; the current route appears below the composer. The same settings section shows proxy status and process-wide request/token counters.
 
@@ -47,7 +49,8 @@ App state lives in `~/Library/Application Support/Context Desk/`:
 - `metadata.sqlite`: projects, thread IDs and latest usage snapshots.
 - `codex/`: separate `CODEX_HOME`; the official engine owns login and transcripts.
 - `probe-home/`: unauthenticated compatibility probe state.
-- `headroom/`: dedicated Python environment, app-owned proxy runner and private Headroom state.
+- `plugins/<id>/`: separately installed provider plugins and their private runtime data.
+- `headroom/`: legacy runtime, retained unchanged when upgrading.
 
 The app does not copy credentials, change the existing `~/.codex/config.toml` or initialize Headroom globally. Credentials for this dedicated home use Codex's file backend inside its private directory. Codex diagnostics are drained without writing raw protocol/prompt logs. Headroom diagnostic logs stay under the app directory; full request/response logging and telemetry are disabled. Do not publish or sync this directory. To back up your state, quit the app and back up the whole directory privately.
 

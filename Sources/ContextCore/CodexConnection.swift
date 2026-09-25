@@ -31,7 +31,6 @@ public actor CodexConnection {
                            "-c", "analytics.enabled=false"] + extraArguments
         var environment = ProcessInfo.processInfo.environment
         environment["CODEX_HOME"] = home.path
-        environment["HEADROOM_BEACON"] = "off"
         // Account login belongs to this app, even when started from a configured shell.
         for key in ["OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL", "OPENAI_API_BASE", "CODEX_INTERNAL_ORIGINATOR_OVERRIDE"] {
             environment.removeValue(forKey: key)
