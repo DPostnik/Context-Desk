@@ -50,3 +50,65 @@ import ContextCore
     #expect(model.chatID == nil)
     #expect(model.draft == "Черновик нового чата")
 }
+
+@Test @MainActor func existingChatDraftsSurviveNavigationAndClearing() async {
+    let model = DeskModel()
+    let projects = (1...2).map { Project(path: "/tmp/existing-draft-project-\($0)") }
+    let chats = (0..<3).map {
+        Chat(id: "draft-chat-\($0)", projectID: projects[$0 % 2].id, title: "Chat", model: "")
+    }
+    model.state.projects = projects
+    model.state.chats = chats
+    let drafts = ["Русский черновик\nсо второй строкой  ", "English draft 👋", "  "]
+    model.selectProject(projects[0].id)
+    model.draft = "New chat draft"
+    for (chat, draft) in zip(chats, drafts) {
+        await model.openChat(chat)
+        #expect(model.draft.isEmpty)
+        model.draft = draft
+    }
+    for (chat, draft) in zip(chats, drafts) {
+        await model.openChat(chat)
+        #expect(model.draft == draft)
+        await model.openChat(chat)
+        #expect(model.draft == draft)
+        model.showingJobs = true
+        await model.openChat(chat)
+        #expect(!model.showingJobs)
+        #expect(model.draft == draft)
+    }
+    model.selectProject(projects[0].id)
+    #expect(model.draft == "New chat draft")
+    await model.openChat(chats[0])
+    model.draft = ""
+    await model.openChat(chats[1])
+    #expect(model.draft == drafts[1])
+    await model.openChat(chats[0])
+    #expect(model.draft.isEmpty)
+
+    let freshModel = DeskModel()
+    freshModel.state = model.state
+    await freshModel.openChat(chats[1])
+    #expect(freshModel.draft.isEmpty)
+    freshModel.newChat()
+    #expect(freshModel.draft.isEmpty)
+}
+
+@Test @MainActor func failedSendRestoresExistingChatDraftAcrossNavigation() async {
+    let model = DeskModel()
+    let project = Project(path: "/tmp/failed-draft-project")
+    let chat = Chat(id: "failed-draft-chat", projectID: project.id, title: "Chat", model: "")
+    model.state.projects = [project]
+    model.state.chats = [chat]
+    await model.openChat(chat)
+    // Keep transport disconnected so delivery fails without sending a real request.
+    model.connected = true
+    model.authenticated = true
+    model.draft = "Unconfirmed message"
+    await model.send()
+    #expect(model.draft == "Unconfirmed message")
+    model.newChat()
+    #expect(model.draft.isEmpty)
+    await model.openChat(chat)
+    #expect(model.draft == "Unconfirmed message")
+}

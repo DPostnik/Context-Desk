@@ -53,10 +53,14 @@ private struct ChatRunState {
     @Published var models: [JSONValue] = []
     @Published var effort = ""
     private var newChatDrafts: [UUID: String] = [:]
+    private var chatDrafts: [String: String] = [:]
     @Published var draft = "" {
         didSet {
-            guard chatID == nil, let projectID else { return }
-            newChatDrafts[projectID] = draft.isEmpty ? nil : draft
+            if let chatID {
+                chatDrafts[chatID] = draft.isEmpty ? nil : draft
+            } else if let projectID {
+                newChatDrafts[projectID] = draft.isEmpty ? nil : draft
+            }
         }
     }
     @Published var connected = false
@@ -361,7 +365,8 @@ private struct ChatRunState {
     }
     func openChat(_ chat: Chat) async {
         guard !isChangingChat(chat.id), state.chats.contains(where: { $0.id == chat.id }) else { return }
-        showingJobs = false; projectID = chat.projectID; chatID = chat.id; draft = ""
+        showingJobs = false; projectID = chat.projectID; chatID = chat.id
+        draft = chatDrafts[chat.id] ?? ""
         let generation = UUID(); selectionGeneration = generation
         loadingChat = true; items = []
         do {
@@ -427,6 +432,7 @@ private struct ChatRunState {
         state.chats.removeAll { $0.id == id }
         state.queuedMessages = queuedMessages.filter { $0.threadID != id }
         usage.removeValue(forKey: id)
+        chatDrafts.removeValue(forKey: id)
         loadedThreads.remove(id)
         runs.removeValue(forKey: id)
         let notificationIDs = notifiedTurns.filter { $0.hasPrefix(id + ":") }.map { "turn:" + $0 }
@@ -568,6 +574,7 @@ private struct ChatRunState {
                 runKey = created
                 if visible && selectionGeneration == selection {
                     chatID = created
+                    chatDrafts[created] = draft.isEmpty ? nil : draft
                     newChatDrafts.removeValue(forKey: project.id)
                 }
                 loadedThreads.insert(created)

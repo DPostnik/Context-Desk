@@ -38,6 +38,13 @@ Statuses describe evidence in the archived discussions, not a new code audit or 
 | IMP-023 | Show an app-wide startup loader until account checking completes, then display the workspace, sign-in, or a connection error with retry. | Implemented (reported) | [Summary](archived-improvement-discussions.md#01a0d8cf-ca34-7141-8755-ed2a811cf0e3-line-92) |
 | IMP-024 | Add 16 pt trailing padding to sidebar running/unread indicators. | Implemented (reported) | [Summary](archived-improvement-discussions.md#01a0d8cf-ca34-7141-8755-ed2a811cf0e3-line-119) |
 
+### IMP-017 follow-up — 2026-09-25
+
+- Source: current user request to preserve composer text in existing chats as well as new chats until the app quits; `DeskModel.swift`, `DraftTests.swift`.
+- Behavior: each existing chat keeps its own in-memory draft across chat/project/schedule navigation and repeated opening. New-chat drafts remain separate per project. Emptying or submitting the composer clears its stored draft; confirmed chat deletion removes it. Text typed while a new thread is being created follows that thread when it becomes selected. Drafts are not added to persisted state and a fresh model starts empty.
+- Status: delivered in the local app build. `zsh scripts/build-app.sh` succeeded using SwiftPM and the compatible macOS 26.5 SDK; the signed `build/Context Desk.app` was replaced. The running session was not restarted.
+- Validation: `zsh scripts/test.sh` passed all 57 tests, including navigation/isolation/clearing/session-lifetime and failed-send draft restoration coverage, existing queue/send checks, and Russian/English localization checks. Draft coverage preserves Russian and English text, emoji, newlines and spaces verbatim. No product copy changed. `git diff --check` passed. No live UI click-through validation performed.
+
 ### IMP-016 follow-up — 2026-09-25
 
 - Source: current user request to clear app-wide notifications automatically after reading them in chat; `DeskModel.swift`, `DeskView.swift`, `UnreadResponseTests.swift`.
