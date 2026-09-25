@@ -1,5 +1,7 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
+import CoreTransferable
 import ContextCore
 import ContextTranscript
 
@@ -10,6 +12,7 @@ struct DeskView: View {
     @State private var renaming: Chat?
     @State private var deleting: Chat?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var dropTargetProjectID: UUID?
     @State private var expandedProjects: Set<UUID> = []
     @State private var collapsedSearchProjects: Set<UUID> = []
     @State private var visibleChatCounts: [UUID: Int] = [:]
@@ -77,6 +80,18 @@ struct DeskView: View {
                     .padding(.horizontal, 12)
                 ScrollView {
                     VStack(alignment: .leading, spacing: 4) {
+                        if model.state.chats.contains(where: \.isPinned) {
+                            Text(L10n.text("Избранное", "Favorites"))
+                                .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                                .padding(.horizontal, 8).padding(.top, 8).padding(.bottom, 4)
+                            ForEach(model.state.chats.filter { chat in
+                                chat.isPinned && (search.isEmpty || chat.title.localizedCaseInsensitiveContains(search)
+                                    || model.state.projects.contains { $0.id == chat.projectID && ($0.name.localizedCaseInsensitiveContains(search) || $0.path.localizedCaseInsensitiveContains(search)) })
+                            }) { chat in
+                                chatEntry(chat, favorite: true)
+                            }
+                            Divider().padding(.vertical, 6)
+                        }
                         Text(L10n.text("Папки проектов", "Project folders"))
                             .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                             .padding(.horizontal, 8).padding(.top, 8).padding(.bottom, 4)
@@ -215,6 +230,25 @@ struct DeskView: View {
             }
             .buttonStyle(PointerButtonStyle(base: .plain)).help(project.path)
             .accessibilityValue(isExpanded ? L10n.text("Развёрнуто", "Expanded") : L10n.text("Свёрнуто", "Collapsed"))
+            .draggable(ProjectDrag(id: project.id))
+            .dropDestination(for: ProjectDrag.self) { items, _ in
+                guard items.count == 1, let item = items.first else { return false }
+                return model.moveProject(item.id, to: project.id)
+            } isTargeted: { targeted in
+                if targeted { dropTargetProjectID = project.id }
+                else if dropTargetProjectID == project.id { dropTargetProjectID = nil }
+            }
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(dropTargetProjectID == project.id ? Color.accentColor : .clear, lineWidth: 2).allowsHitTesting(false))
+            .contextMenu {
+                if let index = model.state.projects.firstIndex(where: { $0.id == project.id }) {
+                    Button(L10n.text("Переместить выше", "Move up")) {
+                        _ = model.moveProject(project.id, to: model.state.projects[index - 1].id)
+                    }.disabled(index == 0)
+                    Button(L10n.text("Переместить ниже", "Move down")) {
+                        _ = model.moveProject(project.id, to: model.state.projects[index + 1].id)
+                    }.disabled(index == model.state.projects.count - 1)
+                }
+            }
             .background(model.projectID == project.id && model.chatID == nil && !model.showingJobs ? Color.primary.opacity(0.07) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
 
             SidebarDisclosure(isExpanded: isExpanded, animation: sidebarAnimation) {
@@ -298,11 +332,21 @@ struct DeskView: View {
         }
     }
 
-    private func chatEntry(_ chat: Chat) -> some View {
+    private func chatEntry(_ chat: Chat, favorite: Bool = false) -> some View {
         Button { Task { await model.openChat(chat) } } label: {
             HStack(spacing: 8) {
                 Image(systemName: chat.isArchived ? "archivebox" : "bubble.left").foregroundStyle(.secondary)
-                Text(chat.title).lineLimit(2)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(chat.title).lineLimit(2)
+                    if favorite, let project = model.state.projects.first(where: { $0.id == chat.projectID }) {
+                        Text(project.name).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                            .help(project.path)
+                    }
+                }
+                if chat.isPinned {
+                    Image(systemName: "pin.fill").font(.caption2).foregroundStyle(.secondary)
+                        .accessibilityLabel(L10n.text("В избранном", "In favorites"))
+                }
                 Spacer(minLength: 0)
                 if model.pending.contains(where: { $0.threadID == chat.id }) || chat.hasUnreadResponse {
                     Circle().fill(.blue).frame(width: 7, height: 7)
@@ -316,6 +360,12 @@ struct DeskView: View {
             .background(model.chatID == chat.id && !model.showingJobs ? Color.primary.opacity(0.1) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
             .disabled(model.isChangingChat(chat.id))
             .contextMenu {
+                Button {
+                    model.toggleChatPin(chat.id)
+                } label: {
+                    Label(chat.isPinned ? L10n.text("Открепить из избранного", "Unpin from favorites") : L10n.text("Закрепить в избранном", "Pin to favorites"),
+                          systemImage: chat.isPinned ? "pin.slash" : "pin")
+                }
                 Button(L10n.text("Переименовать…", "Rename…")) { renaming = chat; newTitle = chat.title }
                 Button(chat.isArchived ? L10n.text("Восстановить из архива", "Restore from archive") : L10n.text("Архивировать", "Archive")) {
                     Task {
@@ -698,4 +748,17 @@ struct SettingsView: View {
             }
         }.formStyle(.grouped)
     }
+}
+
+
+/// A private drag type prevents dropped text/files from changing project order.
+private struct ProjectDrag: Codable, Transferable {
+    let id: UUID
+    static var transferRepresentation: some TransferRepresentation {
+        CodableRepresentation(contentType: .contextDeskProject)
+    }
+}
+
+private extension UTType {
+    static let contextDeskProject = UTType(exportedAs: "com.contextdesk.project-order")
 }

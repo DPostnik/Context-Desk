@@ -29,6 +29,8 @@ public struct Chat: Identifiable, Codable, Hashable, Sendable {
     /// The latest completion remains unread until its transcript end is visible.
     public var unreadCompletionID: String?
     public var hasUnreadResponse: Bool { unreadCompletionID != nil }
+    public var pinned: Bool?
+    public var isPinned: Bool { pinned == true }
     public var archived: Bool?
     public var isArchived: Bool { archived == true }
     public var route: RequestRoute?
@@ -60,6 +62,22 @@ public struct SavedState: Codable, Sendable {
     public var chats: [Chat] = []
     public var model: String = ""
     public init() {}
+
+    /// Move onto a project's position: before it when moving up, after it when moving down.
+    @discardableResult public mutating func moveProject(_ id: UUID, to targetID: UUID) -> Bool {
+        guard id != targetID,
+              let source = projects.firstIndex(where: { $0.id == id }),
+              let target = projects.firstIndex(where: { $0.id == targetID }) else { return false }
+        let project = projects.remove(at: source)
+        projects.insert(project, at: target)
+        return true
+    }
+
+    @discardableResult public mutating func toggleChatPin(_ id: String) -> Bool {
+        guard let index = chats.firstIndex(where: { $0.id == id }) else { return false }
+        chats[index].pinned = !chats[index].isPinned
+        return true
+    }
 }
 public struct TranscriptItem: Identifiable, Sendable, Equatable {
     public var id: String

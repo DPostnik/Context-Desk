@@ -309,6 +309,16 @@ private struct ChatRunState {
         accountLimits = nil
         limitsError = nil
     }
+    func moveProject(_ id: UUID, to targetID: UUID) -> Bool {
+        guard state.moveProject(id, to: targetID) else { return false }
+        persist()
+        return true
+    }
+
+    func toggleChatPin(_ id: String) {
+        if state.toggleChatPin(id) { persist() }
+    }
+
     func openProject() {
         let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false
         panel.allowsMultipleSelection = true; panel.prompt = L10n.text("Добавить папки", "Add folders")
