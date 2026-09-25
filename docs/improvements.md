@@ -112,6 +112,12 @@ Compact chat row follow-up on 2026-09-25:
 - Status: delivered in the rebuilt signed app bundle; running sessions were not restarted.
 - Validation: `zsh scripts/build-app.sh` succeeded; signature and current-source digest verification passed. `zsh scripts/test.sh` passed all 55 tests, including native drag routing, mouse tracking and persisted ordering. `git diff --check` passed. Source review confirmed the previous label sizing values; no live visual check was performed.
 
+Additional compact-row clarification on 2026-09-25:
+
+- Source: user clarified that chat row height is still excessive and requested smaller padding (the preceding mention of width was corrected).
+- Behavior: reduced the shared chat label's vertical padding from 8 to 4 points per side, reducing row height by 8 points for the same content. Applies to project, archive and favorite chat rows. Horizontal padding, text styles, wrapping and native drag behavior are unchanged. This supersedes the 8-point vertical padding described above; no product copy changed.
+- Status/validation: delivered after successful `zsh scripts/build-app.sh`; signature, current-source digest and `git diff --check` verified. Reviewed the one-line layout-only change; no new tests were added and the previously passing 55-test suite was not rerun for padding alone. No live visual check or running-session restart was performed.
+
 ### IMP-028 follow-up — Bilingual plugin UI and clearer setup — 2026-09-25
 
 - Source: user report that English mode shows Russian plugin text and external connection controls are unclear; request to require both languages for every change.

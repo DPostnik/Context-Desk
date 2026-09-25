@@ -400,7 +400,7 @@ struct DeskView: View {
                         .accessibilityLabel(chat.hasUnreadResponse ? L10n.text("Непрочитанный ответ", "Unread response") : L10n.text("Требуется действие", "Action required"))
                 }
                 if model.isBusy(threadID: chat.id) { ProgressView().controlSize(.small) }
-            }.font(.callout).padding(.horizontal, 16).padding(.vertical, 8)
+            }.font(.callout).padding(.horizontal, 16).padding(.vertical, 4)
                 .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
     }
 
