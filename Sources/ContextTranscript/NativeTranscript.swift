@@ -65,7 +65,9 @@ public struct NativeTranscript: NSViewRepresentable {
         transcript.drawsBackground = false
         transcript.isRichText = true; transcript.importsGraphics = false
         transcript.isAutomaticLinkDetectionEnabled = false
-        transcript.linkTextAttributes = [:]
+        // Keep our link styling, but explicitly retain the hand cursor for links
+        // and linked attachments such as the message-copy icon.
+        transcript.linkTextAttributes = [.cursor: NSCursor.pointingHand]
         transcript.minSize = NSSize(width: 0, height: 0)
         transcript.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         transcript.isVerticallyResizable = true; transcript.isHorizontallyResizable = false
