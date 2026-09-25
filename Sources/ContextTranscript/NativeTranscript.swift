@@ -237,11 +237,16 @@ public struct NativeTranscript: NSViewRepresentable {
         var segment: [TranscriptItem] = []
         func appendSegment(active: Bool) {
             let actions = segment.filter { $0.kind == "activity" }
+            // Show one copy control only after the response finishes. Older history
+            // may omit phase, so fall back to its last non-commentary assistant item.
+            let finalAnswer = active ? nil : (segment.last { $0.kind == "assistant" && $0.phase == "final_answer" && !$0.text.isEmpty }
+                ?? segment.last { $0.kind == "assistant" && $0.phase != "commentary" && !$0.text.isEmpty })
             var inserted = false
             var showedAuthor = false
             for var item in segment {
                 if item.kind == "assistant" {
                     item.showsAuthor = !showedAuthor
+                    item.showsCopyControl = item.id == finalAnswer?.id
                     showedAuthor = true
                 }
                 guard item.kind == "activity" else { result.append(item); continue }
@@ -314,7 +319,7 @@ public struct NativeTranscript: NSViewRepresentable {
             result.append(isCode ? NSAttributedString(string: block, attributes: attributes)
                           : TranscriptLinks.render(block, attributes: attributes))
         }
-        if (item.kind == "user" || item.kind == "assistant"), !item.text.isEmpty {
+        if (item.kind == "user" || item.kind == "assistant"), item.showsCopyControl, !item.text.isEmpty {
             if !result.string.hasSuffix("\n") { result.append(NSAttributedString(string: "\n")) }
             let description = L10n.text("Скопировать полный текст сообщения", "Copy the full message text")
             let attachment = NSTextAttachment()
@@ -372,7 +377,7 @@ public struct NativeTranscript: NSViewRepresentable {
         if value.hasPrefix("contextdesk-copy:") {
             let id = String(value.dropFirst("contextdesk-copy:".count))
             guard let item = previous.first(where: { $0.id == id && ($0.kind == "user" || $0.kind == "assistant") }),
-                  !item.text.isEmpty else { return true }
+                  item.showsCopyControl, !item.text.isEmpty else { return true }
             // Copy the source body only, never rendered headers, disclosures or adjacent messages.
             pasteboard.clearContents()
             pasteboard.setString(item.text, forType: .string)

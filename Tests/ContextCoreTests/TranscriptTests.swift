@@ -264,7 +264,7 @@ import ContextTranscript
     storage.enumerateAttribute(.link, in: NSRange(location: 0, length: storage.length)) { value, _, _ in
         if let value = value as? String, value.hasPrefix("contextdesk-copy:") { copyLinks.append(value) }
     }
-    #expect(copyLinks == ["contextdesk-copy:u", "contextdesk-copy:comment", "contextdesk-copy:answer"])
+    #expect(copyLinks == ["contextdesk-copy:u", "contextdesk-copy:answer"])
     var icons = 0
     storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
         guard let attachment = value as? NSTextAttachment else { return }
@@ -273,7 +273,7 @@ import ContextTranscript
             L10n.text("Скопировать полный текст сообщения", "Copy the full message text"))
         icons += 1
     }
-    #expect(icons == 3)
+    #expect(icons == 2)
     _ = view.textView(view.transcript, clickedOnLink: "contextdesk-metrics:answer", at: 0)
     _ = view.textView(view.transcript, clickedOnLink: "contextdesk-copy:answer", at: 0)
     #expect(pasteboard.string(forType: .string) == body)
@@ -284,6 +284,7 @@ import ContextTranscript
     _ = view.textView(view.transcript, clickedOnLink: "contextdesk-copy:answer", at: 0)
     #expect(pasteboard.string(forType: .string) == body + "Продолжение")
     let changes = pasteboard.changeCount
+    _ = view.textView(view.transcript, clickedOnLink: "contextdesk-copy:comment", at: 0)
     _ = view.textView(view.transcript, clickedOnLink: "contextdesk-copy:tool", at: 0)
     _ = view.textView(view.transcript, clickedOnLink: "contextdesk-copy:unknown", at: 0)
     #expect(pasteboard.changeCount == changes)
@@ -297,4 +298,35 @@ import ContextTranscript
     view.update(items: [], conversationID: "other", followOutput: false)
     _ = view.textView(view.transcript, clickedOnLink: "contextdesk-copy:answer", at: 0)
     #expect(pasteboard.changeCount == changes)
+}
+
+@Test @MainActor func assistantCopyAppearsOnlyOnceAfterFinalResponse() throws {
+    let view = TranscriptScrollView()
+    var items = [TranscriptItem(id: "c1", kind: "assistant", text: "Начинаю", phase: "commentary"),
+                 TranscriptItem(id: "tool", kind: "activity", text: "Проверка"),
+                 TranscriptItem(id: "c2", kind: "assistant", text: "Проверяю", phase: "commentary")]
+    func copyLinks() throws -> [String] {
+        let storage = try #require(view.transcript.textStorage)
+        var links: [String] = []
+        storage.enumerateAttribute(.link, in: NSRange(location: 0, length: storage.length)) { value, _, _ in
+            if let value = value as? String, value.hasPrefix("contextdesk-copy:") { links.append(value) }
+        }
+        return links
+    }
+    view.update(items: items, conversationID: "t", followOutput: false, isWorking: true)
+    #expect(try copyLinks().isEmpty)
+    items.append(TranscriptItem(id: "final", kind: "assistant", text: "Итог", phase: "final_answer"))
+    view.update(items: items, conversationID: "t", followOutput: false, isWorking: true)
+    #expect(try copyLinks().isEmpty)
+    view.update(items: items, conversationID: "t", followOutput: false)
+    #expect(try copyLinks() == ["contextdesk-copy:final"])
+    items += [TranscriptItem(id: "u", kind: "user", text: "Дальше"),
+              TranscriptItem(id: "next", kind: "assistant", text: "Работаю", phase: "commentary")]
+    view.update(items: items, conversationID: "t", followOutput: false, isWorking: true)
+    #expect(try copyLinks() == ["contextdesk-copy:final", "contextdesk-copy:u"])
+    view.update(items: items, conversationID: "t", followOutput: false)
+    #expect(try copyLinks() == ["contextdesk-copy:final", "contextdesk-copy:u"])
+    view.update(items: [TranscriptItem(id: "old1", kind: "assistant", text: "Старый прогресс"),
+                       TranscriptItem(id: "old2", kind: "assistant", text: "Старый итог")], conversationID: "history", followOutput: false)
+    #expect(try copyLinks() == ["contextdesk-copy:old2"])
 }

@@ -148,6 +148,7 @@ public struct TranscriptItem: Identifiable, Sendable, Equatable {
     public var phase: String?
     public var turnID: String?
     public var showsAuthor = true
+    public var showsCopyControl = true
     public var timing: ResponseTiming?
     public init(id: String, kind: String, text: String, phase: String? = nil, timing: ResponseTiming? = nil) {
         self.id = id; self.kind = kind; self.text = text; self.phase = phase; self.timing = timing
