@@ -20,7 +20,7 @@ The bundled app is ad-hoc signed for this Mac, not notarized for distribution. I
 
 The standalone Headroom plugin is installed with `zsh plugins/headroom/install.sh` (requires `uv` and Python 3.12). Dependencies are pinned with hashes in `plugins/headroom/headroom.lock`. The generic plugin host starts/stops the separately installed proxy on a dynamically assigned loopback port. It does not run `headroom init` or edit global Codex settings.
 
-New installations default to **Напрямую**. Explicitly saved choices and existing chat routes are preserved. Install Headroom separately only if you want it, select it in Settings → Внешние интеграции, and reconnect before creating a new Headroom chat; the current route appears below the composer. The same settings section shows proxy status and process-wide request/token counters.
+New installations default to **Без плагина / No plugin**. Explicitly saved choices and existing chat routes are preserved. Install Headroom separately only if you want it, select it in Settings → Плагины / Plugins, and reconnect before creating a new Headroom chat; the current route appears below the composer. The same settings section shows proxy status and process-wide request/token counters.
 
 ## Current features
 

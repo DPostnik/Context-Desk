@@ -28,7 +28,7 @@ Headroom may remove formatting or compact schemas without reducing every request
 
 ## Routing and failures
 
-New installations and older saved chats without a route use Direct. Explicit saved route preferences remain unchanged. Headroom starts only when selected as the default or needed by an existing Headroom chat. Each chat persists its route. Change the default in Settings → Внешние интеграции and create a new chat to use the new route. Thread start and resume explicitly pass the corresponding provider ID.
+New installations and older saved chats without a route use Direct. Explicit saved route preferences remain unchanged. Headroom starts only when selected as the default or needed by an existing Headroom chat. Each chat persists its route. Change the default in Settings → Плагины / Plugins and create a new chat to use the new route. Thread start and resume explicitly pass the corresponding provider ID.
 
 The app supplies `contextdesk_headroom` through process-local Codex overrides, with `name = "OpenAI"`, `wire_api = "responses"`, ChatGPT authentication and WebSockets enabled. The exact display name preserves the remote-compaction capability check documented in upstream issue #3407. Existing Direct chats continue to use `openai`.
 

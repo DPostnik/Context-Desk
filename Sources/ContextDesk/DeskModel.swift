@@ -139,14 +139,25 @@ private struct ChatRunState {
         [.direct] + Set(plugins.map(\.route) + [defaultRoute, currentRoute] + state.chats.compactMap(\.route))
             .filter { $0 != .direct }.sorted { $0.rawValue < $1.rawValue }
     }
-    func routeTitle(_ route: RequestRoute) -> String {
-        route == .direct ? "Напрямую" : plugins.first(where: { $0.id == route.rawValue })?.manifest.title ?? "\(route.rawValue) (не установлен)"
+    func routeTitle(_ route: RequestRoute, language: AppLanguage = L10n.language) -> String {
+        if route == .direct { return L10n.text("Без плагина", "No plugin", language: language) }
+        return plugins.first(where: { $0.id == route.rawValue })?.manifest.localizedTitle(language: language)
+            ?? L10n.text("\(route.rawValue) (не установлен)", "\(route.rawValue) (not installed)", language: language)
     }
     func routeIsAvailable(_ route: RequestRoute) -> Bool { route == .direct || pluginStatuses[route.rawValue] != nil }
-    func routeMessage(_ route: RequestRoute) -> String {
-        if route == .direct { return "Прямое подключение" }
-        return pluginMessages[route.rawValue] ?? (plugins.contains { $0.id == route.rawValue }
-            ? "Переподключись, чтобы запустить выбранный плагин" : "Плагин не установлен. Маршрут разговора сохранён.")
+    func routeMessage(_ route: RequestRoute, language: AppLanguage = L10n.language) -> String {
+        if route == .direct { return L10n.text("Codex работает напрямую, без обработки запросов плагином.", "Codex works directly, without a plugin processing requests.", language: language) }
+        if connecting && neededPluginIDs.contains(route.rawValue) {
+            return L10n.text("Подключение…", "Connecting…", language: language)
+        }
+        if let status = pluginStatuses[route.rawValue] { return status.localizedDetail(language: language) }
+        if let message = pluginMessages[route.rawValue] { return message }
+        guard plugins.contains(where: { $0.id == route.rawValue }) else {
+            return L10n.text("Плагин не установлен. Выбор для этого чата сохранён.", "Plugin is not installed. This chat's selection has been preserved.", language: language)
+        }
+        return neededPluginIDs.contains(route.rawValue)
+            ? L10n.text("Установлен. Нажми «Применить выбор», чтобы подключить.", "Installed. Click Apply selection to connect.", language: language)
+            : L10n.text("Установлен, но не используется.", "Installed, but not in use.", language: language)
     }
     func refreshPlugins() {
         guard !anyBusy, !connecting else { return }
@@ -171,7 +182,7 @@ private struct ChatRunState {
         var arguments: [String] = []
         for id in neededPluginIDs.sorted() {
             guard let plugin = plugins.first(where: { $0.id == id }) else {
-                pluginMessages[id] = "Плагин не установлен. Установи его и переподключись."
+                pluginMessages[id] = L10n.text("Плагин не установлен. Установи его и нажми «Применить выбор».", "Plugin is not installed. Install it, then click Apply selection.")
                 continue
             }
             let runtime = ProviderPluginRuntime(plugin: plugin)
@@ -180,7 +191,6 @@ private struct ChatRunState {
                 let status = try await runtime.status()
                 arguments += try plugin.providerArguments(endpoint: endpoint)
                 pluginStatuses[id] = status
-                pluginMessages[id] = pluginStatuses[id]?.detail
                 pluginRuntimes[id] = runtime
             } catch {
                 await runtime.stop()
@@ -203,7 +213,6 @@ private struct ChatRunState {
                                 let status = try await runtime.status()
                                 guard !Task.isCancelled else { return }
                                 self.pluginStatuses[id] = status
-                                self.pluginMessages[id] = self.pluginStatuses[id]?.detail
                             } catch {
                                 guard !Task.isCancelled else { return }
                                 self.pluginStatuses[id] = nil
@@ -216,7 +225,7 @@ private struct ChatRunState {
                                     await self.connection.stop()
                                     self.connected = false
                                     self.resetRuns(); self.pending.removeAll()
-                                    self.error = "Плагин отключился. Запрос не повторён."
+                                    self.error = L10n.text("Плагин отключился. Запрос не повторён.", "The plugin disconnected. The request was not retried.")
                                     return
                                 }
                             }

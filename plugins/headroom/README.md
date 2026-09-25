@@ -1,6 +1,6 @@
 # Headroom provider plugin for Context Desk
 
-This directory is a standalone, separately installable plugin. It has no Swift package dependency on Context Desk and is not included in the app bundle. It implements Context Desk provider protocol v1 using Headroom 0.38.0, pinned with dependency hashes. Plugin version: 1.0.0.
+This directory is a standalone, separately installable plugin. It has no Swift package dependency on Context Desk and is not included in the app bundle. It implements Context Desk provider protocol v1 using Headroom 0.38.0, pinned with dependency hashes. Plugin version: 1.0.1.
 
 ## Install
 
@@ -12,7 +12,7 @@ zsh install.sh
 
 From the app repository the equivalent command is `zsh plugins/headroom/install.sh`; `scripts/install-headroom.sh` remains a compatibility wrapper. Installation publishes to `~/Library/Application Support/Context Desk/plugins/headroom`. `CONTEXTDESK_PLUGINS_DIR` overrides the parent directory for isolated installation tests.
 
-In Context Desk, open Settings → Внешние интеграции, refresh the plugin list, select Headroom for new conversations, and reconnect. Existing conversations with route `headroom` keep that route. Direct conversations stay Direct.
+In Context Desk, open Settings → Плагины / Plugins, refresh the plugin list, select Headroom for new conversations, and click **Применить выбор / Apply selection**. Existing conversations with route `headroom` keep that route. Direct conversations stay Direct.
 
 For an upgrade from the former built-in adapter, run this installer once. The old `Context Desk/headroom` directory is left untouched, and no credentials or state are migrated from it. The new plugin keeps its own private runtime data under `plugins/headroom/data`.
 
@@ -30,4 +30,4 @@ Status metrics cover this plugin process across conversations; token reductions 
 
 ## Independent distribution
 
-`zsh package.sh` produces `dist/Headroom-1.0.0.contextdesk-plugin.zip`, containing only this plugin's installer, manifest, runner, pinned requirements and instructions. The recipient extracts the archive and runs `zsh headroom/install.sh`; no Context Desk source checkout or Swift compilation is needed to install the plugin. The archive installs dependencies on the recipient's Mac instead of shipping a non-relocatable Python virtual environment.
+`zsh package.sh` produces `dist/Headroom-1.0.1.contextdesk-plugin.zip`, containing only this plugin's installer, manifest, runner, pinned requirements and instructions. The recipient extracts the archive and runs `zsh headroom/install.sh`; no Context Desk source checkout or Swift compilation is needed to install the plugin. The archive installs dependencies on the recipient's Mac instead of shipping a non-relocatable Python virtual environment.

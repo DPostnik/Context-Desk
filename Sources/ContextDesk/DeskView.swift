@@ -702,7 +702,7 @@ struct SettingsView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
-            Section(L10n.text("Подключение", "Connection")) {
+            Section(L10n.text("Аккаунт Codex", "Codex account")) {
                 LabeledContent(L10n.text("Аккаунт", "Account"), value: model.accountLabel)
                 if model.authenticated { Button(L10n.text("Выйти из аккаунта этого приложения", "Sign out of this app")) { Task { await model.logout() } }.disabled(model.anyBusy) }
                 else { Button(L10n.text("Войти через ChatGPT", "Sign in with ChatGPT")) { Task { await model.login() } }.disabled(!model.connected) }
@@ -712,33 +712,45 @@ struct SettingsView: View {
                 Text(model.notificationStatus).font(.callout)
                 Button(L10n.text("Разрешить уведомления", "Allow notifications")) { Task { await model.enableNotifications() } }
             }
-            Section(L10n.text("Внешние интеграции", "External integrations")) {
-                Picker(L10n.text("Новые разговоры", "New conversations"), selection: Binding(get: { model.defaultRoute }, set: { model.selectDefaultRoute($0) })) {
+            Section(L10n.text("Плагины", "Plugins")) {
+                Text(L10n.text("Плагины дополнительно обрабатывают запросы Codex. Они необязательны: выбери «Без плагина», чтобы работать напрямую.", "Plugins add processing to Codex requests. They are optional: choose No plugin to work directly."))
+                    .font(.callout).foregroundStyle(.secondary)
+                Picker(L10n.text("Для новых чатов", "For new chats"), selection: Binding(get: { model.defaultRoute }, set: { model.selectDefaultRoute($0) })) {
                     ForEach(model.availableRoutes, id: \.self) { Text(model.routeTitle($0)).tag($0) }
                 }.pointingHandCursor()
                 Text(model.routeMessage(model.defaultRoute)).font(.callout).foregroundStyle(.secondary)
+                Button(model.connecting ? L10n.text("Подключение…", "Connecting…") : L10n.text("Применить выбор", "Apply selection")) {
+                    Task { await model.connect() }
+                }.disabled(model.anyBusy || model.connecting)
+                Text(L10n.text("Переподключает Codex, чтобы запустить выбранные плагины. Дождись завершения текущих задач. Существующие чаты сохраняют свой выбор плагина.", "Reconnects Codex to start the selected plugins. Wait for current tasks to finish. Existing chats keep their plugin selection."))
+                    .font(.caption).foregroundStyle(.secondary)
+                if model.plugins.isEmpty {
+                    Text(L10n.text("Плагины пока не установлены. Codex может работать без них.", "No plugins installed yet. Codex can work without them."))
+                        .font(.callout).foregroundStyle(.secondary)
+                }
                 ForEach(model.plugins) { plugin in
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("\(plugin.manifest.title) · \(plugin.manifest.version)").font(.headline)
+                        Text("\(plugin.manifest.localizedTitle()) · \(plugin.manifest.version)").font(.headline)
+                        if let description = plugin.manifest.descriptionTranslations {
+                            Text(description.text()).font(.callout).foregroundStyle(.secondary)
+                        }
                         Text(model.routeMessage(plugin.route)).font(.caption).foregroundStyle(.secondary)
                         if let status = model.pluginStatuses[plugin.id] {
                             ForEach(status.metrics) { metric in
-                                LabeledContent(metric.title, value: String(metric.value))
+                                LabeledContent(metric.localizedTitle(), value: String(metric.value))
                             }
                         }
                     }
                 }
                 ForEach(model.pluginIssues, id: \.self) { Text($0).font(.caption).foregroundStyle(.orange) }
-                Button("Обновить список плагинов") { model.refreshPlugins() }.disabled(model.anyBusy || model.connecting)
-                Button("Открыть папку плагинов") {
+                Button(L10n.text("Обновить список", "Refresh list")) { model.refreshPlugins() }.disabled(model.anyBusy || model.connecting)
+                Button(L10n.text("Открыть папку плагинов", "Open plugins folder")) {
                     do {
                         try FileManager.default.createDirectory(at: model.pluginDirectory, withIntermediateDirectories: true)
                         NSWorkspace.shared.open(model.pluginDirectory)
                     } catch { model.error = error.localizedDescription }
                 }
-                Text("Установи плагин отдельно, обнови список и переподключись. Запускаются только плагины выбранного маршрута и сохранённых разговоров.")
-                    .font(.caption).foregroundStyle(.secondary)
-                Text(L10n.text("Маршрут сохраняется для каждого разговора. Чтобы изменить его, создай новый чат.", "The route is saved for each conversation. Create a new chat to change it."))
+                Text(L10n.text("Установи плагин с помощью его установщика, затем нажми «Обновить список».", "Use the plugin's installer, then click Refresh list."))
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section(L10n.text("Данные", "Data")) {

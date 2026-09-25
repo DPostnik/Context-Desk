@@ -26,3 +26,24 @@ import Testing
     #expect(AppLanguage.russian.locale.language.languageCode?.identifier == "ru")
     #expect(AppLanguage.english.locale.language.languageCode?.identifier == "en")
 }
+
+@Test func pluginStatusAndMetricsChooseTheRequestedLanguage() throws {
+    let payload = Data(#"{"protocolVersion":1,"pluginID":"example","pluginVersion":"1","instance":"test","detail":"Исходный текст","detailTranslations":{"ru":"Подключён","en":"Connected"},"metrics":[{"id":"requests","title":"Запросов","value":3,"titleTranslations":{"ru":"Запросов","en":"Requests"}}]}"#.utf8)
+    let status = try JSONDecoder().decode(PluginStatus.self, from: payload)
+    #expect(status.localizedDetail(language: .english) == "Connected")
+    #expect(status.localizedDetail(language: .russian) == "Подключён")
+    #expect(status.metrics[0].localizedTitle(language: .english) == "Requests")
+    #expect(status.metrics[0].localizedTitle(language: .russian) == "Запросов")
+    let legacy = Data(#"{"protocolVersion":1,"pluginID":"example","pluginVersion":"1","instance":"test","detail":"Third-party text","metrics":[{"id":"requests","title":"Custom label","value":3}]}"#.utf8)
+    let unchanged = try JSONDecoder().decode(PluginStatus.self, from: legacy)
+    #expect(unchanged.localizedDetail(language: .english) == "Third-party text")
+    #expect(unchanged.metrics[0].localizedTitle(language: .russian) == "Custom label")
+}
+
+@Test func pluginTranslationsRequireBothLanguagesWhenProvided() throws {
+    #expect(throws: DecodingError.self) {
+        try JSONDecoder().decode(PluginTranslations.self, from: Data(#"{"ru":"Текст"}"#.utf8))
+    }
+    let blank = try JSONDecoder().decode(PluginTranslations.self, from: Data(#"{"ru":"Текст","en":" "}"#.utf8))
+    #expect(!blank.isValid(maxLength: 100))
+}

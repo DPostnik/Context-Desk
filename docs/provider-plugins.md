@@ -19,6 +19,10 @@ This version supports process-based, loopback Responses proxies. Arbitrary UI ex
 
 The directory name must match the ID. IDs match `[a-z][a-z0-9_]{0,63}`; `direct` is reserved. Executables must use relative paths without `.` or `..` segments. Arguments are passed directly to `Process`, never through a shell. Manifests with unknown schema versions are rejected and displayed as installation issues. Each plugin is responsible for installing its own pinned dependencies; the app does not download code or dependencies during discovery.
 
+## Interface languages
+
+Protocol v1 accepts optional bilingual fields without changing route IDs or wire version: the manifest may supply `titleTranslations` and `descriptionTranslations`, status may supply `detailTranslations`, and each metric may supply `titleTranslations`. Each provided object must contain non-empty `ru` and `en` strings; display limits apply to both. For example: `"titleTranslations": {"ru":"Запросов", "en":"Requests"}`. The host chooses the active app language. Original `title` and `detail` remain fallback fields for older hosts/plugins. First-party plugins are required to ship both translations.
+
 ## Process and readiness
 
 The working directory is the installed plugin folder. The host appends:

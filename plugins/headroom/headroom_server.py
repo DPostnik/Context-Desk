@@ -8,6 +8,20 @@ from pathlib import Path
 import socket
 
 
+def status_payload(instance, version, metrics):
+    detail = f"Headroom {version} · сжатие контекста без потери данных"
+    return {"protocolVersion": 1, "pluginID": "headroom", "pluginVersion": "1.0.1",
+            "instance": instance, "detail": detail,
+            "detailTranslations": {"ru": detail, "en": f"Headroom {version} · lossless context compression"},
+            "metrics": [
+                {"id": "requests", "title": "Обработано запросов", "value": metrics.requests_total,
+                 "titleTranslations": {"ru": "Обработано запросов", "en": "Requests processed"}},
+                {"id": "failed", "title": "Запросов с ошибкой", "value": metrics.requests_failed,
+                 "titleTranslations": {"ru": "Запросов с ошибкой", "en": "Failed requests"}},
+                {"id": "tokensSaved", "title": "Убрано токенов за запуск", "value": metrics.tokens_saved_total,
+                 "titleTranslations": {"ru": "Убрано токенов за запуск", "en": "Context tokens removed this session"}}] }
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--state", required=True)
@@ -57,12 +71,8 @@ def main():
     @app.get("/contextdesk/status")
     async def status():
         metrics = app.state.proxy.metrics
-        return {"protocolVersion": 1, "pluginID": "headroom", "pluginVersion": "1.0.0",
-                "instance": args.instance, "detail": f"Headroom {version} · сжатие без потери данных",
-                "metrics": [
-                    {"id": "requests", "title": "Запросов через прокси", "value": metrics.requests_total},
-                    {"id": "failed", "title": "Ошибок", "value": metrics.requests_failed},
-                    {"id": "tokensSaved", "title": "Убрано токенов за запуск", "value": metrics.tokens_saved_total}] }
+        return status_payload(args.instance, version, metrics)
+
 
     # Headroom mounts its dashboard at /; put our health route before that mount.
     app.router.routes.insert(0, app.router.routes.pop())

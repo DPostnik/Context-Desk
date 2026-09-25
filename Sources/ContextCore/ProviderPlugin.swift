@@ -1,5 +1,14 @@
 import Foundation
 
+public struct PluginTranslations: Codable, Sendable, Equatable {
+    public let ru: String
+    public let en: String
+    public func text(language: AppLanguage = L10n.language) -> String { L10n.text(ru, en, language: language) }
+    func isValid(maxLength: Int) -> Bool {
+        !ru.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !en.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && ru.count <= maxLength && en.count <= maxLength
+    }
+}
+
 public struct PluginManifest: Codable, Sendable, Equatable {
     public let schemaVersion: Int
     public let id: String
@@ -7,14 +16,21 @@ public struct PluginManifest: Codable, Sendable, Equatable {
     public let version: String
     public let executable: String
     public let arguments: [String]
+    public let titleTranslations: PluginTranslations?
+    public let descriptionTranslations: PluginTranslations?
+    public func localizedTitle(language: AppLanguage = L10n.language) -> String {
+        titleTranslations?.text(language: language) ?? title
+    }
 
     public func validate() throws {
         guard schemaVersion == 1, id != "direct",
               id.range(of: #"^[a-z][a-z0-9_]{0,63}$"#, options: .regularExpression) != nil,
               !title.isEmpty, title.count <= 100, !version.isEmpty, version.count <= 64,
+              titleTranslations?.isValid(maxLength: 100) ?? true,
+              descriptionTranslations?.isValid(maxLength: 512) ?? true,
               Self.isRelativePath(executable), arguments.count <= 16,
               arguments.allSatisfy({ $0.count <= 1024 && !$0.contains("\0") }) else {
-            throw ClientFailure("Некорректный или несовместимый манифест плагина")
+            throw ClientFailure(L10n.text("Некорректный или несовместимый манифест плагина", "Invalid or incompatible plugin manifest"))
         }
     }
     private static func isRelativePath(_ path: String) -> Bool {
@@ -31,17 +47,17 @@ public struct ProviderPlugin: Identifiable, Sendable {
     public init(directory: URL) throws {
         let file = directory.appendingPathComponent("plugin.json")
         let data = try Data(contentsOf: file)
-        guard data.count <= 65_536 else { throw ClientFailure("Слишком большой манифест плагина") }
+        guard data.count <= 65_536 else { throw ClientFailure(L10n.text("Слишком большой манифест плагина", "Plugin manifest is too large")) }
         manifest = try JSONDecoder().decode(PluginManifest.self, from: data)
         try manifest.validate()
-        guard directory.lastPathComponent == manifest.id else { throw ClientFailure("ID плагина не совпадает с папкой установки") }
+        guard directory.lastPathComponent == manifest.id else { throw ClientFailure(L10n.text("ID плагина не совпадает с папкой установки", "Plugin ID does not match its installation folder")) }
         self.directory = directory
     }
     public func providerArguments(endpoint: URL) throws -> [String] {
         guard endpoint.scheme == "http", endpoint.host == "127.0.0.1",
               let port = endpoint.port, (1...65535).contains(port),
               endpoint.path.isEmpty, endpoint.query == nil, endpoint.fragment == nil,
-              endpoint.user == nil, endpoint.password == nil else { throw ClientFailure("Плагин должен использовать локальный адрес") }
+              endpoint.user == nil, endpoint.password == nil else { throw ClientFailure(L10n.text("Плагин должен использовать локальный адрес", "The plugin must use a local address")) }
         // Plugins expose Responses proxies. They cannot supply arbitrary Codex settings.
         let prefix = "model_providers." + route.providerID
         let values = ["\(prefix).name=\"OpenAI\"", "\(prefix).base_url=\"http://127.0.0.1:\(port)/v1\"",
@@ -73,6 +89,10 @@ public struct PluginMetric: Codable, Sendable, Equatable, Identifiable {
     public let id: String
     public let title: String
     public let value: Int
+    public let titleTranslations: PluginTranslations?
+    public func localizedTitle(language: AppLanguage = L10n.language) -> String {
+        titleTranslations?.text(language: language) ?? title
+    }
 }
 public struct PluginStatus: Codable, Sendable, Equatable {
     public let protocolVersion: Int
@@ -81,6 +101,10 @@ public struct PluginStatus: Codable, Sendable, Equatable {
     public let instance: String
     public let detail: String
     public let metrics: [PluginMetric]
+    public let detailTranslations: PluginTranslations?
+    public func localizedDetail(language: AppLanguage = L10n.language) -> String {
+        detailTranslations?.text(language: language) ?? detail
+    }
 }
 
 /// Protocol v1: a separately installed executable serves a loopback Responses proxy.
@@ -108,7 +132,7 @@ public actor ProviderPluginRuntime {
         if let endpoint, process?.isRunning == true { _ = try await status(); return endpoint }
         stop()
         let executable = plugin.directory.appendingPathComponent(plugin.manifest.executable)
-        guard FileManager.default.isExecutableFile(atPath: executable.path) else { throw ClientFailure("Плагин не установлен полностью: \(plugin.manifest.title)") }
+        guard FileManager.default.isExecutableFile(atPath: executable.path) else { throw ClientFailure(L10n.text("Плагин не установлен полностью: \(plugin.manifest.localizedTitle())", "Plugin installation is incomplete: \(plugin.manifest.localizedTitle())")) }
         let root = plugin.directory.appendingPathComponent("data", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         instance = UUID().uuidString
@@ -133,13 +157,13 @@ public actor ProviderPluginRuntime {
             process = child; output = stdout; errors = stderr
             for _ in 0..<600 {
                 try Task.checkCancellation()
-                guard child.isRunning else { throw ClientFailure("Плагин завершился при запуске: \(plugin.manifest.title) (\(child.terminationStatus))") }
+                guard child.isRunning else { throw ClientFailure(L10n.text("Плагин завершился при запуске: \(plugin.manifest.localizedTitle()) (\(child.terminationStatus))", "Plugin exited during startup: \(plugin.manifest.localizedTitle()) (\(child.terminationStatus))")) }
                 if let data = try? Data(contentsOf: ready), data.count <= 4096,
                    let value = try? JSONDecoder().decode(JSONValue.self, from: data) {
                     guard value["instance"].string == instance, value["protocolVersion"].int == 1,
                           value["pluginID"].string == plugin.id,
                           let port = value["port"].int, (1...65535).contains(port) else {
-                        throw ClientFailure("Несовместимый ответ плагина при запуске")
+                        throw ClientFailure(L10n.text("Несовместимый ответ плагина при запуске", "Incompatible plugin startup response"))
                     }
                     let url = URL(string: "http://127.0.0.1:\(port)")!
                     endpoint = url
@@ -148,22 +172,23 @@ public actor ProviderPluginRuntime {
                 }
                 try await Task.sleep(for: .milliseconds(100))
             }
-            throw ClientFailure("Плагин не успел запуститься: \(plugin.manifest.title)")
+            throw ClientFailure(L10n.text("Плагин не успел запуститься: \(plugin.manifest.localizedTitle())", "Plugin startup timed out: \(plugin.manifest.localizedTitle())"))
         } catch { stop(); throw error }
     }
     public func status() async throws -> PluginStatus {
-        guard process?.isRunning == true, let endpoint else { throw ClientFailure("Плагин остановлен: \(plugin.manifest.title)") }
+        guard process?.isRunning == true, let endpoint else { throw ClientFailure(L10n.text("Плагин остановлен: \(plugin.manifest.localizedTitle())", "Plugin is stopped: \(plugin.manifest.localizedTitle())")) }
         let (data, response) = try await session.data(from: endpoint.appendingPathComponent("contextdesk/status"))
         guard (response as? HTTPURLResponse)?.statusCode == 200, data.count <= 65_536,
               response.url?.host == "127.0.0.1", response.url?.port == endpoint.port else {
-            throw ClientFailure("Плагин недоступен: \(plugin.manifest.title)")
+            throw ClientFailure(L10n.text("Плагин недоступен: \(plugin.manifest.localizedTitle())", "Plugin is unavailable: \(plugin.manifest.localizedTitle())"))
         }
         let value = try JSONDecoder().decode(PluginStatus.self, from: data)
         guard value.instance == instance, value.protocolVersion == 1, value.pluginID == plugin.id,
               value.pluginVersion == plugin.manifest.version, value.detail.count <= 1024,
+              value.detailTranslations?.isValid(maxLength: 1024) ?? true,
               value.metrics.count <= 20, Set(value.metrics.map(\.id)).count == value.metrics.count,
-              value.metrics.allSatisfy({ !$0.id.isEmpty && $0.id.count <= 64 && $0.title.count <= 100 }) else {
-            throw ClientFailure("Ответ получен от несовместимого экземпляра плагина")
+              value.metrics.allSatisfy({ !$0.id.isEmpty && $0.id.count <= 64 && $0.title.count <= 100 && ($0.titleTranslations?.isValid(maxLength: 100) ?? true) }) else {
+            throw ClientFailure(L10n.text("Ответ получен от несовместимого экземпляра плагина", "An incompatible plugin instance responded"))
         }
         return value
     }

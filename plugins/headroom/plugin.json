@@ -2,7 +2,17 @@
   "schemaVersion": 1,
   "id": "headroom",
   "title": "Headroom",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "executable": "venv/bin/python",
-  "arguments": ["headroom_server.py"]
+  "arguments": [
+    "headroom_server.py"
+  ],
+  "titleTranslations": {
+    "ru": "Headroom",
+    "en": "Headroom"
+  },
+  "descriptionTranslations": {
+    "ru": "Сокращает объём контекста, отправляемого модели. Счётчики показывают работу плагина за текущий запуск.",
+    "en": "Reduces the context sent to the model. Counters show plugin activity for the current session."
+  }
 }

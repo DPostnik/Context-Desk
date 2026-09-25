@@ -7,7 +7,7 @@ if [[ ! -x "$uv_bin" ]]; then uv_bin="$(command -v uv)"; fi
 # Install only while this plugin is stopped; do not mutate a live runtime.
 if [[ -d "$plugin_root/data" ]]; then
   for ready in "$plugin_root"/data/ready-*.json(N); do
-    print -u2 'Stop Context Desk before updating the Headroom plugin.'
+    print -u2 'Закрой Context Desk перед обновлением плагина. / Quit Context Desk before updating the plugin.'
     exit 1
   done
 fi
@@ -22,4 +22,5 @@ chmod 600 "$plugin_root/headroom_server.py"
 # Publish the manifest last so incomplete new installs are not discovered.
 cp plugin.json "$plugin_root/plugin.json.tmp"
 mv "$plugin_root/plugin.json.tmp" "$plugin_root/plugin.json"
-print 'Плагин Headroom установлен. Обнови список плагинов и переподключись в Context Desk.'
+print 'Headroom установлен. Обнови список в настройках «Плагины» и нажми «Применить выбор».'
+print 'Headroom installed. Refresh the list in Plugins settings, then click Apply selection.'
