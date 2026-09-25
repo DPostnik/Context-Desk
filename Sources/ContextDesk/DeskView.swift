@@ -1,7 +1,5 @@
 import SwiftUI
 import AppKit
-import UniformTypeIdentifiers
-import CoreTransferable
 import ContextCore
 import ContextTranscript
 
@@ -187,10 +185,17 @@ struct DeskView: View {
                 }.frame(maxHeight: 320)
             }.padding(20).frame(width: 350)
     }
+    private func adjacentProjectMove(_ project: Project, offset: Int) -> (() -> Void)? {
+        guard let index = model.state.projects.firstIndex(where: { $0.id == project.id }),
+              model.state.projects.indices.contains(index + offset) else { return nil }
+        let targetID = model.state.projects[index + offset].id
+        return { _ = model.moveProject(project.id, to: targetID) }
+    }
+
     @ViewBuilder private func projectEntries(_ project: Project) -> some View {
         let isExpanded = search.isEmpty ? expandedProjects.contains(project.id) : !collapsedSearchProjects.contains(project.id)
         VStack(spacing: 0) {
-            Button {
+            ProjectHeader(project: project, expanded: isExpanded, activate: {
                 withAnimation(sidebarAnimation) {
                     if isExpanded {
                         expandedProjects.remove(project.id)
@@ -205,7 +210,12 @@ struct DeskView: View {
                         model.selectProject(project.id)
                     }
                 }
-            } label: {
+            }, move: { sourceID in
+                model.moveProject(sourceID, to: project.id)
+            }, targeted: { targeted in
+                if targeted { dropTargetProjectID = project.id }
+                else if dropTargetProjectID == project.id { dropTargetProjectID = nil }
+            }, moveUp: adjacentProjectMove(project, offset: -1), moveDown: adjacentProjectMove(project, offset: 1)) {
                 HStack(alignment: .top, spacing: 9) {
                     Image(systemName: "chevron.right")
                         .font(.caption.weight(.semibold))
@@ -228,27 +238,8 @@ struct DeskView: View {
                 .padding(.horizontal, 8).padding(.vertical, 12)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(PointerButtonStyle(base: .plain)).help(project.path)
-            .accessibilityValue(isExpanded ? L10n.text("Развёрнуто", "Expanded") : L10n.text("Свёрнуто", "Collapsed"))
-            .draggable(ProjectDrag(id: project.id))
-            .dropDestination(for: ProjectDrag.self) { items, _ in
-                guard items.count == 1, let item = items.first else { return false }
-                return model.moveProject(item.id, to: project.id)
-            } isTargeted: { targeted in
-                if targeted { dropTargetProjectID = project.id }
-                else if dropTargetProjectID == project.id { dropTargetProjectID = nil }
-            }
+            .frame(height: 64)
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(dropTargetProjectID == project.id ? Color.accentColor : .clear, lineWidth: 2).allowsHitTesting(false))
-            .contextMenu {
-                if let index = model.state.projects.firstIndex(where: { $0.id == project.id }) {
-                    Button(L10n.text("Переместить выше", "Move up")) {
-                        _ = model.moveProject(project.id, to: model.state.projects[index - 1].id)
-                    }.disabled(index == 0)
-                    Button(L10n.text("Переместить ниже", "Move down")) {
-                        _ = model.moveProject(project.id, to: model.state.projects[index + 1].id)
-                    }.disabled(index == model.state.projects.count - 1)
-                }
-            }
             .background(model.projectID == project.id && model.chatID == nil && !model.showingJobs ? Color.primary.opacity(0.07) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
 
             SidebarDisclosure(isExpanded: isExpanded, animation: sidebarAnimation) {
@@ -760,17 +751,4 @@ struct SettingsView: View {
             }
         }.formStyle(.grouped)
     }
-}
-
-
-/// A private drag type prevents dropped text/files from changing project order.
-private struct ProjectDrag: Codable, Transferable {
-    let id: UUID
-    static var transferRepresentation: some TransferRepresentation {
-        CodableRepresentation(contentType: .contextDeskProject)
-    }
-}
-
-private extension UTType {
-    static let contextDeskProject = UTType(exportedAs: "com.contextdesk.project-order")
 }
