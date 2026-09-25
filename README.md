@@ -2,6 +2,8 @@
 
 A personal native macOS client for Codex. SwiftUI/AppKit, Foundation processes and SQLite; no Electron, browser engine or local web server.
 
+The long-term direction is an agent-independent development workspace with separate agent and request-optimization integrations. See [Project vision](VISION.md) for the accepted direction, ownership boundaries and the distinction between current support and planned architecture.
+
 Provider integrations are independently installed process plugins.
 
 Personal documentation and research live in the local-only `docs/` directory, excluded from Git and fresh clones.
