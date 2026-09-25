@@ -45,6 +45,8 @@ private struct ChatRunState {
     @Published var state = SavedState()
     @Published var projectID: UUID?
     @Published var chatID: String?
+    @Published var showingArchive = false
+    @Published var archiveViewingChat = false
     @Published var showingJobs = false
     @Published var jobs: [ScheduledJob] = []
     @Published var items: [TranscriptItem] = []
@@ -353,18 +355,32 @@ private struct ChatRunState {
         persist()
         if let firstID { selectProject(firstID) }
     }
+    func openArchive() {
+        showingJobs = false
+        archiveViewingChat = false
+        showingArchive = true
+    }
+    func closeArchive() {
+        showingArchive = false
+        archiveViewingChat = false
+        if selectedChatIsArchived { newChat() }
+    }
     func selectProject(_ id: UUID) {
+        showingArchive = false
         guard projectID != id || chatID != nil else { showingJobs = false; return }
         projectID = id; showingJobs = false
         newChat()
     }
     func newChat() {
+        showingArchive = false
         selectionGeneration = UUID(); chatID = nil; items = []
         draft = projectID.flatMap { newChatDrafts[$0] } ?? ""
         showingJobs = false; loadingChat = false
     }
     func openChat(_ chat: Chat) async {
         guard !isChangingChat(chat.id), state.chats.contains(where: { $0.id == chat.id }) else { return }
+        showingArchive = isArchived(chat.id)
+        archiveViewingChat = showingArchive
         showingJobs = false; projectID = chat.projectID; chatID = chat.id
         draft = chatDrafts[chat.id] ?? ""
         let generation = UUID(); selectionGeneration = generation
@@ -409,6 +425,10 @@ private struct ChatRunState {
         }
         guard let index = state.chats.firstIndex(where: { $0.id == id }) else { return }
         state.chats[index].archived = archived
+        if chatID == id {
+            if archived { openArchive() }
+            else { archiveViewingChat = false }
+        }
         state.chats[index].sidebarOrder = nil
         loadedThreads.remove(id)
         do { try await store.save(state) }
@@ -673,7 +693,7 @@ private struct ChatRunState {
     }
 
     func markResponseRead(threadID: String, completionID: String) {
-        guard chatID == threadID, !showingJobs, !loadingChat,
+        guard chatID == threadID, !showingJobs, (!showingArchive || archiveViewingChat), !loadingChat,
               let index = state.chats.firstIndex(where: { $0.id == threadID }),
               state.chats[index].unreadCompletionID == completionID else { return }
         state.chats[index].unreadCompletionID = nil
@@ -693,7 +713,7 @@ private struct ChatRunState {
     }
     /// Acknowledging a notice never answers or approves the underlying request.
     func markActionRead(_ action: PendingAction) {
-        guard chatID == action.threadID, !showingJobs, !loadingChat,
+        guard chatID == action.threadID, !showingJobs, (!showingArchive || archiveViewingChat), !loadingChat,
               currentAction?.id == action.id else { return }
         removeActionNotices([action])
     }

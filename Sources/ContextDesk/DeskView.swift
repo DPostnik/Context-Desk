@@ -15,8 +15,6 @@ struct DeskView: View {
     @State private var expandedProjects: Set<UUID> = []
     @State private var collapsedSearchProjects: Set<UUID> = []
     @State private var visibleChatCounts: [UUID: Int] = [:]
-    @State private var visibleArchiveCounts: [UUID: Int] = [:]
-    @State private var expandedArchives: Set<UUID> = []
     private let chatPageSize = 5
     private var sidebarAnimation: Animation? { reduceMotion ? nil : .spring(response: 0.36, dampingFraction: 0.9) }
     @State private var newTitle = ""
@@ -79,12 +77,12 @@ struct DeskView: View {
                     .padding(.horizontal, 12)
                 ScrollView {
                     VStack(alignment: .leading, spacing: 4) {
-                        if model.state.chats.contains(where: \.isPinned) {
+                        if model.state.chats.contains(where: { $0.isPinned && !$0.isArchived }) {
                             Text(L10n.text("Избранное", "Favorites"))
                                 .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                                 .padding(.horizontal, 8).padding(.top, 8).padding(.bottom, 4)
                             ForEach(model.state.chats.filter { chat in
-                                chat.isPinned && (search.isEmpty || chat.title.localizedCaseInsensitiveContains(search)
+                                chat.isPinned && !chat.isArchived && (search.isEmpty || chat.title.localizedCaseInsensitiveContains(search)
                                     || model.state.projects.contains { $0.id == chat.projectID && ($0.name.localizedCaseInsensitiveContains(search) || $0.path.localizedCaseInsensitiveContains(search)) })
                             }) { chat in
                                 chatEntry(chat, favorite: true)
@@ -95,7 +93,7 @@ struct DeskView: View {
                             .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                             .padding(.horizontal, 8).padding(.top, 8).padding(.bottom, 4)
                         ForEach(model.state.projects.filter { project in
-                            search.isEmpty || project.name.localizedCaseInsensitiveContains(search) || project.path.localizedCaseInsensitiveContains(search) || model.state.chats.contains { $0.projectID == project.id && $0.title.localizedCaseInsensitiveContains(search) }
+                            search.isEmpty || project.name.localizedCaseInsensitiveContains(search) || project.path.localizedCaseInsensitiveContains(search) || model.state.chats.contains { $0.projectID == project.id && !$0.isArchived && $0.title.localizedCaseInsensitiveContains(search) }
                         }) { project in
                             projectEntries(project)
                         }
@@ -105,7 +103,7 @@ struct DeskView: View {
                                 .padding(.horizontal, 8).padding(.vertical, 10).contentShape(Rectangle())
                         }.buttonStyle(PointerButtonStyle(base: .plain))
                         Divider().padding(.vertical, 6)
-                        Button { model.showingJobs = true; Task { await model.refreshJobs() } } label: {
+                        Button { model.showingArchive = false; model.showingJobs = true; Task { await model.refreshJobs() } } label: {
                             Label(L10n.text("По расписанию", "Scheduled jobs"), systemImage: "calendar")
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.horizontal, 8).padding(.vertical, 10).contentShape(Rectangle())
@@ -137,7 +135,9 @@ struct DeskView: View {
                         Button { model.error = nil } label: { Image(systemName: "xmark") }.buttonStyle(PointerButtonStyle(base: .plain)).help(L10n.text("Закрыть", "Close"))
                     }.padding().background(.blue.opacity(0.08))
                 }
-                if model.showingJobs {
+                if model.showingArchive {
+                    ArchiveView(model: model)
+                } else if model.showingJobs {
                     HSplitView {
                         List(model.jobs, selection: $selectedJobID) { job in Text(job.name).tag(job.id) }.frame(minWidth: 180, idealWidth: 220, maxWidth: 300)
                         if let job = model.jobs.first(where: { $0.id == selectedJobID }) { JobDetail(job: job) }
@@ -153,7 +153,7 @@ struct DeskView: View {
                     EmptyState(icon: "folder", title: L10n.text("С какой папкой работаем?", "Which folder are we working in?"), text: L10n.text("Проект — это папка на компьютере. Добавь свои проекты, и чаты появятся под каждой папкой слева.", "A project is a folder on your computer. Add your projects, and chats will appear under each folder on the left."))
                     Button(L10n.text("Добавить папки…", "Add folders…")) { model.openProject() }.buttonStyle(DeskButtonStyle()).padding(.bottom, 60)
                 } else { ChatView(model: model) }
-            }.navigationTitle(model.showingJobs ? L10n.text("Расписание", "Schedule") : (model.selectedChat?.title ?? L10n.text("Новый чат", "New chat")))
+            }.navigationTitle(model.showingArchive ? L10n.text("Архив", "Archive") : model.showingJobs ? L10n.text("Расписание", "Schedule") : (model.selectedChat?.title ?? L10n.text("Новый чат", "New chat")))
     }
     private var notificationsPanel: some View {
             VStack(alignment: .leading, spacing: 16) {
@@ -205,7 +205,6 @@ struct DeskView: View {
                     } else {
                         // Reset on opening so collapsing keeps the full content height.
                         visibleChatCounts[project.id] = nil
-                        visibleArchiveCounts[project.id] = nil
                         expandedProjects.insert(project.id)
                         collapsedSearchProjects.remove(project.id)
                         model.selectProject(project.id)
@@ -226,7 +225,7 @@ struct DeskView: View {
                     Image(systemName: model.projectID == project.id ? "folder.fill" : "folder")
                     Text(project.name).fontWeight(.semibold).lineLimit(1)
                     Spacer(minLength: 0)
-                    if model.state.chats.contains(where: { $0.projectID == project.id && $0.hasUnreadResponse }) {
+                    if model.state.chats.contains(where: { $0.projectID == project.id && !$0.isArchived && $0.hasUnreadResponse }) {
                         Circle().fill(.blue).frame(width: 7, height: 7)
                             .help(L10n.text("Есть непрочитанные ответы", "Unread responses"))
                             .accessibilityLabel(L10n.text("Есть непрочитанные ответы", "Unread responses"))
@@ -238,43 +237,15 @@ struct DeskView: View {
             }
             .frame(height: 32)
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(dropTargetProjectID == project.id ? Color.accentColor : .clear, lineWidth: 2).allowsHitTesting(false))
-            .background(model.projectID == project.id && model.chatID == nil && !model.showingJobs ? Color.primary.opacity(0.07) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+            .background(model.projectID == project.id && model.chatID == nil && !model.showingJobs && !model.showingArchive ? Color.primary.opacity(0.07) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
 
             SidebarDisclosure(isExpanded: isExpanded, animation: sidebarAnimation) {
                 VStack(alignment: .leading, spacing: 0) {
-                    let matching = (model.state.orderedChats(projectID: project.id, archived: false)
-                        + model.state.orderedChats(projectID: project.id, archived: true)).filter {
+                    let matching = model.state.orderedChats(projectID: project.id, archived: false).filter {
                         search.isEmpty || project.name.localizedCaseInsensitiveContains(search) || project.path.localizedCaseInsensitiveContains(search) || $0.title.localizedCaseInsensitiveContains(search)
                     }
-                    let active = matching.filter { !$0.isArchived }
-                    chatEntries(active, projectID: project.id, archived: false)
-                    let archived = matching.filter { $0.isArchived }
-                    if !archived.isEmpty {
-                        let archiveExpanded = !search.isEmpty || expandedArchives.contains(project.id)
-                        Button {
-                            withAnimation(sidebarAnimation) {
-                                if archiveExpanded { expandedArchives.remove(project.id) }
-                                else { expandedArchives.insert(project.id) }
-                            }
-                        } label: {
-                            HStack(spacing: 8) {
-                                Image(systemName: "chevron.right")
-                                    .font(.caption2.weight(.semibold))
-                                    .rotationEffect(.degrees(archiveExpanded ? 90 : 0))
-                                Label(L10n.text("Архив · \(archived.count)", "Archive · \(archived.count)"), systemImage: "archivebox")
-                            }
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.leading, 16).padding(.vertical, 10).contentShape(Rectangle())
-                        }.buttonStyle(PointerButtonStyle(base: .plain))
-                            .accessibilityValue(archiveExpanded ? L10n.text("Развёрнуто", "Expanded") : L10n.text("Свёрнуто", "Collapsed"))
-                        SidebarDisclosure(isExpanded: archiveExpanded, animation: sidebarAnimation) {
-                            VStack(alignment: .leading, spacing: 0) {
-                                chatEntries(archived, projectID: project.id, archived: true)
-                            }
-                        }
-                    }
-                    if model.state.chats.allSatisfy({ $0.projectID != project.id }) {
+                    chatEntries(matching, projectID: project.id)
+                    if model.state.chats.allSatisfy({ $0.projectID != project.id || $0.isArchived }) {
                         Text(L10n.text("Пока нет чатов", "No chats yet")).font(.caption).foregroundStyle(.secondary).padding(.leading, 24)
                     }
                 }
@@ -282,8 +253,8 @@ struct DeskView: View {
         }.animation(sidebarAnimation, value: isExpanded)
     }
 
-    @ViewBuilder private func chatEntries(_ chats: [Chat], projectID: UUID, archived: Bool) -> some View {
-        let limit = search.isEmpty ? ((archived ? visibleArchiveCounts[projectID] : visibleChatCounts[projectID]) ?? chatPageSize) : chats.count
+    @ViewBuilder private func chatEntries(_ chats: [Chat], projectID: UUID) -> some View {
+        let limit = search.isEmpty ? (visibleChatCounts[projectID] ?? chatPageSize) : chats.count
         ForEach(chats.prefix(limit)) { chat in
             chatEntry(chat)
                 .transition(.opacity.combined(with: .move(edge: .top)))
@@ -291,8 +262,7 @@ struct DeskView: View {
         if chats.count > limit {
             Button {
                 withAnimation(sidebarAnimation) {
-                    if archived { visibleArchiveCounts[projectID] = limit + chatPageSize }
-                    else { visibleChatCounts[projectID] = limit + chatPageSize }
+                    visibleChatCounts[projectID] = limit + chatPageSize
                 }
             } label: {
                 Label(L10n.text("Показать ещё", "Show more"), systemImage: "ellipsis")
@@ -307,17 +277,12 @@ struct DeskView: View {
     }
 
     private func revealSelectedChat() {
-        guard let chat = model.selectedChat else { return }
+        guard let chat = model.selectedChat, !chat.isArchived else { return }
         expandedProjects.insert(chat.projectID)
         let siblings = model.state.orderedChats(projectID: chat.projectID, archived: chat.isArchived)
         guard let index = siblings.firstIndex(where: { $0.id == chat.id }) else { return }
         let limit = (index / chatPageSize + 1) * chatPageSize
-        if chat.isArchived {
-            expandedArchives.insert(chat.projectID)
-            visibleArchiveCounts[chat.projectID] = max(visibleArchiveCounts[chat.projectID] ?? chatPageSize, limit)
-        } else {
-            visibleChatCounts[chat.projectID] = max(visibleChatCounts[chat.projectID] ?? chatPageSize, limit)
-        }
+        visibleChatCounts[chat.projectID] = max(visibleChatCounts[chat.projectID] ?? chatPageSize, limit)
     }
 
     private func chatActions(_ chat: Chat, reorder: Bool) -> [ChatRowAction] {
@@ -339,7 +304,6 @@ struct DeskView: View {
             ChatRowAction(title: chat.isArchived ? L10n.text("Восстановить из архива", "Restore from archive") : L10n.text("Архивировать", "Archive"), enabled: model.canDeleteChat(chat.id)) {
                 Task {
                     await model.setChatArchived(chat.id, archived: !chat.isArchived)
-                    if model.isArchived(chat.id) { expandedArchives.insert(chat.projectID) }
                 }
             },
             ChatRowAction(title: L10n.text("Удалить чат…", "Delete chat…"), enabled: model.canDeleteChat(chat.id)) { deleting = chat }
@@ -372,7 +336,7 @@ struct DeskView: View {
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(dropTargetChatID == chat.id ? Color.accentColor : .clear, lineWidth: 2).allowsHitTesting(false))
             }
         }
-        .background(model.chatID == chat.id && !model.showingJobs ? Color.primary.opacity(0.1) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+        .background(model.chatID == chat.id && !model.showingJobs && !model.showingArchive ? Color.primary.opacity(0.1) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
         .disabled(model.isChangingChat(chat.id))
     }
 
@@ -702,6 +666,8 @@ struct JobDetail: View {
 }
 
 struct SettingsView: View {
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismiss) private var dismiss
     @ObservedObject var model: DeskModel
     @AppStorage(AppLanguage.preferenceKey) private var selectedLanguage = L10n.language.rawValue
     var body: some View {
@@ -723,6 +689,17 @@ struct SettingsView: View {
                     Text(L10n.text("Новый язык применяется после перезапуска приложения.", "Language changes take effect after restarting the app."))
                         .font(.caption).foregroundStyle(.secondary)
                 }
+            }
+            Section(L10n.text("История чатов", "Chat history")) {
+                Button {
+                    model.openArchive()
+                    openWindow(id: "main")
+                    dismiss()
+                } label: {
+                    Label(L10n.text("Открыть архив", "Open archive"), systemImage: "archivebox")
+                }
+                Text(L10n.text("Просматривай и восстанавливай архивные чаты всех проектов.", "Browse and restore archived chats from all projects."))
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section(L10n.text("Аккаунт Codex", "Codex account")) {
                 LabeledContent(L10n.text("Аккаунт", "Account"), value: model.accountLabel)

@@ -325,6 +325,7 @@ private func parallelChatFixture() throws -> (URL, URL) {
     await model.deleteChat("a")
     await archive.value
     #expect(model.selectedChatIsArchived)
+    #expect(model.showingArchive && !model.archiveViewingChat)
     #expect(!model.chats.contains { $0.id == "a" })
     #expect(model.visibleQueue.map(\.id) == ["q-a"])
     #expect(model.queuePaused)

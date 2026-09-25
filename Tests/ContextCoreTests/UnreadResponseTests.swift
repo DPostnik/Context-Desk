@@ -47,6 +47,10 @@ import ContextTranscript
     model.markResponseRead(threadID: "thread", completionID: "latest")
     #expect(model.state.chats[0].hasUnreadResponse)
     model.showingJobs = false
+    model.openArchive()
+    model.markResponseRead(threadID: "thread", completionID: "latest")
+    #expect(model.state.chats[0].hasUnreadResponse)
+    model.archiveViewingChat = true
     model.markResponseRead(threadID: "thread", completionID: "latest")
     #expect(!model.state.chats[0].hasUnreadResponse)
     #expect(model.notices.count == 1)
