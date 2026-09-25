@@ -118,6 +118,12 @@ Additional compact-row clarification on 2026-09-25:
 - Behavior: reduced the shared chat label's vertical padding from 8 to 4 points per side, reducing row height by 8 points for the same content. Applies to project, archive and favorite chat rows. Horizontal padding, text styles, wrapping and native drag behavior are unchanged. This supersedes the 8-point vertical padding described above; no product copy changed.
 - Status/validation: delivered after successful `zsh scripts/build-app.sh`; signature, current-source digest and `git diff --check` verified. Reviewed the one-line layout-only change; no new tests were added and the previously passing 55-test suite was not rerun for padding alone. No live visual check or running-session restart was performed.
 
+Compact project header follow-up on 2026-09-25:
+
+- Source: user request to make project rows smaller and remove the folder-path subtitle beneath each name.
+- Behavior: project headers are now 32 points high instead of 64, with 4-point vertical padding instead of 12. Removed the path subtitle and vertically centered the single-line name, folder icon, disclosure arrow and unread indicator. Full paths remain in the existing hover tooltip and search matching. No app-owned copy was introduced or changed.
+- Status/validation: delivered after successful `zsh scripts/build-app.sh`; signature, current-source digest and `git diff --check` passed. Reviewed header dimensions and preservation of the tooltip, native drag and click callbacks. No new tests were added or suite rerun for this presentation-only change; no live visual check or running-session restart was performed.
+
 ### IMP-028 follow-up — Bilingual plugin UI and clearer setup — 2026-09-25
 
 - Source: user report that English mode shows Russian plugin text and external connection controls are unclear; request to require both languages for every change.

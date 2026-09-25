@@ -217,17 +217,14 @@ struct DeskView: View {
                 if targeted { dropTargetProjectID = project.id }
                 else if dropTargetProjectID == project.id { dropTargetProjectID = nil }
             }, moveUp: adjacentProjectMove(project, offset: -1), moveDown: adjacentProjectMove(project, offset: 1)) {
-                HStack(alignment: .top, spacing: 9) {
+                HStack(spacing: 9) {
                     Image(systemName: "chevron.right")
                         .font(.caption.weight(.semibold))
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
                         .frame(width: 10, height: 16)
                         .foregroundStyle(.secondary)
                     Image(systemName: model.projectID == project.id ? "folder.fill" : "folder")
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(project.name).fontWeight(.semibold).lineLimit(1)
-                        Text(project.path).font(.caption2).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                    }
+                    Text(project.name).fontWeight(.semibold).lineLimit(1)
                     Spacer(minLength: 0)
                     if model.state.chats.contains(where: { $0.projectID == project.id && $0.hasUnreadResponse }) {
                         Circle().fill(.blue).frame(width: 7, height: 7)
@@ -236,10 +233,10 @@ struct DeskView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 8).padding(.vertical, 12)
+                .padding(.horizontal, 8).padding(.vertical, 4)
                 .contentShape(Rectangle())
             }
-            .frame(height: 64)
+            .frame(height: 32)
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(dropTargetProjectID == project.id ? Color.accentColor : .clear, lineWidth: 2).allowsHitTesting(false))
             .background(model.projectID == project.id && model.chatID == nil && !model.showingJobs ? Color.primary.opacity(0.07) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
 
