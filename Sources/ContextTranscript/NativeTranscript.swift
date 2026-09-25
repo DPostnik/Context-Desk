@@ -316,12 +316,17 @@ public struct NativeTranscript: NSViewRepresentable {
         }
         if (item.kind == "user" || item.kind == "assistant"), !item.text.isEmpty {
             if !result.string.hasSuffix("\n") { result.append(NSAttributedString(string: "\n")) }
-            result.append(NSAttributedString(string: L10n.text("Копировать", "Copy"), attributes: [
-                .font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor,
-                .link: "contextdesk-copy:" + item.id,
-                .toolTip: L10n.text("Скопировать полный текст сообщения", "Copy the full message text"),
-                .messageCopy: true
-            ]))
+            let description = L10n.text("Скопировать полный текст сообщения", "Copy the full message text")
+            let attachment = NSTextAttachment()
+            attachment.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: description)?
+                .withSymbolConfiguration(.init(pointSize: 14, weight: .regular)
+                    .applying(.init(paletteColors: [.secondaryLabelColor])))
+            attachment.bounds = NSRect(x: 0, y: -3, width: 18, height: 18)
+            let icon = NSMutableAttributedString(attachment: attachment)
+            icon.addAttributes([
+                .link: "contextdesk-copy:" + item.id, .toolTip: description, .messageCopy: true
+            ], range: NSRange(location: 0, length: icon.length))
+            result.append(icon)
         }
         result.append(NSAttributedString(string: "\n\n", attributes: [.font: NSFont.systemFont(ofSize: 14)]))
         applyMessageStyle(item, to: result, range: NSRange(location: 0, length: result.length))

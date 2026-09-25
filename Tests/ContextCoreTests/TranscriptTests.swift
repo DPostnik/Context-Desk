@@ -132,7 +132,7 @@ import ContextTranscript
     }
     #expect(view.transcript.string.contains(String(repeating: "x", count: 40_000)))
     view.update(items: [TranscriptItem(id: "new", kind: "user", text: "Другой чат")], conversationID: "second", followOutput: true)
-    #expect(view.transcript.string == "Ты\nДругой чат\n" + L10n.text("Копировать", "Copy") + "\n\n")
+    #expect(view.transcript.string == "Ты\nДругой чат\n\u{FFFC}\n\n")
 }
 
 @Test @MainActor func expandingActionsDoesNotLoseFollowingMessages() {
@@ -265,6 +265,15 @@ import ContextTranscript
         if let value = value as? String, value.hasPrefix("contextdesk-copy:") { copyLinks.append(value) }
     }
     #expect(copyLinks == ["contextdesk-copy:u", "contextdesk-copy:comment", "contextdesk-copy:answer"])
+    var icons = 0
+    storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+        guard let attachment = value as? NSTextAttachment else { return }
+        #expect(attachment.image != nil)
+        #expect(storage.attribute(.toolTip, at: range.location, effectiveRange: nil) as? String ==
+            L10n.text("Скопировать полный текст сообщения", "Copy the full message text"))
+        icons += 1
+    }
+    #expect(icons == 3)
     _ = view.textView(view.transcript, clickedOnLink: "contextdesk-metrics:answer", at: 0)
     _ = view.textView(view.transcript, clickedOnLink: "contextdesk-copy:answer", at: 0)
     #expect(pasteboard.string(forType: .string) == body)
