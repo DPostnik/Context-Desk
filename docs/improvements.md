@@ -105,6 +105,13 @@ Chat ordering follow-up on 2026-09-25:
 - Status: implemented and delivered in the signed local bundle; no running session was restarted.
 - Validation: `zsh scripts/build-app.sh` succeeded with SwiftPM/macOS SDK 26.5; signature and source-digest verification passed. `zsh scripts/test.sh` passed all 55 tests. Added coverage for both reorder directions, legacy decoding, cross-project/archive/self/missing rejection, reply-time stability, new chats, persisted order across fresh SQLite stores, deletion, and native chat drop routing/scope/disabled guards. Existing project mouse tracking and drop tests also passed. All introduced/reused menu copy has RU/EN pairs; `git diff --check` passed. Native drop callbacks were tested with a dragging-info test double; physical mouse dragging in the running app was not performed.
 
+Compact chat row follow-up on 2026-09-25:
+
+- Source: user report that chat rows became too large after drag support; request to restore the previous sizes.
+- Behavior: removed the fixed 56-point chat row height in `DeskView.swift`. The original SwiftUI label now determines row height with the existing callout font, two-line title limit, 16-point horizontal padding and 8-point vertical padding. The native drag/click surface is overlaid within that measured size, preserving compact one-line rows and natural wrapping for longer titles. No product copy changed.
+- Status: delivered in the rebuilt signed app bundle; running sessions were not restarted.
+- Validation: `zsh scripts/build-app.sh` succeeded; signature and current-source digest verification passed. `zsh scripts/test.sh` passed all 55 tests, including native drag routing, mouse tracking and persisted ordering. `git diff --check` passed. Source review confirmed the previous label sizing values; no live visual check was performed.
+
 ### IMP-028 follow-up — Bilingual plugin UI and clearer setup — 2026-09-25
 
 - Source: user report that English mode shows Russian plugin text and external connection controls are unclear; request to require both languages for every change.

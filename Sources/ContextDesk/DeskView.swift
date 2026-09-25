@@ -361,13 +361,17 @@ struct DeskView: View {
                         }
                     }
             } else {
-                ChatRow(chat: chat, enabled: !model.isChangingChat(chat.id), activate: {
-                    Task { await model.openChat(chat) }
-                }, move: { model.moveChat($0, to: chat.id) }, targeted: { targeted in
-                    if targeted { dropTargetChatID = chat.id }
-                    else if dropTargetChatID == chat.id { dropTargetChatID = nil }
-                }, actions: chatActions(chat, reorder: true)) { chatLabel(chat, favorite: false) }
-                    .frame(height: 56)
+                // Let the original SwiftUI label determine height, including title wrapping.
+                // The native interaction surface fills that size without imposing a row height.
+                chatLabel(chat, favorite: false).hidden()
+                    .overlay {
+                        ChatRow(chat: chat, enabled: !model.isChangingChat(chat.id), activate: {
+                            Task { await model.openChat(chat) }
+                        }, move: { model.moveChat($0, to: chat.id) }, targeted: { targeted in
+                            if targeted { dropTargetChatID = chat.id }
+                            else if dropTargetChatID == chat.id { dropTargetChatID = nil }
+                        }, actions: chatActions(chat, reorder: true)) { chatLabel(chat, favorite: false) }
+                    }
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(dropTargetChatID == chat.id ? Color.accentColor : .clear, lineWidth: 2).allowsHitTesting(false))
             }
         }
