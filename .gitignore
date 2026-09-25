@@ -7,7 +7,7 @@ build/
 # Local release artifacts and private historical discussion exports.
 dist/
 docs/archived-improvement-discussions.md
-# Private research, document revisions, and their local change log.
+# Private research and working documents.
 /docs/private/
 __pycache__/
 *.pyc
