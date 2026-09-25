@@ -77,7 +77,7 @@ import ContextTranscript
     let assistantIndex = (storage.string as NSString).range(of: "Codex\n").location
     let assistant = try #require(storage.attribute(.paragraphStyle, at: assistantIndex, effectiveRange: nil) as? NSParagraphStyle)
     #expect(user.headIndent > assistant.headIndent)
-    #expect(user.tailIndent > assistant.tailIndent)
+    #expect(assistant.tailIndent == -4)
     _ = view.textView(view.transcript, clickedOnLink: "contextdesk-action:tool", at: 0)
     let actionIndex = (storage.string as NSString).range(of: "1. Проверяю").location
     #expect(storage.attribute(.foregroundColor, at: actionIndex, effectiveRange: nil) as? NSColor == .secondaryLabelColor)
@@ -201,4 +201,47 @@ import ContextTranscript
     #expect(submissions == 1)
     editor.keyDown(with: try enter(.command))
     #expect(submissions == 2)
+}
+
+@Test func responseTimingPersistsAndLocalizes() async throws {
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let store = AppStore(file: folder.appendingPathComponent("state.sqlite"))
+    let timing = ResponseTiming(startedAt: Date(timeIntervalSince1970: 100), completedAt: Date(timeIntervalSince1970: 167))
+    #expect(timing.label(language: .english) == "Worked for 1m 7s")
+    #expect(timing.label(language: .russian) == "Время работы: 1 мин 7 с")
+    #expect(ResponseTiming(startedAt: nil, completedAt: Date()).label(language: .english) == "Response ready")
+    try await store.saveTiming(threadID: "t", turnID: "one", timing: timing)
+    try await store.saveTiming(threadID: "t", turnID: "two", timing: timing)
+    let restored = try await AppStore(file: folder.appendingPathComponent("state.sqlite")).loadTimings(threadID: "t")
+    #expect(restored.count == 2)
+    #expect(restored["one"] == timing)
+    #expect(try await store.loadTimings(threadID: "other").isEmpty)
+    var entries = [TranscriptItem(id: "c", kind: "assistant", text: "Commentary"), TranscriptItem(id: "a", kind: "assistant", text: "Answer")]
+    ResponseTiming.apply(restored["one"], to: &entries)
+    #expect(entries[0].timing == nil)
+    #expect(entries[1].timing == timing)
+    TranscriptItem.merge(TranscriptItem(id: "a", kind: "assistant", text: "Updated answer"), into: &entries)
+    #expect(entries[1].timing == timing)
+    try await store.saveDeletingChat(SavedState(), threadID: "t")
+    #expect(try await store.loadTimings(threadID: "t").isEmpty)
+}
+
+@Test @MainActor func timedAnswerRendersWithSeparatorAndFullWidth() throws {
+    let view = TranscriptScrollView()
+    view.frame = NSRect(x: 0, y: 0, width: 760, height: 400)
+    let timing = ResponseTiming(startedAt: Date(timeIntervalSince1970: 100), completedAt: Date(timeIntervalSince1970: 167))
+    view.update(items: [TranscriptItem(id: "a", kind: "assistant", text: "Готово. Ответ отделён от действий тонкой границей.\nDone. The answer has a clear header.", timing: timing)], conversationID: "t", followOutput: false)
+    view.layoutSubtreeIfNeeded()
+    #expect(view.transcript.string.contains(timing.label()))
+    #expect(view.transcript.string.contains(L10n.date(timing.completedAt)))
+    let storage = try #require(view.transcript.textStorage)
+    #expect(storage.attribute(NSAttributedString.Key("ContextDeskResponseSeparator"), at: 0, effectiveRange: nil) as? Bool == true)
+    if let path = ProcessInfo.processInfo.environment["CONTEXTDESK_RENDER_PATH"] {
+        view.drawsBackground = true
+        view.backgroundColor = .windowBackgroundColor
+        let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path + ".timing.png"))
+    }
 }

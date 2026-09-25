@@ -269,7 +269,7 @@ public struct NativeTranscript: NSViewRepresentable {
             ]))
             if !expanded { return result }
         } else {
-            let title = (item.kind == "user") ? L10n.text("Ты", "You") + (item.phase.map { " · " + $0 } ?? "") : "Codex"
+            let title = (item.kind == "user") ? L10n.text("Ты", "You") + (item.phase.map { " · " + $0 } ?? "") : (item.timing.map { $0.label() + " · " + L10n.date($0.completedAt) } ?? "Codex")
             result.append(NSAttributedString(string: title + "\n", attributes: [
                 .font: NSFont.systemFont(ofSize: 12, weight: .semibold), .foregroundColor: NSColor.secondaryLabelColor
             ]))
@@ -296,9 +296,9 @@ public struct NativeTranscript: NSViewRepresentable {
         let outgoing = item.kind == "user"
         let inset = width * 0.22
         let paragraph = NSMutableParagraphStyle()
-        paragraph.firstLineHeadIndent = outgoing ? inset + 16 : 16
+        paragraph.firstLineHeadIndent = outgoing ? inset + 16 : 0
         paragraph.headIndent = paragraph.firstLineHeadIndent
-        paragraph.tailIndent = outgoing ? -16 : -(inset + 16)
+        paragraph.tailIndent = outgoing ? -16 : -4
         paragraph.lineSpacing = 4
         paragraph.paragraphSpacing = 8
         paragraph.lineBreakMode = .byWordWrapping
@@ -307,8 +307,11 @@ public struct NativeTranscript: NSViewRepresentable {
         let header = paragraph.mutableCopy() as! NSMutableParagraphStyle
         header.paragraphSpacingBefore = 10
         header.minimumLineHeight = 26
-        header.paragraphSpacing = 6
+        header.paragraphSpacing = outgoing ? 6 : 18
         text.addAttribute(.paragraphStyle, value: header, range: NSIntersectionRange(headerRange, range))
+        if !outgoing {
+            text.addAttribute(.responseSeparator, value: true, range: NSIntersectionRange(headerRange, range))
+        }
         // Leave the final empty paragraph outside the bubble as inter-message spacing.
         text.addAttribute(.messageBubble, value: item.id, range: NSRange(location: range.location, length: range.length - 1))
         text.addAttribute(.outgoingBubble, value: outgoing, range: NSRange(location: range.location, length: range.length - 1))
@@ -344,6 +347,7 @@ private final class TranscriptTextView: NSTextView {
 }
 
 private extension NSAttributedString.Key {
+    static let responseSeparator = NSAttributedString.Key("ContextDeskResponseSeparator")
     static let messageBubble = NSAttributedString.Key("ContextDeskMessageBubble")
     static let outgoingBubble = NSAttributedString.Key("ContextDeskOutgoingBubble")
 }
@@ -357,6 +361,14 @@ private final class BubbleLayoutManager: NSLayoutManager {
             return
         }
         let characters = characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
+        storage.enumerateAttribute(.responseSeparator, in: characters) { value, range, _ in
+            guard value != nil else { return }
+            let glyphs = glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            let bounds = boundingRect(forGlyphRange: glyphs, in: container)
+            NSColor.separatorColor.setFill()
+            NSRect(x: origin.x + container.lineFragmentPadding, y: origin.y + bounds.maxY + 6,
+                   width: max(1, container.containerSize.width - 2 * container.lineFragmentPadding), height: 1).fill()
+        }
         storage.enumerateAttribute(.messageBubble, in: characters) { value, range, _ in
             guard value != nil else { return }
             let outgoing = storage.attribute(.outgoingBubble, at: range.location, effectiveRange: nil) as? Bool ?? false

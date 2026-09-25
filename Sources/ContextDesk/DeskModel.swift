@@ -83,7 +83,8 @@ private struct ChatRunState {
     var priorityMessageID: String? { runs[currentRunKey]?.priorityMessageID }
     var anyBusy: Bool { !deletingChatIDs.isEmpty || !archivingChatIDs.isEmpty || runs.values.contains { $0.running || $0.sending } }
     func isBusy(threadID: String) -> Bool { runs[threadID]?.running == true }
-    private func resetRuns() { runs.removeAll() }
+    private var turnStarts: [String: Date] = [:]
+    private func resetRuns() { runs.removeAll(); turnStarts.removeAll() }
     @Published var loadingChat = false
     @Published var accountLabel = L10n.text("Вход не выполнен", "Not signed in")
     @Published var error: String?
@@ -389,7 +390,14 @@ private struct ChatRunState {
             let result = try await connection.request("thread/read", params: .object(["threadId": .string(chat.id), "includeTurns": .bool(true)]))
             guard selectionGeneration == generation else { return }
             let turns = result["thread"]["turns"].array
-            items = turns.flatMap { $0["items"].array }.compactMap(TranscriptItem.parse)
+            let timings = try await store.loadTimings(threadID: chat.id)
+            guard selectionGeneration == generation else { return }
+            items = turns.flatMap { turn in
+                var entries = turn["items"].array.compactMap(TranscriptItem.parse)
+                for index in entries.indices { entries[index].turnID = turn["id"].string }
+                ResponseTiming.apply(timings[turn["id"].string ?? ""], to: &entries)
+                return entries
+            }
             if let completion = state.chats.first(where: { $0.id == chat.id })?.unreadCompletionID,
                let turn = turns.first(where: { "turn:" + chat.id + ":" + ($0["id"].string ?? "") == completion }) {
                 unreadResponseItems[chat.id] = turn["items"].array.compactMap(TranscriptItem.parse).last(where: { $0.kind == "assistant" })?.id
@@ -779,6 +787,7 @@ private struct ChatRunState {
         case "turn/started":
             if let thread = p["threadId"].string, let turn = p["turn"]["id"].string,
                completedTurns[thread + ":" + turn] == nil {
+                turnStarts[thread + ":" + turn] = turnStarts[thread + ":" + turn] ?? Date()
                 runs[thread, default: ChatRunState()].running = true
                 runs[thread, default: ChatRunState()].turnID = turn
             }
@@ -786,6 +795,9 @@ private struct ChatRunState {
             flushDeltas()
             if let threadID = p["threadId"].string, let turnID = p["turn"]["id"].string,
                notifiedTurns.insert(threadID + ":" + turnID).inserted {
+                let timing = ResponseTiming(startedAt: turnStarts.removeValue(forKey: threadID + ":" + turnID), completedAt: Date())
+                if threadID == chatID, let index = items.lastIndex(where: { $0.kind == "assistant" && $0.turnID == turnID }) { items[index].timing = timing }
+                try? await store.saveTiming(threadID: threadID, turnID: turnID, timing: timing)
                 let status = p["turn"]["status"].string
                 let title = p["turn"]["error"] != .null || status == "failed" ? L10n.text("Ошибка в разговоре", "Conversation error") : status == "interrupted" ? L10n.text("Ответ остановлен", "Response stopped") : L10n.text("Ответ готов", "Response ready")
                 let completionID = "turn:" + threadID + ":" + turnID
@@ -800,12 +812,14 @@ private struct ChatRunState {
             NSApplication.shared.dockTile.badgeLabel = pending.isEmpty ? nil : String(pending.count)
             if p["turn"]["error"] != .null { error = p["turn"]["error"]["message"].string ?? L10n.text("Задача завершилась с ошибкой", "The task failed") }
         case "item/started", "item/completed":
-            guard p["threadId"].string == chatID, let item = TranscriptItem.parse(p["item"]) else { return }
+            guard p["threadId"].string == chatID, var item = TranscriptItem.parse(p["item"]) else { return }
             flushDeltas()
+            item.turnID = p["turnId"].string
             TranscriptItem.merge(item, into: &items)
         case "item/agentMessage/delta":
             guard p["threadId"].string == chatID, let id = p["itemId"].string else { return }
             if !items.contains(where: { $0.id == id }) { items.append(TranscriptItem(id: id, kind: "assistant", text: "")) }
+            if let index = items.firstIndex(where: { $0.id == id }) { items[index].turnID = p["turnId"].string }
             deltas[id, default: ""] += p["delta"].string ?? ""
             if deltaTask == nil {
                 deltaTask = Task { [weak self] in

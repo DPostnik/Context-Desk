@@ -106,13 +106,36 @@ public struct SavedState: Codable, Sendable {
         return true
     }
 }
+/// Locally observed turn boundaries; absent for history this client did not observe.
+public struct ResponseTiming: Codable, Sendable, Equatable {
+    public var startedAt: Date?
+    public var completedAt: Date
+    public init(startedAt: Date?, completedAt: Date) {
+        self.startedAt = startedAt; self.completedAt = completedAt
+    }
+    public func label(language: AppLanguage = L10n.language) -> String {
+        guard let startedAt else { return L10n.text("Ответ готов", "Response ready", language: language) }
+        let seconds = max(0, Int(completedAt.timeIntervalSince(startedAt)))
+        let duration = seconds >= 60
+            ? L10n.text("\(seconds / 60) мин \(seconds % 60) с", "\(seconds / 60)m \(seconds % 60)s", language: language)
+            : L10n.text("\(seconds) с", "\(seconds)s", language: language)
+        return L10n.text("Время работы: \(duration)", "Worked for \(duration)", language: language)
+    }
+    public static func apply(_ timing: Self?, to items: inout [TranscriptItem]) {
+        guard let timing, let index = items.lastIndex(where: { $0.kind == "assistant" }) else { return }
+        items[index].timing = timing
+    }
+}
+
 public struct TranscriptItem: Identifiable, Sendable, Equatable {
     public var id: String
     public var kind: String
     public var text: String
     public var phase: String?
-    public init(id: String, kind: String, text: String, phase: String? = nil) {
-        self.id = id; self.kind = kind; self.text = text; self.phase = phase
+    public var turnID: String?
+    public var timing: ResponseTiming?
+    public init(id: String, kind: String, text: String, phase: String? = nil, timing: ResponseTiming? = nil) {
+        self.id = id; self.kind = kind; self.text = text; self.phase = phase; self.timing = timing
     }
     public static func parse(_ raw: JSONValue) -> Self? {
         guard let id = raw["id"].string, let type = raw["type"].string else { return nil }
@@ -129,7 +152,9 @@ public struct TranscriptItem: Identifiable, Sendable, Equatable {
     }
     public static func merge(_ item: Self, into items: inout [Self]) {
         if let index = items.firstIndex(where: { $0.id == item.id }) {
-            items[index] = item
+            var updated = item
+            updated.timing = item.timing ?? items[index].timing
+            items[index] = updated
         } else if item.kind == "user", let index = items.firstIndex(where: {
             $0.kind == "user" && $0.id.hasPrefix("local-user:") && $0.text == item.text
         }) {

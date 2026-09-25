@@ -43,12 +43,13 @@ public actor AppStore {
                 try put(db: db, key: "app", bytes: bytes)
                 var statement: OpaquePointer?
                 defer { sqlite3_finalize(statement) }
-                guard sqlite3_prepare_v2(db, "DELETE FROM state WHERE key=?", -1, &statement, nil) == SQLITE_OK else {
+                guard sqlite3_prepare_v2(db, "DELETE FROM state WHERE key=? OR key=?", -1, &statement, nil) == SQLITE_OK else {
                     throw ClientFailure(L10n.text("Не удалось удалить метрики чата", "Could not delete chat metrics"))
                 }
                 let key = "usage:" + threadID
                 let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
                 _ = key.withCString { sqlite3_bind_text(statement, 1, $0, -1, transient) }
+                _ = ("timing:" + threadID).withCString { sqlite3_bind_text(statement, 2, $0, -1, transient) }
                 guard sqlite3_step(statement) == SQLITE_DONE,
                       sqlite3_exec(db, "COMMIT", nil, nil, nil) == SQLITE_OK else {
                     throw ClientFailure(L10n.text("Не удалось сохранить удаление чата", "Could not save the chat deletion"))
@@ -74,6 +75,24 @@ public actor AppStore {
                 }
             }
             return values
+        }
+    }
+    public func saveTiming(threadID: String, turnID: String, timing: ResponseTiming) throws {
+        var timings = try loadTimings(threadID: threadID)
+        timings[turnID] = timing
+        try put(key: "timing:" + threadID, bytes: JSONEncoder().encode(timings))
+    }
+    public func loadTimings(threadID: String) throws -> [String: ResponseTiming] {
+        try withDatabase { db in
+            var statement: OpaquePointer?; defer { sqlite3_finalize(statement) }
+            guard sqlite3_prepare_v2(db, "SELECT value FROM state WHERE key=?", -1, &statement, nil) == SQLITE_OK else {
+                throw ClientFailure(L10n.text("Ошибка чтения времени ответов", "Could not read response timing"))
+            }
+            let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+            _ = ("timing:" + threadID).withCString { sqlite3_bind_text(statement, 1, $0, -1, transient) }
+            guard sqlite3_step(statement) == SQLITE_ROW, let bytes = sqlite3_column_blob(statement, 0) else { return [:] }
+            return try JSONDecoder().decode([String: ResponseTiming].self,
+                from: Data(bytes: bytes, count: Int(sqlite3_column_bytes(statement, 0))))
         }
     }
     private func put(key: String, bytes: Data) throws {
