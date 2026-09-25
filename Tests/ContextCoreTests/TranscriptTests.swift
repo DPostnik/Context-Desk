@@ -210,7 +210,7 @@ import ContextTranscript
     let timing = ResponseTiming(startedAt: Date(timeIntervalSince1970: 100), completedAt: Date(timeIntervalSince1970: 167))
     #expect(timing.label(language: .english) == "Worked for 1m 7s")
     #expect(timing.label(language: .russian) == "Время работы: 1 мин 7 с")
-    #expect(ResponseTiming(startedAt: nil, completedAt: Date()).label(language: .english) == "Response ready")
+    #expect(ResponseTiming(startedAt: nil, completedAt: Date()).label(language: .english) == "Work finished")
     try await store.saveTiming(threadID: "t", turnID: "one", timing: timing)
     try await store.saveTiming(threadID: "t", turnID: "two", timing: timing)
     let restored = try await AppStore(file: folder.appendingPathComponent("state.sqlite")).loadTimings(threadID: "t")
@@ -236,7 +236,8 @@ import ContextTranscript
     #expect(view.transcript.string.contains(timing.label()))
     #expect(view.transcript.string.contains(L10n.date(timing.completedAt)))
     let storage = try #require(view.transcript.textStorage)
-    #expect(storage.attribute(NSAttributedString.Key("ContextDeskResponseSeparator"), at: 0, effectiveRange: nil) as? Bool == true)
+    let timingIndex = (storage.string as NSString).range(of: timing.label()).location
+    #expect(storage.attribute(NSAttributedString.Key("ContextDeskResponseSeparator"), at: timingIndex, effectiveRange: nil) as? Bool == true)
     if let path = ProcessInfo.processInfo.environment["CONTEXTDESK_RENDER_PATH"] {
         view.drawsBackground = true
         view.backgroundColor = .windowBackgroundColor

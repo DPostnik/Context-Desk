@@ -84,7 +84,11 @@ private struct ChatRunState {
     var anyBusy: Bool { !deletingChatIDs.isEmpty || !archivingChatIDs.isEmpty || runs.values.contains { $0.running || $0.sending } }
     func isBusy(threadID: String) -> Bool { runs[threadID]?.running == true }
     private var turnStarts: [String: Date] = [:]
-    private func resetRuns() { runs.removeAll(); turnStarts.removeAll() }
+    private var tokenTotals: [String: TokenCounters] = [:]
+    private var turnTokens: [String: ResponseTokenTracker] = [:]
+    private func resetRuns() {
+        runs.removeAll(); turnStarts.removeAll(); tokenTotals.removeAll(); turnTokens.removeAll()
+    }
     @Published var loadingChat = false
     @Published var accountLabel = L10n.text("Вход не выполнен", "Not signed in")
     @Published var error: String?
@@ -395,7 +399,7 @@ private struct ChatRunState {
             items = turns.flatMap { turn in
                 var entries = turn["items"].array.compactMap(TranscriptItem.parse)
                 for index in entries.indices { entries[index].turnID = turn["id"].string }
-                ResponseTiming.apply(timings[turn["id"].string ?? ""], to: &entries)
+                ResponseTiming.apply(ResponseTiming.parse(turn, fallback: timings[turn["id"].string ?? ""]), to: &entries)
                 return entries
             }
             if let completion = state.chats.first(where: { $0.id == chat.id })?.unreadCompletionID,
@@ -597,6 +601,7 @@ private struct ChatRunState {
                 let result = try await connection.request("thread/start", params: .object(params))
                 guard let created = result["thread"]["id"].string else { throw ClientFailure(L10n.text("Не получен ID разговора", "No conversation ID received")) }
                 id = created
+                tokenTotals[created] = .zero
                 runs[created] = runs[runKey]
                 runs.removeValue(forKey: runKey)
                 runKey = created
@@ -783,11 +788,34 @@ private struct ChatRunState {
             removeActionNotices(resolved)
             NSApplication.shared.dockTile.badgeLabel = pending.isEmpty ? nil : String(pending.count)
         case "thread/tokenUsage/updated":
-            if let id = p["threadId"].string { let snapshot = UsageSnapshot(event: p); usage[id] = snapshot; try? await store.saveUsage(threadID: id, snapshot: snapshot) }
+            if let id = p["threadId"].string {
+                if let turn = p["turnId"].string, let total = TokenCounters(p["tokenUsage"]["total"]) {
+                    let key = id + ":" + turn
+                    // No baseline is assumed when attaching to a running turn.
+                    if turnTokens[key] == nil { turnTokens[key] = ResponseTokenTracker(baseline: nil) }
+                    turnTokens[key]?.observe(total)
+                    tokenTotals[id] = total
+                    // Some engines deliver the final usage notification after turn/completed.
+                    if completedTurns[key] != nil,
+                       var timing = try? await store.loadTimings(threadID: id)[turn] {
+                        timing.tokens = turnTokens[key]?.result
+                        if id == chatID, let index = items.lastIndex(where: { $0.kind == "assistant" && $0.turnID == turn }) {
+                            items[index].timing = timing
+                        }
+                        try? await store.saveTiming(threadID: id, turnID: turn, timing: timing)
+                    }
+                }
+                let snapshot = UsageSnapshot(event: p)
+                usage[id] = snapshot
+                try? await store.saveUsage(threadID: id, snapshot: snapshot)
+            }
         case "turn/started":
             if let thread = p["threadId"].string, let turn = p["turn"]["id"].string,
                completedTurns[thread + ":" + turn] == nil {
                 turnStarts[thread + ":" + turn] = turnStarts[thread + ":" + turn] ?? Date()
+                if turnTokens[thread + ":" + turn] == nil {
+                    turnTokens[thread + ":" + turn] = ResponseTokenTracker(baseline: tokenTotals[thread])
+                }
                 runs[thread, default: ChatRunState()].running = true
                 runs[thread, default: ChatRunState()].turnID = turn
             }
@@ -795,7 +823,9 @@ private struct ChatRunState {
             flushDeltas()
             if let threadID = p["threadId"].string, let turnID = p["turn"]["id"].string,
                notifiedTurns.insert(threadID + ":" + turnID).inserted {
-                let timing = ResponseTiming(startedAt: turnStarts.removeValue(forKey: threadID + ":" + turnID), completedAt: Date())
+                let observed = ResponseTiming(startedAt: turnStarts.removeValue(forKey: threadID + ":" + turnID), completedAt: Date(),
+                                              tokens: turnTokens[threadID + ":" + turnID]?.result)
+                let timing = ResponseTiming.parse(p["turn"], fallback: observed) ?? observed
                 if threadID == chatID, let index = items.lastIndex(where: { $0.kind == "assistant" && $0.turnID == turnID }) { items[index].timing = timing }
                 try? await store.saveTiming(threadID: threadID, turnID: turnID, timing: timing)
                 let status = p["turn"]["status"].string

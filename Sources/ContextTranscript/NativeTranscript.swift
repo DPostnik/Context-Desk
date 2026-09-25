@@ -38,6 +38,7 @@ public struct NativeTranscript: NSViewRepresentable {
     private var followed = false
     private var wasWorking = false
     private var expandedActions: Set<String> = []
+    private var expandedMetrics: Set<String> = []
     private var needsEndScroll = false
     private var unreadCompletionID: String?
     private var unreadResponseItemID: String?
@@ -100,6 +101,7 @@ public struct NativeTranscript: NSViewRepresentable {
         wasWorking = isWorking
         let switched = self.conversationID != conversationID
         if switched || finished { expandedActions.removeAll() }
+        if switched { expandedMetrics.removeAll() }
         let resumeFollowing = followOutput && !followed
         followed = followOutput
         guard switched || finished || items != previous else {
@@ -230,7 +232,12 @@ public struct NativeTranscript: NSViewRepresentable {
         func appendSegment(active: Bool) {
             let actions = segment.filter { $0.kind == "activity" }
             var inserted = false
-            for item in segment {
+            var showedAuthor = false
+            for var item in segment {
+                if item.kind == "assistant" {
+                    item.showsAuthor = !showedAuthor
+                    showedAuthor = true
+                }
                 guard item.kind == "activity" else { result.append(item); continue }
                 guard !inserted, let first = actions.first, let last = actions.last else { continue }
                 inserted = true
@@ -269,10 +276,26 @@ public struct NativeTranscript: NSViewRepresentable {
             ]))
             if !expanded { return result }
         } else {
-            let title = (item.kind == "user") ? L10n.text("Ты", "You") + (item.phase.map { " · " + $0 } ?? "") : (item.timing.map { $0.label() + " · " + L10n.date($0.completedAt) } ?? "Codex")
-            result.append(NSAttributedString(string: title + "\n", attributes: [
-                .font: NSFont.systemFont(ofSize: 12, weight: .semibold), .foregroundColor: NSColor.secondaryLabelColor
-            ]))
+            if item.kind == "user" || item.showsAuthor {
+                let title = item.kind == "user" ? L10n.text("Ты", "You") + (item.phase.map { " · " + $0 } ?? "") : "Codex"
+                result.append(NSAttributedString(string: title + "\n", attributes: [
+                    .font: NSFont.systemFont(ofSize: 12, weight: .semibold), .foregroundColor: NSColor.secondaryLabelColor,
+                    .responseHeader: true
+                ]))
+            }
+            if let timing = item.timing {
+                let open = expandedMetrics.contains(item.id)
+                result.append(NSAttributedString(string: (open ? "▾ " : "▸ ") + timing.label() + " · " + L10n.date(timing.completedAt) + "\n", attributes: [
+                    .font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.secondaryLabelColor,
+                    .link: "contextdesk-metrics:" + item.id, .responseHeader: true, .responseSeparator: true
+                ]))
+                if open {
+                    let detail = timing.tokens?.detail() ?? L10n.text("Данные о токенах для этого запроса недоступны.", "Token data is unavailable for this request.")
+                    result.append(NSAttributedString(string: detail + "\n", attributes: [
+                        .font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.secondaryLabelColor
+                    ]))
+                }
+            }
         }
         for (index, block) in item.text.components(separatedBy: "```").enumerated() {
             let isCode = index % 2 == 1 || item.kind == "activity"
@@ -303,14 +326,13 @@ public struct NativeTranscript: NSViewRepresentable {
         paragraph.paragraphSpacing = 8
         paragraph.lineBreakMode = .byWordWrapping
         text.addAttribute(.paragraphStyle, value: paragraph, range: range)
-        let headerRange = (text.string as NSString).paragraphRange(for: NSRange(location: range.location, length: 0))
-        let header = paragraph.mutableCopy() as! NSMutableParagraphStyle
-        header.paragraphSpacingBefore = 10
-        header.minimumLineHeight = 26
-        header.paragraphSpacing = outgoing ? 6 : 18
-        text.addAttribute(.paragraphStyle, value: header, range: NSIntersectionRange(headerRange, range))
-        if !outgoing {
-            text.addAttribute(.responseSeparator, value: true, range: NSIntersectionRange(headerRange, range))
+        text.enumerateAttribute(.responseHeader, in: range) { value, headerRange, _ in
+            guard value != nil else { return }
+            let header = paragraph.mutableCopy() as! NSMutableParagraphStyle
+            header.paragraphSpacingBefore = 8
+            header.minimumLineHeight = 24
+            header.paragraphSpacing = outgoing ? 6 : 16
+            text.addAttribute(.paragraphStyle, value: header, range: headerRange)
         }
         // Leave the final empty paragraph outside the bubble as inter-message spacing.
         text.addAttribute(.messageBubble, value: item.id, range: NSRange(location: range.location, length: range.length - 1))
@@ -319,6 +341,20 @@ public struct NativeTranscript: NSViewRepresentable {
 
     public func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
         let value = (link as? URL)?.absoluteString ?? (link as? String) ?? ""
+        if value.hasPrefix("contextdesk-metrics:") {
+            let id = String(value.dropFirst("contextdesk-metrics:".count))
+            guard let index = previous.firstIndex(where: { $0.id == id && $0.timing != nil }),
+                  ranges.indices.contains(index), let storage = transcript.textStorage else { return true }
+            if expandedMetrics.contains(id) { expandedMetrics.remove(id) } else { expandedMetrics.insert(id) }
+            let rendered = render(previous[index], expanded: expandedActions.contains(id))
+            let oldRange = ranges[index], delta = rendered.length - oldRange.length
+            storage.replaceCharacters(in: oldRange, with: rendered)
+            ranges[index].length = rendered.length
+            for next in (index + 1)..<ranges.count { ranges[next].location += delta }
+            editCount += 1
+            needsLayout = true
+            return true
+        }
         if value.hasPrefix("contextdesk-action:") {
             let id = String(value.dropFirst("contextdesk-action:".count))
             guard let index = previous.firstIndex(where: { $0.id == id && $0.kind == "activity" }),
@@ -347,6 +383,7 @@ private final class TranscriptTextView: NSTextView {
 }
 
 private extension NSAttributedString.Key {
+    static let responseHeader = NSAttributedString.Key("ContextDeskResponseHeader")
     static let responseSeparator = NSAttributedString.Key("ContextDeskResponseSeparator")
     static let messageBubble = NSAttributedString.Key("ContextDeskMessageBubble")
     static let outgoingBubble = NSAttributedString.Key("ContextDeskOutgoingBubble")

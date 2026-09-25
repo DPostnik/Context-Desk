@@ -106,16 +106,30 @@ public struct SavedState: Codable, Sendable {
         return true
     }
 }
-/// Locally observed turn boundaries; absent for history this client did not observe.
+/// Server turn boundaries, with locally observed timing as a fallback.
 public struct ResponseTiming: Codable, Sendable, Equatable {
     public var startedAt: Date?
     public var completedAt: Date
-    public init(startedAt: Date?, completedAt: Date) {
+    public var durationSeconds: Double?
+    public var tokens: ResponseTokens?
+    public init(startedAt: Date?, completedAt: Date, durationSeconds: Double? = nil, tokens: ResponseTokens? = nil) {
         self.startedAt = startedAt; self.completedAt = completedAt
+        self.durationSeconds = durationSeconds; self.tokens = tokens
+    }
+    // Codex 0.155.0-alpha.16.4: startedAt/completedAt are Unix seconds; durationMs is milliseconds.
+    public static func parse(_ turn: JSONValue, fallback: Self? = nil) -> Self? {
+        guard let completedAt = turn["completedAt"].int.map({ Date(timeIntervalSince1970: Double($0)) }) ?? fallback?.completedAt else { return nil }
+        let startedAt = turn["startedAt"].int.map { Date(timeIntervalSince1970: Double($0)) } ?? fallback?.startedAt
+        let duration = turn["durationMs"].int.flatMap { $0 >= 0 ? Double($0) / 1_000 : nil }
+        return Self(startedAt: startedAt, completedAt: completedAt,
+                    durationSeconds: duration ?? fallback?.durationSeconds, tokens: fallback?.tokens)
     }
     public func label(language: AppLanguage = L10n.language) -> String {
-        guard let startedAt else { return L10n.text("Ответ готов", "Response ready", language: language) }
-        let seconds = max(0, Int(completedAt.timeIntervalSince(startedAt)))
+        guard let elapsed = durationSeconds ?? startedAt.map({ completedAt.timeIntervalSince($0) }),
+              elapsed.isFinite, elapsed >= 0, elapsed < Double(Int.max) else {
+            return L10n.text("Работа завершена", "Work finished", language: language)
+        }
+        let seconds = Int(elapsed)
         let duration = seconds >= 60
             ? L10n.text("\(seconds / 60) мин \(seconds % 60) с", "\(seconds / 60)m \(seconds % 60)s", language: language)
             : L10n.text("\(seconds) с", "\(seconds)s", language: language)
@@ -133,6 +147,7 @@ public struct TranscriptItem: Identifiable, Sendable, Equatable {
     public var text: String
     public var phase: String?
     public var turnID: String?
+    public var showsAuthor = true
     public var timing: ResponseTiming?
     public init(id: String, kind: String, text: String, phase: String? = nil, timing: ResponseTiming? = nil) {
         self.id = id; self.kind = kind; self.text = text; self.phase = phase; self.timing = timing
@@ -154,6 +169,7 @@ public struct TranscriptItem: Identifiable, Sendable, Equatable {
         if let index = items.firstIndex(where: { $0.id == item.id }) {
             var updated = item
             updated.timing = item.timing ?? items[index].timing
+            updated.turnID = item.turnID ?? items[index].turnID
             items[index] = updated
         } else if item.kind == "user", let index = items.firstIndex(where: {
             $0.kind == "user" && $0.id.hasPrefix("local-user:") && $0.text == item.text
