@@ -2,25 +2,29 @@
 
 A personal native macOS client for Codex. SwiftUI/AppKit, Foundation processes and SQLite; no Electron, browser engine or local web server.
 
-**Status: Native Codex client with an app-managed local Headroom integration.** A real authenticated smoke turn passed through Headroom 0.38.0. The initial profile is cache-oriented lossless structural compression; cross-chat memory, lossy CCR compression and ML compression are not enabled. See [Headroom setup and verification](docs/headroom.md), [compatibility notes](docs/compatibility.md), and the [hang diagnosis and fix](docs/hang-fix.md).
+See the [improvement log](docs/improvements.md) for changes, unresolved findings, and links to archived discussion evidence.
+
+Context Desk is a standalone native macOS client for Codex. It connects directly by default. Headroom is an optional, separately installed external integration; Python and Headroom are not required to build or run the app in Direct mode.
+
+The repository contains the Swift application, tests, assets, and build scripts. Build outputs and private application data are excluded from Git. See [building](docs/building.md) and [packaging](docs/distribution.md).
 
 ## Run
 
-Open `build/Context Desk.app`. In the app, open a project folder and choose **Войти** to use the official ChatGPT login. Enable notifications in Settings if wanted. Projects opened here and their chats are independent of the existing Codex desktop history.
+Build with `zsh scripts/build-app.sh`, then open `build/Context Desk.app`. To install locally, quit the app and copy that bundle to `~/Applications/`. In the app, open a project folder and choose **Войти** to use the official ChatGPT login. Enable notifications in Settings if wanted. Projects opened here and their chats are independent of the existing Codex desktop history.
 
 The bundled app is ad-hoc signed for this Mac, not notarized for distribution. It locates the existing official Codex binary in `/Applications/ChatGPT.app`, `/Applications/Codex.app`, `/opt/homebrew/bin` or `/usr/local/bin`. The binary is not bundled or redistributed.
 
-## Headroom
+## Optional external integration: Headroom
 
-Headroom is installed once with `zsh scripts/install-headroom.sh` (requires `uv` and Python 3.12). Dependencies are pinned with hashes in `runtime/headroom.lock`. The app starts/stops the proxy itself on a dynamically assigned loopback port. It does not run `headroom init` or edit global Codex settings.
+Headroom is installed once with `zsh scripts/install-headroom.sh` (requires `uv` and Python 3.12). Dependencies are pinned with hashes in `integrations/headroom/headroom.lock`. The app starts/stops the proxy itself on a dynamically assigned loopback port. It does not run `headroom init` or edit global Codex settings.
 
-New conversations default to **Через Headroom**. Existing conversations keep **Напрямую**. Choose the default for new conversations in Settings → Контекст; the current route appears below the composer. The same settings section shows proxy status and process-wide request/token counters.
+New installations default to **Напрямую**. Explicitly saved choices and existing chat routes are preserved. Install Headroom separately only if you want it, select it in Settings → Внешние интеграции, and reconnect before creating a new Headroom chat; the current route appears below the composer. The same settings section shows proxy status and process-wide request/token counters.
 
 ## Current features
 
-- Open local project folders; create, reopen, rename, archive, restore and delete chats; native streaming text with selectable Markdown source/monospaced code, model/reasoning choice and Stop. The transcript uses an AppKit text view and collapses long commands by default.
+- Open local project folders; create, reopen, rename, archive, restore and delete chats; native streaming text with clickable Markdown links/monospaced code, model/reasoning choice and Stop. The transcript uses an AppKit text view and collapses long commands by default.
 - Explicit command/file approvals, turn-scoped permission grants, user questions and basic MCP text forms. Unsupported client requests are rejected. Unknown MCP form schemas can be declined.
-- Unread completed responses show a blue dot on their chat and project, retained across restarts. The dot clears when the transcript end is visible in the active window; opening a long unread chat starts at the top. Scrolling up suspends automatic following until the end is reached again. Reading a response clears completion notices without dismissing pending approvals.
+- Unread completed responses show a blue dot on their chat and project, retained across restarts. The dot clears when the completed answer’s final content is visible in the active window, even during a subsequent turn; opening a long unread chat starts at the top. Scrolling up suspends automatic following until the end is reached again. Reading a response clears completion notices without dismissing pending approvals.
 - Action badges and macOS notifications; clicking a notification opens the associated chat. Closing the window leaves the app running; quitting stops its engine connection.
 - Read-only viewer for `~/.codex/automations/*/automation.toml`. It does not start, modify or schedule jobs. The original Codex app continues to run them. A definition's status is not an execution result.
 - Context estimate and cumulative input/cached/output counts: click the context label for details. Missing data stays unknown; cached tokens are a subset of input, not extra tokens. Context percentage is an estimate, not the exact compaction threshold.
@@ -49,7 +53,7 @@ The app does not copy credentials, change the existing `~/.codex/config.toml` or
 
 ## Development
 
-Requirements: Apple Silicon Mac, macOS 14+, Swift 6 toolchain/Command Line Tools, official Codex CLI. Tested with macOS 26.6.2 and Swift 6.3.3. Intel and older supported OS versions have not been tested.
+Requirements: Apple Silicon Mac, macOS 14+, Swift 6 toolchain/Command Line Tools, official Codex CLI. Built with macOS 26.6.2, Swift 6.4 and the macOS 26.5 SDK. Intel and older supported OS versions have not been tested.
 
 ```sh
 zsh scripts/test.sh
@@ -58,7 +62,7 @@ zsh scripts/build-app.sh
 open 'build/Context Desk.app'
 ```
 
-The build and test scripts select a compatible SDK and handle the known local SwiftPM failure. See [local builds and toolchain repair](docs/building.md). After an app change, rebuild the bundle, quit the running app with Cmd+Q, and reopen it. Tests use a local Python protocol simulator; no model calls or account credentials. The probe initializes the real official engine in a separate home, reads account status and counts local schedule definitions; it sends no model turn.
+The build and test scripts select a compatible SDK and retain a fallback for older broken SwiftPM installations. See [local builds and toolchain repair](docs/building.md). After an app change, rebuild the bundle, quit the running app with Cmd+Q, and reopen it. Tests use a local Python protocol simulator; no model calls or account credentials. The probe initializes the real official engine in a separate home, reads account status and counts local schedule definitions; it sends no model turn.
 
 TOMLDecoder is pinned to 0.4.5 with `Package.resolved`. SwiftUI/AppKit, SQLite and Foundation come from the OS. Updating the installed Codex binary can change its experimental protocol; rerun the probe and contracts before relying on a newer version.
 

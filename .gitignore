@@ -1,0 +1,13 @@
+.build/
+.swiftpm/
+build/
+.DS_Store
+.runtime/
+
+# Local release artifacts and private historical discussion exports.
+dist/
+docs/archived-improvement-discussions.md
+__pycache__/
+*.pyc
+.env
+.env.*

@@ -1,0 +1,103 @@
+# Improvement log
+
+This is the persistent record of product improvements, fixes, and deferred work. Initial import: 2026-09-25, from all 11 archived chats for this project in Context Desk (74 user messages and completion summaries). Local-only [source excerpts](archived-improvement-discussions.md), excluded from the published repository, preserve the original wording and JSONL line numbers.
+
+Statuses describe evidence in the archived discussions, not a new code audit or runtime test:
+
+- **Delivered (reported):** a completion summary reports implementation and an app rebuild.
+- **Implemented (reported):** source changes were reported, but that discussion did not confirm an app rebuild. Later builds may include them; this import does not establish that.
+- **Needs review:** an audit finding or proposed capability without a confirmed resolution in these discussions.
+- **Deferred:** explicitly postponed by the user.
+
+## Changes — 2026-09-25
+
+| ID | Improvement and resulting behavior | Status | Evidence |
+| --- | --- | --- | --- |
+| IMP-001 | Move the model selector to the right, next to Send. | Delivered (reported) | [Summary](archived-improvement-discussions.md#01a0d86c-2d2d-7081-bef5-236fd61cb9ad-line-174) |
+| IMP-002 | Expand the composer to the window width. | Delivered (reported) | [Summary](archived-improvement-discussions.md#01a0d86c-2d2d-7081-bef5-236fd61cb9ad-line-174) |
+| IMP-003 | Show processing state inside the chat and immediate sending feedback. Queue behavior was subsequently refined in IMP-007. | Delivered (reported) | [Summary](archived-improvement-discussions.md#01a0d86c-2d2d-7081-bef5-236fd61cb9ad-line-174) |
+| IMP-004 | Add an explicitly selected Full Access mode saved per project folder. | Delivered (reported) | [Summary](archived-improvement-discussions.md#01a0d86c-2d2d-7081-bef5-236fd61cb9ad-line-174) |
+| IMP-005 | Display user messages on the right with a blue background and assistant messages on the left with a gray background. | Delivered (reported) | [Summary](archived-improvement-discussions.md#01a0d86c-2d2d-7081-bef5-236fd61cb9ad-line-352) |
+| IMP-006 | Make expanded tool activity rows more compact and gray. | Delivered (reported) | [Summary](archived-improvement-discussions.md#01a0d86c-2d2d-7081-bef5-236fd61cb9ad-line-352) |
+| IMP-007 | Queue follow-up messages above the composer; allow removal or Interrupt and Send. Add a queued message to the transcript only when sending. | Delivered (reported) | [Summary](archived-improvement-discussions.md#01a0d86c-2d2d-7081-bef5-236fd61cb9ad-line-352) |
+| IMP-008 | Integrate a managed local Headroom proxy, routing new chats through it and exposing status/counters in settings. Existing chats retain their direct route. | Delivered (reported) | [Summary and real-request check](archived-improvement-discussions.md#01a0d86c-2d2d-7081-bef5-236fd61cb9ad-line-665) |
+| IMP-009 | Clear stale connection errors after successful reconnection or a server response. | Delivered (reported) | [Initial fix](archived-improvement-discussions.md#01a0d88f-8bd3-7b03-915a-53e6e819d675-line-157), [rebuild](archived-improvement-discussions.md#01a0d88f-8bd3-7b03-915a-53e6e819d675-line-346) |
+| IMP-010 | Run independent chats concurrently; stop controls and queues apply to the selected chat. | Delivered (reported) | [Summary](archived-improvement-discussions.md#01a0d88f-8bd3-7b03-915a-53e6e819d675-line-346) |
+| IMP-011 | Enlarge project click targets and open a new conversation when selecting a project. Refined by IMP-021. | Delivered (reported) | [Summary](archived-improvement-discussions.md#01a0d88f-8bd3-7b03-915a-53e6e819d675-line-346) |
+| IMP-012 | Delete chats through a context menu with confirmation; delete their queues and require stopping active work first. | Delivered (reported) | [Summary](archived-improvement-discussions.md#01a0d88f-8bd3-7b03-915a-53e6e819d675-line-428) |
+| IMP-013 | Archive and restore chats within each project; retain readable history and pause preserved queues. | Delivered (reported) | [Summary](archived-improvement-discussions.md#01a0d88f-8bd3-7b03-915a-53e6e819d675-line-511) |
+| IMP-014 | Initially show five chats, with Show More adding five; search shows all matches. | Implemented (reported) | [Summary](archived-improvement-discussions.md#01a0d8b3-0034-77a0-ad2a-fe9e9af7b9c1-line-125) |
+| IMP-015 | Animate project expansion/collapse, arrow rotation, and movement of neighboring projects. | Delivered (reported) | [Refined animation and rebuild](archived-improvement-discussions.md#01a0d8b3-0034-77a0-ad2a-fe9e9af7b9c1-line-391) |
+| IMP-016 | Persist blue unread indicators for chats and projects; clear them and completion notifications when the transcript end is visible in the active window. | Implemented (reported) | [Summary](archived-improvement-discussions.md#01a0d8b3-0034-77a0-ad2a-fe9e9af7b9c1-line-293) |
+| IMP-017 | Preserve separate new-chat drafts per project while switching projects, chats, or schedules. Persistence is limited to the running app session. | Delivered (reported) | [Scope](archived-improvement-discussions.md#01a0d8b3-7f9e-7ff3-a7fd-eff21b5d26b7-line-76), [rebuild](archived-improvement-discussions.md#01a0d8b3-7f9e-7ff3-a7fd-eff21b5d26b7-line-178) |
+| IMP-018 | Restore white chat/composer backgrounds, a thin border, and a contrasting insertion cursor. | Implemented (reported) | [Summary](archived-improvement-discussions.md#01a0d8b6-5cf1-7410-a65c-cb870fca579c-line-59) |
+| IMP-019 | Show a pulsing loading dot while opening a chat or awaiting a model response; respect reduced motion. | Implemented (reported) | [Summary](archived-improvement-discussions.md#01a0d8c3-d5ef-7ce2-88f1-e59fbbf99974-line-104) |
+| IMP-020 | Constrain transcript/composer text to the visible width and reset horizontal scrolling to fix overflow and hidden input text. | Implemented (reported) | [Summary](archived-improvement-discussions.md#01a0d8c5-5f1d-70f3-8451-3b8c7a6375ad-line-247) |
+| IMP-021 | Clicking an expanded project from its chat collapses its list, selects the project, and opens a new chat. Supersedes the earlier keep-current-chat behavior. | Delivered (reported) | [Behavior](archived-improvement-discussions.md#01a0d8cd-9855-7402-9714-563bcee6bcb0-line-65), [rebuild](archived-improvement-discussions.md#01a0d8cd-9855-7402-9714-563bcee6bcb0-line-174) |
+| IMP-022 | Add a compatible app build workflow with signature validation and preservation of the previous bundle on failure; require a rebuild before reporting app changes ready. | Delivered (reported) | [Summary and test limitation](archived-improvement-discussions.md#01a0d8cd-9855-7402-9714-563bcee6bcb0-line-276) |
+| IMP-023 | Show an app-wide startup loader until account checking completes, then display the workspace, sign-in, or a connection error with retry. | Implemented (reported) | [Summary](archived-improvement-discussions.md#01a0d8cf-ca34-7141-8755-ed2a811cf0e3-line-92) |
+| IMP-024 | Add 16 pt trailing padding to sidebar running/unread indicators. | Implemented (reported) | [Summary](archived-improvement-discussions.md#01a0d8cf-ca34-7141-8755-ed2a811cf0e3-line-119) |
+
+### IMP-016 follow-up — 2026-09-25
+
+- Source: current user request to clear app-wide notifications automatically after reading them in chat; `DeskModel.swift`, `DeskView.swift`, `UnreadResponseTests.swift`.
+- Behavior: completion notices retain their existing transcript-end read acknowledgement. Action/input notices now link to their request and disappear from the shared in-app list and macOS Notification Center when the request is shown in the active chat, answered, resolved by the server, or its turn completes. Viewing a request never approves it or removes the pending action. Other chats and unread responses retain their notices.
+- Status: delivered in the local app build. `zsh scripts/build-app.sh` succeeded on 2026-09-25 using the compatible macOS 26.5 SDK/direct compiler fallback; the signed `build/Context Desk.app` was replaced. Running sessions were not restarted.
+- Validation: added a regression test for chat/loading/jobs guards, scoped notice removal, repeated acknowledgement, and preservation of pending approval. `zsh scripts/test.sh` could not run tests because the installed Swift Testing framework/macros are incompatible with the toolchain. No UI runtime validation performed.
+
+Additional follow-up on 2026-09-25 after the user reported notices still remaining:
+
+- The read callback previously required the entire transcript end and no running turn. It could not acknowledge a completed answer while a subsequent turn was running. Track the completed assistant item's ID per unread chat, recover it from the matching turn when loading history, and acknowledge once that answer's final content is visible or has been scrolled past. Trailing blank layout paragraphs no longer delay this acknowledgement. The existing shared-list/macOS cleanup and matching-completion guards remain in use.
+- Added `completedAnswerCanBeReadWhileNextTurnIsRunning` coverage for a visible completed answer above a long running response, and for keeping a newer offscreen answer unread. `zsh scripts/build-app.sh` succeeded and replaced the signed local app bundle. `zsh scripts/test.sh` was attempted but tests did not run because the installed Swift Testing framework/macros are incompatible. No live UI reproduction or click-through validation was performed.
+
+### IMP-025 — Clickable transcript links — 2026-09-25
+
+- Source: current user request for Markdown link titles and opening links on the computer; `TranscriptLinks.swift`, `NativeTranscript.swift`, `TranscriptLinksTests.swift`.
+- Behavior: standard `[title](destination)` links display a clickable title, including angle-bracket destinations containing spaces. Bare web addresses are detected. Explicit clicks open HTTP/HTTPS URLs, mail links, and local files with macOS default applications. Absolute source paths accept a trailing line/column reference and open the file (no editor-specific line navigation). Inline/fenced code and tool output remain literal; unsupported URL schemes and remote file hosts are not opened.
+- Status: delivered in the local app build. `zsh scripts/build-app.sh` succeeded on 2026-09-25 using the compatible macOS 26.5 SDK/direct compiler fallback; the signed `build/Context Desk.app` was replaced. Running sessions were not restarted.
+- Validation: added regression coverage for Markdown titles, local paths, encoded URL queries, code literals, bare URLs, and rejected schemes. `zsh scripts/test.sh` was attempted and stopped at the incompatible Swift Testing framework/macro probe; tests did not run. No UI click-through validation performed.
+
+### IMP-026 — Build and verify before commit/push — 2026-09-25
+
+- Source: current user correction of the requested development workflow.
+- Behavior: `AGENTS.md` now records standing authorization and the required order: complete the change, build successfully, verify the result and relevant checks, commit task changes, then push. Failed or blocked required validation prevents commit/push. This supersedes the immediately preceding proposal to commit before building.
+- Status: recorded in project instructions.
+- Validation: reviewed the updated instructions and ordering. Documentation-only change; no app rebuild required. The latest app build succeeded, but the previously reported Swift Testing incompatibility remains unresolved; no commit or push was performed in this follow-up.
+
+### IMP-027 — Standalone app repository and optional external integrations — 2026-09-25
+
+- Source: user request to publish Context Desk itself; Headroom is an external optional provider, with other experiments to follow.
+- Behavior: new installations default to Direct. Headroom starts only for explicit default selection or existing Headroom chats. Existing routes remain unchanged. The Swift adapter is isolated in `HeadroomIntegration`, and the external runner/requirements live in `integrations/headroom`. Neither Python nor the Headroom package is bundled or required for Direct mode. Added source/build/install/packaging documentation; release archives and private discussion exports are excluded from Git.
+- Status: delivered locally and validated for source publication. Other providers are future work, not delivered by this change.
+- Validation: initial builds and ZIP checks passed, but publication was held while Swift Testing was incompatible. After the IMP-022 toolchain repair, `zsh scripts/build-app.sh` succeeded with Swift 6.4, SDK 26.5 and SwiftPM; `zsh scripts/test.sh` passed all 43 tests, including Direct defaults, explicit Headroom selection and existing Headroom chats. Signature, source digest, ZIP integrity, shell/Python syntax and staged whitespace checks passed. No live authenticated model request or GUI session restart was performed.
+
+### IMP-022 follow-up — Repair local Apple toolchain — 2026-09-25
+
+- Source: user authorization to fix the incompatible development tools automatically.
+- Behavior: installed the complete Apple Command Line Tools 27.0 update through `softwareupdate`, replacing the mixed Swift 6.3.3/6.4 installation. Swift 6.4 and SwiftPM now launch successfully. No app session was restarted and no unrelated OS update was installed.
+- Status: delivered and verified.
+- Validation: installer exited successfully; compiler and SwiftPM version checks passed. First build with SDK 27 failed because CLT lacks the SwiftUI macro plugin, leaving the previous app bundle intact. Strengthened the SDK probe to compile a SwiftUI `@State` view; it now rejects SDK 27 and selects installed SDK 26.5. The final `zsh scripts/build-app.sh` succeeded using SwiftPM, and `zsh scripts/test.sh` passed all 43 tests. This also validates the previously blocked notification, transcript link, persistence, token-accounting, routing and integration regressions. No system restart or app-session interruption was needed.
+
+## Outstanding findings and decisions
+
+These are historical findings requiring revalidation against current code before implementation. They are not newly reproduced defects. All audit items below come from the [archived audit](archived-improvement-discussions.md#01a0d88f-8bd3-7b03-915a-53e6e819d675-line-64).
+
+| ID | Follow-up | Status |
+| --- | --- | --- |
+| AUD-001 | Prevent queued-message loss between persistence and sending; preserve sending/unknown-delivery states without automatic retry. | Needs review |
+| AUD-002 | Unify transport shutdown handling so oversized responses cannot leave stale running/connected state. | Needs review |
+| AUD-003 | Invalidate pending approvals across reconnects and bind responses to connection generations. | Needs review |
+| AUD-004 | Explain requested paths, network access, and turn-wide permission duration accurately. | Needs review |
+| AUD-005 | Enforce a supported engine/protocol version or capability check at connection time. | Needs review |
+| AUD-006 | Bound long-history memory/stream buffering and assess paginated loading and streaming performance. | Needs review |
+| AUD-007 | Expose command output/exit codes, file diffs, and useful tool details in the activity history. | Needs review |
+| AUD-008 | Cover queue crash windows, stale approvals, and transport limits through server-event tests; evaluate Headroom quality and savings on real workloads. | Needs review |
+| IDEA-001 | Voice input: explicitly postponed pending validation of the use case. | Deferred — [decision](archived-improvement-discussions.md#01a0d86c-2d2d-7081-bef5-236fd61cb9ad-line-415) |
+
+Other discussions are retained as context, not counted as shipped product improvements: [cross-chat history access](archived-improvement-discussions.md#01a0d8c9-bdef-7142-a678-784fa0d9b545-line-35), [read-only schedules](archived-improvement-discussions.md#01a0d8d4-e15a-70b0-bb09-8bd5ba86c664-line-33), and [repository setup](archived-improvement-discussions.md#01a0d8d4-e15a-70b0-bb09-8bd5ba86c664-line-90). No shared chat memory or independent scheduler was established by those discussions.
+
+## Maintenance
+
+For each future feature or fix, add or update one entry with a stable ID, date, concrete behavior, status, and source (chat/turn ID, relevant files, or requested issue/PR). Record validation and build results as they actually occurred. Merge repeated requests into the existing item; explicitly record superseded behavior. Keep requests, deferred ideas, and unresolved findings separate from delivered changes. Do not infer completion from archiving a chat.
+
+This initial import changed documentation only; it did not rerun historical tests or rebuild the app. Future archive imports must remain scoped to this project and use the app's dedicated home without mutating conversation state.
