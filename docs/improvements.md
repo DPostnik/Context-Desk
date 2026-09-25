@@ -138,6 +138,13 @@ Compact project header follow-up on 2026-09-25:
 - Status: delivered in app 0.2.1 and independent Headroom plugin 1.0.1.
 - Validation: `zsh scripts/build-app.sh` passed; `zsh scripts/test.sh` passed 49 tests including RU/EN selection, paired plugin fields, legacy fallback and missing/idle/selected/connecting states. Headroom's standalone Python bilingual status/manifest test passed. An isolated real plugin process returned valid RU/EN health/metrics without model requests. Only the installed runner and manifest were atomically updated for the next launch with unchanged dependencies; before/after health checks confirmed the existing active instance/version was preserved. App and plugin archives, shell/Python syntax and staged whitespace checks passed. No live app session was restarted or interactive visual check performed.
 
+### Private documentation revisions — 2026-09-25
+
+- Source: user request in the context-tools research conversation to preserve research and document versions in an ignored documentation directory.
+- Behavior: `/docs/private/` is excluded from the main Git repository. The local research report, per-topic latest-version index, and change log use dated numbered revisions. `docs/README.md` documents preserving old revisions and adding new ones. Existing tracked build/architecture/product documentation remains tracked. Private documents are not included in pushes or fresh clones; this is manual file-based versioning, not an automatic snapshot service.
+- Status: initial local research revision and indexes created; research recommendations remain unimplemented. No product copy or app behavior changed.
+- Validation: `zsh scripts/build-app.sh` passed using SwiftPM and macOS SDK 26.5, including bundle signature verification. All four private files were verified ignored and untracked; all local links in the new documentation resolved, and the initial revision/latest pointer were checked. `git diff --check` passed. The app test suite was not rerun for this documentation/ignore-only change. No running app session was restarted.
+
 ## Outstanding findings and decisions
 
 These are historical findings requiring revalidation against current code before implementation. They are not newly reproduced defects. All audit items below come from the [archived audit](archived-improvement-discussions.md#01a0d88f-8bd3-7b03-915a-53e6e819d675-line-64).
