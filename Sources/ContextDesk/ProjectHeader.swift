@@ -44,21 +44,21 @@ struct ProjectHeader<Content: View>: NSViewRepresentable {
     }
 }
 
-class ProjectHeaderView: NSView, NSDraggingSource {
-    static let pasteboardType = NSPasteboard.PasteboardType("com.contextdesk.project-order")
-    var projectID = UUID()
+class SidebarRowView: NSView, NSDraggingSource {
+    var dragType: NSPasteboard.PasteboardType { .init("com.contextdesk.sidebar-row") }
+    var dragID: String { "" }
+    var dragGroup: String { "" }
+    var isInteractionEnabled = true
+    func performMove(from source: SidebarRowView) -> Bool { false }
     var title = ""
     var activate: () -> Void = {}
-    var move: (UUID) -> Bool = { _ in false }
     var targeted: (Bool) -> Void = { _ in }
-    var moveUp: (() -> Void)?
-    var moveDown: (() -> Void)?
     private var pressedEvent: NSEvent?
     private var startedDrag = false
 
     override init(frame: NSRect) {
         super.init(frame: frame)
-        registerForDraggedTypes([Self.pasteboardType])
+        registerForDraggedTypes([dragType])
     }
     convenience init() { self.init(frame: .zero) }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -70,14 +70,15 @@ class ProjectHeaderView: NSView, NSDraggingSource {
     }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func resetCursorRects() { addCursorRect(visibleRect, cursor: .openHand) }
-    override func accessibilityPerformPress() -> Bool { activate(); return true }
+    override func accessibilityPerformPress() -> Bool { guard isInteractionEnabled else { return false }; activate(); return true }
 
     override func mouseDown(with event: NSEvent) {
+        guard isInteractionEnabled else { return }
         pressedEvent = event
         startedDrag = false
     }
     override func mouseDragged(with event: NSEvent) {
-        guard let pressedEvent, !startedDrag else { return }
+        guard isInteractionEnabled, let pressedEvent, !startedDrag else { return }
         let delta = NSPoint(x: event.locationInWindow.x - pressedEvent.locationInWindow.x,
                             y: event.locationInWindow.y - pressedEvent.locationInWindow.y)
         guard hypot(delta.x, delta.y) >= 4 else { return }
@@ -86,13 +87,13 @@ class ProjectHeaderView: NSView, NSDraggingSource {
     }
     override func mouseUp(with event: NSEvent) {
         defer { pressedEvent = nil; startedDrag = false }
-        guard pressedEvent != nil, !startedDrag,
+        guard isInteractionEnabled, pressedEvent != nil, !startedDrag,
               bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
         activate()
     }
     func startDrag(with event: NSEvent) {
         let payload = NSPasteboardItem()
-        payload.setString(projectID.uuidString, forType: Self.pasteboardType)
+        payload.setString(dragID, forType: dragType)
         let item = NSDraggingItem(pasteboardWriter: payload)
         let image = NSImage(size: bounds.size)
         image.lockFocus()
@@ -113,31 +114,49 @@ class ProjectHeaderView: NSView, NSDraggingSource {
         targeted(false)
     }
 
-    func sourceID(_ source: Any?, pasteboard: NSPasteboard) -> UUID? {
-        guard let source = source as? ProjectHeaderView, let window, source.window === window,
-              source.projectID != projectID,
+    func acceptedSource(_ source: Any?, pasteboard: NSPasteboard) -> SidebarRowView? {
+        guard isInteractionEnabled, let source = source as? SidebarRowView, source.isInteractionEnabled,
+              let window, source.window === window, source.dragType == dragType,
+              source.dragGroup == dragGroup, source.dragID != dragID,
               pasteboard.pasteboardItems?.count == 1,
-              let value = pasteboard.string(forType: Self.pasteboardType),
-              let id = UUID(uuidString: value), id == source.projectID else { return nil }
-        return id
+              pasteboard.string(forType: dragType) == source.dragID else { return nil }
+        return source
     }
     override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
-        let valid = sourceID(sender.draggingSource, pasteboard: sender.draggingPasteboard) != nil
+        let valid = acceptedSource(sender.draggingSource, pasteboard: sender.draggingPasteboard) != nil
         targeted(valid)
         return valid ? .move : []
     }
     override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation { draggingEntered(sender) }
     override func draggingExited(_ sender: (any NSDraggingInfo)?) { targeted(false) }
     override func prepareForDragOperation(_ sender: any NSDraggingInfo) -> Bool {
-        sourceID(sender.draggingSource, pasteboard: sender.draggingPasteboard) != nil
+        acceptedSource(sender.draggingSource, pasteboard: sender.draggingPasteboard) != nil
     }
     override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
         targeted(false)
-        guard let id = sourceID(sender.draggingSource, pasteboard: sender.draggingPasteboard) else { return false }
-        return move(id)
+        guard let source = acceptedSource(sender.draggingSource, pasteboard: sender.draggingPasteboard) else { return false }
+        return performMove(from: source)
     }
     override func concludeDragOperation(_ sender: (any NSDraggingInfo)?) { targeted(false) }
 
+}
+
+class ProjectHeaderView: SidebarRowView {
+    static let pasteboardType = NSPasteboard.PasteboardType("com.contextdesk.project-order")
+    var projectID = UUID()
+    var move: (UUID) -> Bool = { _ in false }
+    var moveUp: (() -> Void)?
+    var moveDown: (() -> Void)?
+    override var dragType: NSPasteboard.PasteboardType { Self.pasteboardType }
+    override var dragID: String { projectID.uuidString }
+    override var dragGroup: String { "projects" }
+    func sourceID(_ source: Any?, pasteboard: NSPasteboard) -> UUID? {
+        (acceptedSource(source, pasteboard: pasteboard) as? ProjectHeaderView)?.projectID
+    }
+    override func performMove(from source: SidebarRowView) -> Bool {
+        guard let source = source as? ProjectHeaderView else { return false }
+        return move(source.projectID)
+    }
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = NSMenu()
         menu.autoenablesItems = false

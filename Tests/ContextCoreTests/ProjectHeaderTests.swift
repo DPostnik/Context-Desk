@@ -118,3 +118,35 @@ import Testing
     #expect(!target.performDragOperation(info))
     #expect(moved.count == 1)
 }
+
+@Test @MainActor func chatDropsStayWithinProjectAndArchiveSection() {
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 260, height: 200),
+                          styleMask: [.borderless], backing: .buffered, defer: false)
+    let source = ChatRowView(), target = ChatRowView(), projectHeader = ProjectHeaderView()
+    source.chatID = "source"; target.chatID = "target"
+    target.projectID = source.projectID
+    for view in [source, target, projectHeader] as [SidebarRowView] { window.contentView?.addSubview(view) }
+    let info = ProjectDragInfo()
+    info.draggingSource = source
+    info.draggingPasteboard.setString(source.chatID, forType: ChatRowView.pasteboardType)
+    defer { info.draggingPasteboard.releaseGlobally(); window.orderOut(nil) }
+    var moved: [String] = []
+    target.move = { moved.append($0); return true }
+    #expect(target.draggingEntered(info) == .move)
+    #expect(target.performDragOperation(info))
+    #expect(moved == ["source"])
+    #expect(projectHeader.draggingEntered(info).isEmpty)
+    target.projectID = UUID()
+    #expect(!target.performDragOperation(info))
+    target.projectID = source.projectID
+    target.archived = true
+    #expect(!target.performDragOperation(info))
+    source.archived = true
+    #expect(target.performDragOperation(info))
+    target.isInteractionEnabled = false
+    #expect(!target.performDragOperation(info))
+    target.isInteractionEnabled = true
+    source.isInteractionEnabled = false
+    #expect(!target.performDragOperation(info))
+    #expect(moved == ["source", "source"])
+}

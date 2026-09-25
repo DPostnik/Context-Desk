@@ -11,6 +11,7 @@ struct DeskView: View {
     @State private var deleting: Chat?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var dropTargetProjectID: UUID?
+    @State private var dropTargetChatID: String?
     @State private var expandedProjects: Set<UUID> = []
     @State private var collapsedSearchProjects: Set<UUID> = []
     @State private var visibleChatCounts: [UUID: Int] = [:]
@@ -244,9 +245,10 @@ struct DeskView: View {
 
             SidebarDisclosure(isExpanded: isExpanded, animation: sidebarAnimation) {
                 VStack(alignment: .leading, spacing: 0) {
-                    let matching = model.state.chats.filter {
-                        $0.projectID == project.id && (search.isEmpty || project.name.localizedCaseInsensitiveContains(search) || project.path.localizedCaseInsensitiveContains(search) || $0.title.localizedCaseInsensitiveContains(search))
-                    }.sorted { $0.updated > $1.updated }
+                    let matching = (model.state.orderedChats(projectID: project.id, archived: false)
+                        + model.state.orderedChats(projectID: project.id, archived: true)).filter {
+                        search.isEmpty || project.name.localizedCaseInsensitiveContains(search) || project.path.localizedCaseInsensitiveContains(search) || $0.title.localizedCaseInsensitiveContains(search)
+                    }
                     let active = matching.filter { !$0.isArchived }
                     chatEntries(active, projectID: project.id, archived: false)
                     let archived = matching.filter { $0.isArchived }
@@ -310,9 +312,7 @@ struct DeskView: View {
     private func revealSelectedChat() {
         guard let chat = model.selectedChat else { return }
         expandedProjects.insert(chat.projectID)
-        let siblings = model.state.chats.filter {
-            $0.projectID == chat.projectID && $0.isArchived == chat.isArchived
-        }.sorted { $0.updated > $1.updated }
+        let siblings = model.state.orderedChats(projectID: chat.projectID, archived: chat.isArchived)
         guard let index = siblings.firstIndex(where: { $0.id == chat.id }) else { return }
         let limit = (index / chatPageSize + 1) * chatPageSize
         if chat.isArchived {
@@ -323,8 +323,59 @@ struct DeskView: View {
         }
     }
 
+    private func chatActions(_ chat: Chat, reorder: Bool) -> [ChatRowAction] {
+        var actions: [ChatRowAction] = []
+        if reorder {
+            let siblings = model.state.orderedChats(projectID: chat.projectID, archived: chat.isArchived)
+            if let index = siblings.firstIndex(where: { $0.id == chat.id }) {
+                for (offset, title) in [(-1, L10n.text("Переместить выше", "Move up")), (1, L10n.text("Переместить ниже", "Move down"))] {
+                    let target = siblings.indices.contains(index + offset) ? siblings[index + offset].id : nil
+                    actions.append(ChatRowAction(title: title, enabled: target != nil) {
+                        if let target { _ = model.moveChat(chat.id, to: target) }
+                    })
+                }
+            }
+        }
+        actions += [
+            ChatRowAction(title: chat.isPinned ? L10n.text("Открепить из избранного", "Unpin from favorites") : L10n.text("Закрепить в избранном", "Pin to favorites")) { model.toggleChatPin(chat.id) },
+            ChatRowAction(title: L10n.text("Переименовать…", "Rename…")) { renaming = chat; newTitle = chat.title },
+            ChatRowAction(title: chat.isArchived ? L10n.text("Восстановить из архива", "Restore from archive") : L10n.text("Архивировать", "Archive"), enabled: model.canDeleteChat(chat.id)) {
+                Task {
+                    await model.setChatArchived(chat.id, archived: !chat.isArchived)
+                    if model.isArchived(chat.id) { expandedArchives.insert(chat.projectID) }
+                }
+            },
+            ChatRowAction(title: L10n.text("Удалить чат…", "Delete chat…"), enabled: model.canDeleteChat(chat.id)) { deleting = chat }
+        ]
+        return actions
+    }
+
     private func chatEntry(_ chat: Chat, favorite: Bool = false) -> some View {
-        Button { Task { await model.openChat(chat) } } label: {
+        Group {
+            if favorite {
+                Button { Task { await model.openChat(chat) } } label: { chatLabel(chat, favorite: true) }
+                    .buttonStyle(PointerButtonStyle(base: .plain))
+                    .contextMenu {
+                        ForEach(Array(chatActions(chat, reorder: false).enumerated()), id: \.offset) { _, action in
+                            Button(action.title, action: action.perform).disabled(!action.enabled)
+                        }
+                    }
+            } else {
+                ChatRow(chat: chat, enabled: !model.isChangingChat(chat.id), activate: {
+                    Task { await model.openChat(chat) }
+                }, move: { model.moveChat($0, to: chat.id) }, targeted: { targeted in
+                    if targeted { dropTargetChatID = chat.id }
+                    else if dropTargetChatID == chat.id { dropTargetChatID = nil }
+                }, actions: chatActions(chat, reorder: true)) { chatLabel(chat, favorite: false) }
+                    .frame(height: 56)
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(dropTargetChatID == chat.id ? Color.accentColor : .clear, lineWidth: 2).allowsHitTesting(false))
+            }
+        }
+        .background(model.chatID == chat.id && !model.showingJobs ? Color.primary.opacity(0.1) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+        .disabled(model.isChangingChat(chat.id))
+    }
+
+    private func chatLabel(_ chat: Chat, favorite: Bool) -> some View {
             HStack(spacing: 8) {
                 Image(systemName: chat.isArchived ? "archivebox" : "bubble.left").foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 3) {
@@ -347,27 +398,6 @@ struct DeskView: View {
                 if model.isBusy(threadID: chat.id) { ProgressView().controlSize(.small) }
             }.font(.callout).padding(.horizontal, 16).padding(.vertical, 8)
                 .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-        }.buttonStyle(PointerButtonStyle(base: .plain))
-            .background(model.chatID == chat.id && !model.showingJobs ? Color.primary.opacity(0.1) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
-            .disabled(model.isChangingChat(chat.id))
-            .contextMenu {
-                Button {
-                    model.toggleChatPin(chat.id)
-                } label: {
-                    Label(chat.isPinned ? L10n.text("Открепить из избранного", "Unpin from favorites") : L10n.text("Закрепить в избранном", "Pin to favorites"),
-                          systemImage: chat.isPinned ? "pin.slash" : "pin")
-                }
-                Button(L10n.text("Переименовать…", "Rename…")) { renaming = chat; newTitle = chat.title }
-                Button(chat.isArchived ? L10n.text("Восстановить из архива", "Restore from archive") : L10n.text("Архивировать", "Archive")) {
-                    Task {
-                        await model.setChatArchived(chat.id, archived: !chat.isArchived)
-                        if model.isArchived(chat.id) { expandedArchives.insert(chat.projectID) }
-                    }
-                }.disabled(!model.canDeleteChat(chat.id))
-                Divider()
-                Button(L10n.text("Удалить чат…", "Delete chat…"), role: .destructive) { deleting = chat }
-                    .disabled(!model.canDeleteChat(chat.id))
-            }
     }
 
 }

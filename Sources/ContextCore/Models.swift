@@ -29,6 +29,7 @@ public struct Chat: Identifiable, Codable, Hashable, Sendable {
     /// The latest completion remains unread until its transcript end is visible.
     public var unreadCompletionID: String?
     public var hasUnreadResponse: Bool { unreadCompletionID != nil }
+    public var sidebarOrder: Int?
     public var pinned: Bool?
     public var isPinned: Bool { pinned == true }
     public var archived: Bool?
@@ -70,6 +71,32 @@ public struct SavedState: Codable, Sendable {
               let target = projects.firstIndex(where: { $0.id == targetID }) else { return false }
         let project = projects.remove(at: source)
         projects.insert(project, at: target)
+        return true
+    }
+
+    public func orderedChats(projectID: UUID, archived: Bool) -> [Chat] {
+        chats.filter { $0.projectID == projectID && $0.isArchived == archived }.sorted {
+            switch ($0.sidebarOrder, $1.sidebarOrder) {
+            case let (a?, b?) where a != b: return a < b
+            case (nil, _?): return true // New chats appear above the saved order.
+            case (_?, nil): return false
+            default: return $0.updated == $1.updated ? $0.id < $1.id : $0.updated > $1.updated
+            }
+        }
+    }
+
+    @discardableResult public mutating func moveChat(_ id: String, to targetID: String) -> Bool {
+        guard id != targetID, let source = chats.first(where: { $0.id == id }),
+              let target = chats.first(where: { $0.id == targetID }),
+              source.projectID == target.projectID, source.isArchived == target.isArchived else { return false }
+        var siblings = orderedChats(projectID: source.projectID, archived: source.isArchived)
+        guard let from = siblings.firstIndex(where: { $0.id == id }),
+              let to = siblings.firstIndex(where: { $0.id == targetID }) else { return false }
+        siblings.insert(siblings.remove(at: from), at: to)
+        let ranks = Dictionary(uniqueKeysWithValues: siblings.enumerated().map { ($0.element.id, $0.offset) })
+        for index in chats.indices {
+            if let rank = ranks[chats[index].id] { chats[index].sidebarOrder = rank }
+        }
         return true
     }
 

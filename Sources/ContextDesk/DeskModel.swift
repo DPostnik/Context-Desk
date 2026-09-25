@@ -104,7 +104,7 @@ private struct ChatRunState {
 
     var selectedProject: Project? { state.projects.first { $0.id == projectID } }
     var selectedChat: Chat? { state.chats.first { $0.id == chatID } }
-    var chats: [Chat] { state.chats.filter { $0.projectID == projectID && !$0.isArchived }.sorted { $0.updated > $1.updated } }
+    var chats: [Chat] { projectID.map { state.orderedChats(projectID: $0, archived: false) } ?? [] }
     var currentAction: PendingAction? { pending.first { $0.threadID == chatID } }
     var currentUsage: UsageSnapshot? { chatID.flatMap { usage[$0] } }
     var canSend: Bool { !selectedChatIsArchived && !isChangingChat(currentRunKey) && routeIsAvailable(currentRoute) && connected && authenticated && selectedProject != nil && !sending && !loadingChat && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -324,6 +324,12 @@ private struct ChatRunState {
         return true
     }
 
+    func moveChat(_ id: String, to targetID: String) -> Bool {
+        guard !isChangingChat(id), !isChangingChat(targetID), state.moveChat(id, to: targetID) else { return false }
+        persist()
+        return true
+    }
+
     func toggleChatPin(_ id: String) {
         if state.toggleChatPin(id) { persist() }
     }
@@ -398,6 +404,7 @@ private struct ChatRunState {
         }
         guard let index = state.chats.firstIndex(where: { $0.id == id }) else { return }
         state.chats[index].archived = archived
+        state.chats[index].sidebarOrder = nil
         loadedThreads.remove(id)
         do { try await store.save(state) }
         catch { self.error = L10n.text("Статус чата изменён в Codex, но не удалось сохранить его в приложении: ", "The chat status changed in Codex, but could not be saved in the app: ") + error.localizedDescription }

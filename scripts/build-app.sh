@@ -30,6 +30,9 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <key>UTTypeIdentifier</key><string>com.contextdesk.project-order</string>
 <key>UTTypeDescription</key><string>Context Desk project order</string>
 <key>UTTypeConformsTo</key><array><string>public.data</string></array>
+</dict><dict>
+<key>UTTypeIdentifier</key><string>com.contextdesk.chat-order</string>
+<key>UTTypeConformsTo</key><array><string>public.data</string></array>
 </dict></array>
 </dict></plist>
 PLIST
