@@ -53,7 +53,7 @@ struct ActionView: View {
                 if let reason = action.params["reason"].string { Text(reason).textSelection(.enabled) }
                 DisclosureGroup(L10n.text("Детали запроса", "Request details")) {
                     ScrollView { Text(action.params.display).font(.system(.caption, design: .monospaced)).textSelection(.enabled) }.frame(maxHeight: 160)
-                }
+                }.disclosureGroupStyle(PointerDisclosureStyle())
                 HStack {
                     Button(L10n.text("Отклонить", "Decline")) {
                         submit(action.method.contains("permissions") ? .object(["permissions": .object([:]), "scope": .string("turn")]) : .object(["decision": .string("decline")]))

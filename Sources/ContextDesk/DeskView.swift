@@ -20,13 +20,27 @@ struct DeskView: View {
     @State private var newTitle = ""
     @State private var showingNotifications = false
     @State private var showingLimits = false
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             sidebar
         } detail: {
             detail
                 .background(DeskPalette.canvas)
+        }
+        .toolbar(removing: .sidebarToggle)
+        .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    withAnimation { columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly }
+                } label: {
+                    Image(systemName: "sidebar.left")
+                }
+                .buttonStyle(PointerButtonStyle(base: .plain))
+                .help(L10n.text("Показать или скрыть боковую панель", "Show or hide sidebar"))
+                .accessibilityLabel(L10n.text("Показать или скрыть боковую панель", "Show or hide sidebar"))
+            }
         }
         .tint(.primary)
         .onChange(of: model.projectID, initial: true) { _, projectID in
@@ -269,6 +283,7 @@ struct DeskView: View {
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .fixedSize()
+                .pointingHandCursor()
                 .help(L10n.text("Действия проекта", "Project actions"))
                 .accessibilityLabel(L10n.text("Действия проекта: \(project.name)", "Project actions: \(project.name)"))
 

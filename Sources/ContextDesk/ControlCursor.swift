@@ -3,7 +3,36 @@ import SwiftUI
 
 extension View {
     func pointingHandCursor() -> some View {
-        background(ControlCursorRegion())
+        modifier(ControlPointerModifier())
+    }
+}
+
+private struct ControlPointerModifier: ViewModifier {
+    @Environment(\.isEnabled) private var isEnabled
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if #available(macOS 15.0, *) {
+            // Let SwiftUI own cursor priority and restoration alongside its controls.
+            content.pointerStyle(isEnabled ? .link : nil)
+        } else {
+            content.overlay(ControlCursorRegion())
+        }
+    }
+}
+
+/// Apply the cursor only to the disclosure's clickable header, not its selectable text.
+struct PointerDisclosureStyle: DisclosureGroupStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        VStack(alignment: .leading) {
+            Button { configuration.isExpanded.toggle() } label: {
+                HStack {
+                    Image(systemName: configuration.isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.caption)
+                    configuration.label
+                }.contentShape(Rectangle())
+            }.buttonStyle(PointerButtonStyle(base: .plain))
+            if configuration.isExpanded { configuration.content }
+        }
     }
 }
 

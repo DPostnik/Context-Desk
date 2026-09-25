@@ -48,7 +48,11 @@ class SidebarRowView: NSView, NSDraggingSource {
     var dragType: NSPasteboard.PasteboardType { .init("com.contextdesk.sidebar-row") }
     var dragID: String { "" }
     var dragGroup: String { "" }
-    var isInteractionEnabled = true
+    var isInteractionEnabled = true {
+        didSet {
+            if oldValue != isInteractionEnabled { window?.invalidateCursorRects(for: self) }
+        }
+    }
     func performMove(from source: SidebarRowView) -> Bool { false }
     var title = ""
     var activate: () -> Void = {}
@@ -69,7 +73,12 @@ class SidebarRowView: NSView, NSDraggingSource {
         return self
     }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-    override func resetCursorRects() { addCursorRect(visibleRect, cursor: .openHand) }
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        if isInteractionEnabled && !visibleRect.isEmpty {
+            addCursorRect(visibleRect, cursor: .pointingHand)
+        }
+    }
     override func accessibilityPerformPress() -> Bool { guard isInteractionEnabled else { return false }; activate(); return true }
 
     override func mouseDown(with event: NSEvent) {
