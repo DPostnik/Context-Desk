@@ -2,13 +2,13 @@
 
 A personal native macOS client for Codex. SwiftUI/AppKit, Foundation processes and SQLite; no Electron, browser engine or local web server.
 
-Provider integrations are independently installed process plugins; see the [plugin protocol](docs/provider-plugins.md).
+Provider integrations are independently installed process plugins.
 
-See the [improvement log](docs/improvements.md) for changes, unresolved findings, and links to archived discussion evidence.
+Personal documentation and research live in the local-only `docs/` directory, excluded from Git and fresh clones.
 
 Context Desk is a standalone native macOS client for Codex. It connects directly by default. Headroom is an optional, separately installed external integration; Python and Headroom are not required to build or run the app in Direct mode.
 
-The repository contains the Swift application, tests, assets, and build scripts. Build outputs and private application data are excluded from Git. See [building](docs/building.md) and [packaging](docs/distribution.md).
+The repository contains the Swift application, tests, assets, and build scripts. Build outputs and private application data are excluded from Git. Package the app with `zsh scripts/package-app.sh`.
 
 ## Run
 
@@ -65,9 +65,11 @@ zsh scripts/build-app.sh
 open 'build/Context Desk.app'
 ```
 
-The build and test scripts select a compatible SDK and retain a fallback for older broken SwiftPM installations. See [local builds and toolchain repair](docs/building.md). After an app change, rebuild the bundle, quit the running app with Cmd+Q, and reopen it. Tests use a local Python protocol simulator; no model calls or account credentials. The probe initializes the real official engine in a separate home, reads account status and counts local schedule definitions; it sends no model turn.
+The build and test scripts select a compatible SDK and retain a fallback for older broken SwiftPM installations. After an app change, rebuild the bundle, quit the running app with Cmd+Q, and reopen it. Tests use a local Python protocol simulator; no model calls or account credentials. The probe initializes the real official engine in a separate home, reads account status and counts local schedule definitions; it sends no model turn.
 
 TOMLDecoder is pinned to 0.4.5 with `Package.resolved`. SwiftUI/AppKit, SQLite and Foundation come from the OS. Updating the installed Codex binary can change its experimental protocol; rerun the probe and contracts before relying on a newer version.
+
+The app version and build number are set in `scripts/build-app.sh` and written into the bundle's `Info.plist`.
 
 ## Next milestones
 
