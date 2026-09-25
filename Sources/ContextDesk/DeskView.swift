@@ -26,6 +26,7 @@ struct DeskView: View {
             sidebar
         } detail: {
             detail
+                .background(DeskPalette.canvas)
         }
         .tint(.primary)
         .onChange(of: model.projectID, initial: true) { _, projectID in
@@ -72,8 +73,8 @@ struct DeskView: View {
                         Button { search = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
                             .buttonStyle(PointerButtonStyle(base: .plain)).help(L10n.text("Очистить поиск", "Clear search"))
                     }
-                }.padding(10).background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
-                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.08)))
+                }.padding(10).background(DeskPalette.subtle, in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(DeskPalette.border))
                     .padding(.horizontal, 12)
                 ScrollView {
                     VStack(alignment: .leading, spacing: 4) {
@@ -123,7 +124,8 @@ struct DeskView: View {
                     Spacer()
                     SettingsLink { Image(systemName: "gearshape") }.buttonStyle(PointerButtonStyle(base: .plain))
                 }.padding(14)
-            }.navigationSplitViewColumnWidth(min: 240, ideal: 285, max: 380)
+            }.background(DeskPalette.sidebar)
+                .navigationSplitViewColumnWidth(min: 240, ideal: 285, max: 380)
     }
     private var detail: some View {
             VStack(spacing: 0) {
@@ -196,48 +198,91 @@ struct DeskView: View {
     @ViewBuilder private func projectEntries(_ project: Project) -> some View {
         let isExpanded = search.isEmpty ? expandedProjects.contains(project.id) : !collapsedSearchProjects.contains(project.id)
         VStack(spacing: 0) {
-            ProjectHeader(project: project, expanded: isExpanded, activate: {
-                withAnimation(sidebarAnimation) {
-                    if isExpanded {
-                        expandedProjects.remove(project.id)
-                        if !search.isEmpty { collapsedSearchProjects.insert(project.id) }
-                        model.selectProject(project.id)
-                    } else {
-                        // Reset on opening so collapsing keeps the full content height.
-                        visibleChatCounts[project.id] = nil
-                        expandedProjects.insert(project.id)
-                        collapsedSearchProjects.remove(project.id)
-                        model.selectProject(project.id)
+            HStack(spacing: 2) {
+                ProjectHeader(project: project, expanded: isExpanded, activate: {
+                    withAnimation(sidebarAnimation) {
+                        if isExpanded {
+                            expandedProjects.remove(project.id)
+                            if !search.isEmpty { collapsedSearchProjects.insert(project.id) }
+                            model.selectProject(project.id)
+                        } else {
+                            // Reset on opening so collapsing keeps the full content height.
+                            visibleChatCounts[project.id] = nil
+                            expandedProjects.insert(project.id)
+                            collapsedSearchProjects.remove(project.id)
+                            model.selectProject(project.id)
+                        }
                     }
-                }
-            }, move: { sourceID in
-                model.moveProject(sourceID, to: project.id)
-            }, targeted: { targeted in
-                if targeted { dropTargetProjectID = project.id }
-                else if dropTargetProjectID == project.id { dropTargetProjectID = nil }
-            }, moveUp: adjacentProjectMove(project, offset: -1), moveDown: adjacentProjectMove(project, offset: 1)) {
-                HStack(spacing: 9) {
-                    Image(systemName: "chevron.right")
-                        .font(.caption.weight(.semibold))
-                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                        .frame(width: 10, height: 16)
-                        .foregroundStyle(.secondary)
-                    Image(systemName: model.projectID == project.id ? "folder.fill" : "folder")
-                    Text(project.name).fontWeight(.semibold).lineLimit(1)
-                    Spacer(minLength: 0)
-                    if model.state.chats.contains(where: { $0.projectID == project.id && !$0.isArchived && $0.hasUnreadResponse }) {
-                        Circle().fill(.blue).frame(width: 7, height: 7)
-                            .help(L10n.text("Есть непрочитанные ответы", "Unread responses"))
-                            .accessibilityLabel(L10n.text("Есть непрочитанные ответы", "Unread responses"))
+                }, move: { sourceID in
+                    model.moveProject(sourceID, to: project.id)
+                }, targeted: { targeted in
+                    if targeted { dropTargetProjectID = project.id }
+                    else if dropTargetProjectID == project.id { dropTargetProjectID = nil }
+                }, moveUp: adjacentProjectMove(project, offset: -1), moveDown: adjacentProjectMove(project, offset: 1)) {
+                    HStack(spacing: 9) {
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                            .frame(width: 10, height: 16)
+                            .foregroundStyle(.secondary)
+                        Image(systemName: model.projectID == project.id ? "folder.fill" : "folder")
+                        Text(project.name).fontWeight(.semibold).lineLimit(1)
+                        Spacer(minLength: 0)
+                        if model.state.chats.contains(where: { $0.projectID == project.id && !$0.isArchived && $0.hasUnreadResponse }) {
+                            Circle().fill(.blue).frame(width: 7, height: 7)
+                                .help(L10n.text("Есть непрочитанные ответы", "Unread responses"))
+                                .accessibilityLabel(L10n.text("Есть непрочитанные ответы", "Unread responses"))
+                        }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .contentShape(Rectangle())
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 8).padding(.vertical, 4)
-                .contentShape(Rectangle())
+                .frame(height: 32)
+
+                Menu {
+                    Button { startChat(in: project) } label: {
+                        Label(L10n.text("Новый чат", "New chat"), systemImage: "square.and.pencil")
+                    }
+                    Divider()
+                    Button {
+                        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: project.path)
+                    } label: {
+                        Label(L10n.text("Открыть в Finder", "Open in Finder"), systemImage: "folder")
+                    }
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(project.path, forType: .string)
+                    } label: {
+                        Label(L10n.text("Скопировать путь", "Copy path"), systemImage: "doc.on.doc")
+                    }
+                    Divider()
+                    Button(L10n.text("Переместить выше", "Move up")) {
+                        adjacentProjectMove(project, offset: -1)?()
+                    }.disabled(adjacentProjectMove(project, offset: -1) == nil)
+                    Button(L10n.text("Переместить ниже", "Move down")) {
+                        adjacentProjectMove(project, offset: 1)?()
+                    }.disabled(adjacentProjectMove(project, offset: 1) == nil)
+                } label: {
+                    Image(systemName: "ellipsis").frame(width: 28, height: 28).contentShape(Rectangle())
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help(L10n.text("Действия проекта", "Project actions"))
+                .accessibilityLabel(L10n.text("Действия проекта: \(project.name)", "Project actions: \(project.name)"))
+
+                Button { startChat(in: project) } label: {
+                    Image(systemName: "square.and.pencil").frame(width: 28, height: 28).contentShape(Rectangle())
+                }
+                .buttonStyle(PointerButtonStyle(base: .plain))
+                .help(L10n.text("Новый чат в проекте", "New chat in project"))
+                .accessibilityLabel(L10n.text("Новый чат в проекте \(project.name)", "New chat in \(project.name)"))
             }
+            .padding(.trailing, 4)
             .frame(height: 32)
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(dropTargetProjectID == project.id ? Color.accentColor : .clear, lineWidth: 2).allowsHitTesting(false))
-            .background(model.projectID == project.id && model.chatID == nil && !model.showingJobs && !model.showingArchive ? Color.primary.opacity(0.07) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+            .background(model.projectID == project.id && model.chatID == nil && !model.showingJobs && !model.showingArchive ? DeskPalette.selection : Color.clear, in: RoundedRectangle(cornerRadius: 8))
 
             SidebarDisclosure(isExpanded: isExpanded, animation: sidebarAnimation) {
                 VStack(alignment: .leading, spacing: 0) {
@@ -251,6 +296,16 @@ struct DeskView: View {
                 }
             }
         }.animation(sidebarAnimation, value: isExpanded)
+    }
+
+    private func startChat(in project: Project) {
+        search = ""
+        withAnimation(sidebarAnimation) {
+            expandedProjects.insert(project.id)
+            collapsedSearchProjects.remove(project.id)
+            visibleChatCounts[project.id] = nil
+            model.selectProject(project.id)
+        }
     }
 
     @ViewBuilder private func chatEntries(_ chats: [Chat], projectID: UUID) -> some View {
@@ -336,7 +391,7 @@ struct DeskView: View {
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(dropTargetChatID == chat.id ? Color.accentColor : .clear, lineWidth: 2).allowsHitTesting(false))
             }
         }
-        .background(model.chatID == chat.id && !model.showingJobs && !model.showingArchive ? Color.primary.opacity(0.1) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+        .background(model.chatID == chat.id && !model.showingJobs && !model.showingArchive ? DeskPalette.selection : Color.clear, in: RoundedRectangle(cornerRadius: 8))
         .disabled(model.isChangingChat(chat.id))
     }
 
@@ -409,7 +464,7 @@ private struct SidebarDisclosureLayout: Layout {
 struct DeskButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.font(.callout.weight(.medium)).padding(.horizontal, 14).padding(.vertical, 10)
-            .background(Color.primary.opacity(configuration.isPressed ? 0.15 : 0.07), in: RoundedRectangle(cornerRadius: 12))
+            .background(configuration.isPressed ? DeskPalette.selection : DeskPalette.subtle, in: RoundedRectangle(cornerRadius: 12))
             .contentShape(RoundedRectangle(cornerRadius: 12))
             .pointingHandCursor()
     }
@@ -430,6 +485,7 @@ struct ChatView: View {
                 }
                 Spacer()
             }.padding(.horizontal, 24).padding(.vertical, 12)
+                .overlay(alignment: .bottom) { DeskPalette.border.frame(height: 0.5) }
             if !model.authenticated {
                 HStack {
                     Text(L10n.text("Войди через ChatGPT, чтобы начать чат.", "Sign in with ChatGPT to start a chat.")).font(.callout)
@@ -505,7 +561,7 @@ struct ChatView: View {
                                         .buttonStyle(PointerButtonStyle(base: .plain)).help(L10n.text("Убрать из очереди", "Remove from queue"))
                                         .disabled(model.priorityMessageID == message.id)
                                 }.padding(10)
-                                    .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 12))
+                                    .background(DeskPalette.subtle, in: RoundedRectangle(cornerRadius: 12))
                             }
                         }
                     }.frame(maxHeight: min(CGFloat(model.visibleQueue.count) * 78, 180))
@@ -540,14 +596,16 @@ struct ChatView: View {
                     Group {
                         Button { Task { await model.send() } } label: {
                             Image(systemName: "arrow.up").font(.headline).frame(width: 36, height: 36)
-                                .foregroundStyle(Color(nsColor: .windowBackgroundColor))
-                                .background(Color.primary.opacity(model.canSend ? 1 : 0.25), in: Circle())
+                                .foregroundStyle(.white)
+                                .background(DeskPalette.ink.opacity(model.canSend ? 1 : 0.25), in: Circle())
                         }.buttonStyle(PointerButtonStyle(base: .plain)).keyboardShortcut(.return, modifiers: .command).disabled(!model.canSend)
                             .help(model.busy ? L10n.text("Добавить в очередь · Enter", "Add to queue · Enter") : L10n.text("Отправить · Enter", "Send · Enter")).accessibilityLabel(L10n.text("Отправить сообщение", "Send message"))
                     }
                 }.padding(.horizontal, 12).padding(.bottom, 10)
-            }.background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 22))
-                .overlay(RoundedRectangle(cornerRadius: 22).stroke(Color.primary.opacity(composerFocused ? 0.32 : 0.12), lineWidth: 1))
+            }.background(DeskPalette.canvas, in: RoundedRectangle(cornerRadius: 22))
+                .overlay(RoundedRectangle(cornerRadius: 22).stroke(composerFocused ? DeskPalette.focusBorder : DeskPalette.border, lineWidth: 1)
+                )
+                .shadow(color: .black.opacity(0.045), radius: 10, y: 2)
                 .frame(maxWidth: .infinity).padding(.horizontal, 24).padding(.top, 10)
             }
             HStack {
@@ -563,7 +621,7 @@ struct ChatView: View {
                 Text(L10n.text("Enter — отправить · Shift+Enter — новая строка", "Enter to send · Shift+Enter for a new line"))
             }.font(.caption2).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.horizontal, 24).padding(.vertical, 12)
         }
-        .background(Color(nsColor: .textBackgroundColor))
+        .background(DeskPalette.canvas)
     }
     private func suggestion(_ title: String, prompt: String) -> some View {
         Button(title) { model.draft = prompt }.buttonStyle(DeskButtonStyle())
@@ -586,7 +644,7 @@ struct MessageRow: View {
                 } label: { Label(copied ? L10n.text("Скопировано", "Copied") : L10n.text("Копировать", "Copy"), systemImage: copied ? "checkmark" : "doc.on.doc").font(.caption2) }
                     .buttonStyle(PointerButtonStyle(base: .plain)).foregroundStyle(.secondary)
             }.padding(item.kind == "user" ? 16 : 0)
-                .background(item.kind == "user" ? Color.primary.opacity(0.065) : .clear, in: RoundedRectangle(cornerRadius: 20))
+                .background(item.kind == "user" ? Color(nsColor: DeskPalette.outgoingBubble) : .clear, in: RoundedRectangle(cornerRadius: 20))
             if item.kind != "user" { Spacer(minLength: 0) }
         }
     }

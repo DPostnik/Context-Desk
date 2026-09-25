@@ -360,6 +360,7 @@ private final class BubbleLayoutManager: NSLayoutManager {
         storage.enumerateAttribute(.messageBubble, in: characters) { value, range, _ in
             guard value != nil else { return }
             let outgoing = storage.attribute(.outgoingBubble, at: range.location, effectiveRange: nil) as? Bool ?? false
+            guard outgoing else { return }
             let glyphs = glyphRange(forCharacterRange: range, actualCharacterRange: nil)
             let bounds = boundingRect(forGlyphRange: glyphs, in: container)
             let width = container.containerSize.width
@@ -367,8 +368,7 @@ private final class BubbleLayoutManager: NSLayoutManager {
             let rect = NSRect(x: origin.x + (outgoing ? width * 0.22 : 0) + 2,
                               y: origin.y + top,
                               width: max(1, width * 0.78 - 4), height: bounds.maxY + 7 - top)
-            (outgoing ? NSColor.controlAccentColor.withAlphaComponent(0.14)
-                      : NSColor.labelColor.withAlphaComponent(0.055)).setFill()
+            DeskPalette.outgoingBubble.setFill()
             NSBezierPath(roundedRect: rect, xRadius: 14, yRadius: 14).fill()
         }
         super.drawBackground(forGlyphRange: glyphsToShow, at: origin)

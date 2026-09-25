@@ -1,4 +1,5 @@
 import ContextCore
+import ContextTranscript
 import SwiftUI
 import AppKit
 import UserNotifications
@@ -41,6 +42,8 @@ import UserNotifications
     init() {
         // Establish the app-scoped language before SwiftUI constructs native menus.
         L10n.language.save()
+        // Keep native controls and TextKit consistent with the white workspace.
+        NSApplication.shared.appearance = NSAppearance(named: .aqua)
     }
 
     var body: some Scene {
@@ -53,6 +56,7 @@ import UserNotifications
                 }
             }
                 .buttonStyle(PointerButtonStyle(base: .automatic))
+                .preferredColorScheme(.light)
                 .environment(\.locale, L10n.locale)
                 .frame(minWidth: 900, minHeight: 620)
                 .task { delegate.model = model; await model.boot() }
@@ -74,6 +78,7 @@ import UserNotifications
                 if model.isBootstrapping { StartupLoadingView() }
                 else { SettingsView(model: model) }
             }.buttonStyle(PointerButtonStyle(base: .automatic))
+                .preferredColorScheme(.light)
                 .environment(\.locale, L10n.locale).frame(width: 520).padding(24)
         }
     }
@@ -87,7 +92,7 @@ private struct StartupLoadingView: View {
             Text(L10n.text("Подключаемся и проверяем аккаунт", "Connecting and checking your account")).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(DeskPalette.canvas)
         .accessibilityElement(children: .combine)
     }
 }
