@@ -784,6 +784,22 @@ struct SettingsView: View {
                 Text(model.notificationStatus).font(.callout)
                 Button(L10n.text("Разрешить уведомления", "Allow notifications")) { Task { await model.enableNotifications() } }
             }
+            Section(L10n.text("Браузер", "Browser")) {
+                Toggle(L10n.text("Использовать Chrome DevTools", "Use Chrome DevTools"),
+                       isOn: Binding(get: { model.state.browserEnabled == true }, set: { model.selectBrowserEnabled($0) }))
+                Text(L10n.text("Отдельный профиль Chrome для задач агента. Вход на сайты выполняется в этом браузере; текущие разрешения проектов сохраняются.", "A separate Chrome profile for agent tasks. Sign in to websites in that browser; existing project permissions are preserved."))
+                    .font(.callout).foregroundStyle(.secondary)
+                Button(L10n.text("Инструкция по установке", "Installation instructions")) {
+                    if let resources = Bundle.main.resourceURL {
+                        NSWorkspace.shared.open(resources.appendingPathComponent("BrowserRuntime/README.md"))
+                    }
+                }
+                Button(model.connecting ? L10n.text("Подключение…", "Connecting…") : L10n.text("Применить настройку браузера", "Apply browser setting")) {
+                    Task { await model.connect() }
+                }.disabled(model.anyBusy || model.connecting)
+                Text(L10n.text("Применяется при переподключении Codex после завершения текущих задач. Браузер открывается при первом обращении агента.", "Takes effect when Codex reconnects after current tasks finish. The browser opens on the agent’s first browser request."))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Section(L10n.text("Плагины", "Plugins")) {
                 Text(L10n.text("Плагины дополнительно обрабатывают запросы Codex. Они необязательны: выбери «Без плагина», чтобы работать напрямую.", "Plugins add processing to Codex requests. They are optional: choose No plugin to work directly."))
                     .font(.callout).foregroundStyle(.secondary)

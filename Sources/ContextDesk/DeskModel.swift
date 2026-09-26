@@ -176,6 +176,7 @@ private struct ChatRunState {
         plugins = catalog.plugins; pluginIssues = catalog.issues
     }
     func selectDefaultRoute(_ route: RequestRoute) { state.defaultRoute = route; persist() }
+    func selectBrowserEnabled(_ enabled: Bool) { state.browserEnabled = enabled; persist() }
     private func stopPlugins() async {
         pluginTask?.cancel(); pluginTask = nil
         for runtime in pluginRuntimes.values { await runtime.stop() }
@@ -209,6 +210,7 @@ private struct ChatRunState {
             }
         }
         do {
+            arguments += try BrowserConfiguration.arguments(enabled: state.browserEnabled == true, resources: Bundle.main.resourceURL)
             try await connection.start(executable: Locations.codexExecutable(), home: Locations.codexHome, extraArguments: arguments)
             connected = true
             clearConnectionError()

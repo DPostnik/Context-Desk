@@ -57,6 +57,7 @@ public struct QueuedMessage: Codable, Identifiable, Sendable, Equatable {
     }
 }
 public struct SavedState: Codable, Sendable {
+    public var browserEnabled: Bool?
     public var defaultRoute: RequestRoute?
     public var queuedMessages: [QueuedMessage]?
     public var projects: [Project] = []

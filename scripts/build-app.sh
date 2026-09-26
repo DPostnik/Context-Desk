@@ -10,6 +10,8 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp .build/local-build/ContextDesk "$app/Contents/MacOS/ContextDesk"
 cp .build/local-build/build-info.json "$app/Contents/Resources/build-info.json"
 cp Assets/AppIcon/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
+mkdir -p "$app/Contents/Resources/BrowserRuntime"
+cp BrowserRuntime/{server.py,transport.py,install.py,cards.js,runtime.lock.json,README.md} "$app/Contents/Resources/BrowserRuntime/"
 cat > "$app/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

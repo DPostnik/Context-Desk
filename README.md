@@ -44,6 +44,16 @@ Delete an idle chat from its context menu → **Удалить чат…** and c
 
 Archive an idle chat from its context menu → **Архивировать**. Each project has an **Архив** disclosure containing its archived conversations. Their history remains readable; **Восстановить** returns a chat to the active list. Archive/restore use `thread/archive` and `thread/unarchive`, preserve usage and queued messages, and keep the queue paused until explicitly resumed. Older saved chats without an archive flag remain active.
 
+## Optional browser executor: Chrome DevTools
+
+Settings → Browser enables an app-bundled adapter for Chrome DevTools MCP 1.10.1.
+It is off by default. Install its verified runtime with `python3 BrowserRuntime/install.py`
+(Node.js 22.12+ and Google Chrome required), then apply the setting while chats are idle.
+The adapter uses a separate Chrome profile, compact card results, checked pagination
+and durable action IDs; it does not change project permissions or replay uncertain actions.
+See [setup and tool contract](BrowserRuntime/README.md) and [implementation plan](BrowserRuntime/PLAN.md).
+Model-level speed or token savings have not yet been measured for this integration.
+
 ## Data
 
 App state lives in `~/Library/Application Support/Context Desk/`:
@@ -52,6 +62,7 @@ App state lives in `~/Library/Application Support/Context Desk/`:
 - `codex/`: separate `CODEX_HOME`; the official engine owns login and transcripts.
 - `probe-home/`: unauthenticated compatibility probe state.
 - `plugins/<id>/`: separately installed provider plugins and their private runtime data.
+- `browser/`: verified Chrome DevTools runtime, separate Chrome profile and private page/action checkpoints.
 - `headroom/`: legacy runtime, retained unchanged when upgrading.
 
 The app does not copy credentials, change the existing `~/.codex/config.toml` or initialize Headroom globally. Credentials for this dedicated home use Codex's file backend inside its private directory. Codex diagnostics are drained without writing raw protocol/prompt logs. Headroom diagnostic logs stay under the app directory; full request/response logging and telemetry are disabled. Do not publish or sync this directory. To back up your state, quit the app and back up the whole directory privately.
