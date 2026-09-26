@@ -50,6 +50,20 @@ class ChromeHost:
                                 capture_output=True, text=True, timeout=3)
         return result.stdout.strip() if result.returncode == 0 else None
 
+    def process_gone(self, owner):
+        """Only definite exit or the recorded zombie permits a fresh launch."""
+        if not isinstance(owner, dict) or type(owner.get('pid')) is not int or owner['pid'] <= 0:
+            return False
+        if self.child and self.child.pid == owner['pid']:
+            # Reap our own exited child; never wait on or signal an adopted PID.
+            if self.child.poll() is not None:
+                return True
+        state = self.process_field(owner['pid'], 'stat')
+        if state is None:
+            return True
+        return (state.startswith('Z') and bool(owner.get('birth'))
+                and self.process_field(owner['pid'], 'lstart') == owner['birth'])
+
     def matches(self, owner):
         if not isinstance(owner, dict):
             return False
@@ -119,7 +133,7 @@ class ChromeHost:
             pid = old.get('pid')
             if type(pid) is not int or pid <= 0:
                 raise self.error('Некорректная запись процесса Chrome.', 'Invalid Chrome process record.')
-            if self.process_field(pid, 'command') is not None:
+            if not self.process_gone(old):
                 if not self.matches(old):
                     raise self.error('Процесс Chrome изменился. Подключение отклонено.', 'The Chrome process changed. Connection was denied.')
                 owner = old

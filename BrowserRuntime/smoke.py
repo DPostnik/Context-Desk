@@ -7,6 +7,7 @@ import re
 import tempfile
 import threading
 import sys
+import time
 
 sys.dont_write_bytecode = True
 
@@ -23,7 +24,7 @@ let page=1, sends=0;const list=document.querySelector('#list');
 function render(){list.innerHTML='';document.querySelector('#loading').hidden=false;
  for(let i=0;i<12;i++){let n=document.createElement('div');n.className='card';n.dataset.key=page+'-'+i;list.append(n)}
  setTimeout(()=>{document.querySelector('#loading').remove();hydrate()},350)}
-function hydrate(){[...list.children].forEach((n,i)=>{if(n.offsetTop<list.scrollTop+list.clientHeight+120)n.innerHTML='<a href="/job/'+n.dataset.key+'">Card '+n.dataset.key+'</a><span class="company">Example</span>'})}
+function hydrate(){[...list.children].forEach((n,i)=>{if(n.offsetTop<list.scrollTop+list.clientHeight+120)n.innerHTML='<a href="/job/'+n.dataset.key+'?context='+('x'.repeat(2200))+'">Card '+n.dataset.key+'</a><span class="company">Example</span>'})}
 list.addEventListener('scroll',()=>setTimeout(hydrate,80));
 document.querySelector('#next').onclick=()=>{page++;history.pushState({},'', '?page='+page);list.scrollTop=0;
  const loading=document.createElement('div');loading.id='loading';document.body.prepend(loading);render()};
@@ -61,6 +62,7 @@ def main():
                       'company': '.company', 'scroll': '#list', 'next': '#next', 'loading': '#loading'}
             first = browser.cards(token, config)
             assert first['complete'] and len(first['cards']) == 12, first
+            assert all(len(c['url']) > 2200 and c['url'].endswith('x' * 2200) for c in first['cards'])
 
             def uid(label):
                 snapshot = browser.text(browser.native('take_snapshot', {'pageId': browser.page}))
@@ -96,12 +98,44 @@ def main():
                     print(browser.text(browser.native('list_pages', {})), flush=True)
                     raise
                 browser.close_session(reopened['session'])
+            # A user-closed tab invalidates its token, without adopting another tab.
+            missing = browser.open(url)
+            browser.native('close_page', {'pageId': browser.page})
+            try:
+                browser.evaluate('() => location.href')
+                raise AssertionError('Missing page accepted')
+            except Rejected:
+                assert browser.session is None
+            active = browser.open(url)
+            # Leave the original parent's child unreaped to reproduce the real zombie.
+            host.child.terminate()
+            end = time.monotonic() + 10
+            while not (host.process_field(host.child.pid, 'stat') or '').startswith('Z'):
+                assert time.monotonic() < end, 'Chrome did not become a zombie'
+                time.sleep(.1)
+            try:
+                browser.evaluate('() => location.href')
+                raise AssertionError('Exited browser accepted')
+            except Rejected:
+                assert browser.session is None and not browser.failed
+            restarted = browser.open(url)
+            host.child.wait(timeout=3)
+            old_pid = host.child.pid
+            host = browser.chrome
+            assert host.child.pid != old_pid
+            assert restarted['session'] != active['session']
+            assert browser.cards(restarted['session'], config)['complete']
+            try:
+                browser.action(restarted['session'], 'fixture-send-01', url, 'click', {'uid': uid('Submit fixture only')})
+                raise AssertionError('Action ID replay after Chrome restart')
+            except Rejected:
+                pass
+            browser.close_session(restarted['session'])
             print(json.dumps({'result': 'passed', 'pages': 2, 'cardsPerPage': 12, 'noOpDetected': True,
-                              'submissionCount': 1, 'normalChrome': True, 'reconnectCycles': 3, 'metrics': metrics}, indent=2))
+                              'submissionCount': 1, 'normalChrome': True, 'reconnectCycles': 3, 'zombieRestart': True, 'missingPageInvalidated': True, 'metrics': metrics}, indent=2))
         finally:
             browser.stop()
-            fixture_host = host or browser.chrome
-            if fixture_host:
+            for fixture_host in {host, browser.chrome} - {None}:
                 fixture_host.close_created_for_test()
             fixture.shutdown()
 

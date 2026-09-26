@@ -107,8 +107,27 @@ class Browser:
             self.failed = True
             raise
 
+    def invalidate_session(self, reason):
+        if self.session:
+            self.checkpoint.update(state='invalidated', reason=reason)
+            self.persist()
+        self.session = self.page = None
+
+    def retire_exited_browser(self):
+        if self.chrome and self.chrome.owner and self.chrome.process_gone(self.chrome.owner):
+            if self.transport:
+                self.transport.close()
+                self.transport = None
+            self.invalidate_session('browser_exited')
+            self.chrome = None
+            return True
+        return False
+
     def native(self, name, arguments, seconds=25):
         require(not self.failed and not self.stopped.is_set(), 'executor_stopped_outcome_may_be_unknown')
+        if self.retire_exited_browser():
+            raise Rejected(tr('Chrome закрыт. Открой новую задачу через browser_open; прошлые действия не повторяются.',
+                              'Chrome closed. Start a new task with browser_open; previous actions are not replayed.'))
         self.start()
         if self.stopped.is_set():
             self.stop()
@@ -130,7 +149,10 @@ class Browser:
         self.metrics['responseBytes'] += len(json.dumps(value).encode())
         if value.get('isError'):
             self.metrics['toolErrors'] += 1
-            raise Rejected('upstream_tool_error: ' + self.text(value)[:1500])
+            detail = self.text(value)[:1500]
+            if detail.strip() in ('No page found', 'Error: No page found'):
+                self.invalidate_session('owned_page_missing')
+            raise Rejected('upstream_tool_error: ' + detail)
         return value
 
     @staticmethod
@@ -153,8 +175,16 @@ class Browser:
         require(current['url'] == url, 'page_changed_before_action')
 
     def open(self, url):
-        require(self.session is None, 'browser_busy_close_owned_session_first')
         url = web_url(url)
+        require(not self.failed and not self.stopped.is_set(), 'executor_stopped_outcome_may_be_unknown')
+        # Only a new explicit open can relaunch. Never retry an in-flight action.
+        self.retire_exited_browser()
+        if self.session:
+            inventory = self.text(self.native('list_pages', {}))
+            require('## Pages' in inventory, 'page_inventory_not_confirmed')
+            if not re.search(r'^' + str(self.page) + r':', inventory, re.M):
+                self.invalidate_session('owned_page_missing')
+        require(self.session is None, 'browser_busy_close_owned_session_first')
         token = uuid.uuid4().hex
         marker = 'about:blank#context-desk-' + token
         value = self.native('new_page', {'url': marker})
@@ -303,7 +333,7 @@ def catalog():
     timeout = {'type': 'number', 'minimum': 1, 'maximum': 20}
     action = {**token, 'actionID': string, 'expectedURL': string}
     definitions = [
-        ('browser_open', 'Открыть рабочую вкладку; сохранить возвращённый session.', 'Open an owned work tab; retain the returned session token.', {'url': string}, ['url'], False),
+        ('browser_open', 'Открыть рабочую вкладку; сохрани session. После подтверждённого закрытия Chrome новый вызов начинает новую задачу без повторения прошлых действий.', 'Open an owned work tab; retain its session token. After confirmed Chrome exit, an explicit open starts a new task without replaying old actions.', {'url': string}, ['url'], False),
         ('browser_cards', 'Прочитать одну страницу карточек с ожиданием загрузки. complete не означает конец всех страниц.', 'Read one compact card page, waiting for loaded metadata. complete does not mean all pages are exhausted.', {**token, 'selectors': config, 'timeout': timeout}, ['session', 'selectors'], True),
         ('browser_next', 'Один клик по наблюдаемому uid и проверка смены ID. Не повторять при отсутствии перехода.', 'Click an observed pagination uid once and verify changed card IDs. Do not replay when transition is unconfirmed.', {**action, 'uid': string, 'selectors': config, 'timeout': timeout}, [*action, 'uid', 'selectors'], False),
         ('browser_action', 'Одно действие Chrome DevTools. Результат требует проверки через browser_verify; actionID нельзя повторять.', 'One native Chrome DevTools action. Verify the result with browser_verify; never reuse an actionID.', {**action, 'name': {'type': 'string', 'enum': ['click', 'fill', 'fill_form', 'press_key', 'type_text', 'upload_file', 'navigate_page']}, 'arguments': {'type': 'object'}}, [*action, 'name', 'arguments'], False),

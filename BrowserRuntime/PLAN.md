@@ -60,5 +60,46 @@ pagination, at-most-once fixture submission and reuse of the same Chrome process
 An initial reconnect fixture returned upstream “No page found”; the adapter did
 not replay the operation. A fresh run and a further three consecutive reconnect cycles passed. The initial
 missing-page cause was not established; stale page IDs are never silently rebound.
-Google account acceptance remains
-unverified and requires the user's manual sign-in after restarting the app.
+Google account acceptance was unverified at delivery. The subsequent manual
+sign-in reached Google Account without a sign-in redirect; Chrome Sync was not tested.
+
+## Browser lifecycle and live search follow-up — 2026-09-26
+
+Source: user accepted lifecycle repair followed by a measured live search.
+Implemented definite-exit/zombie handling, retirement of the old transport,
+new-task-only relaunch via explicit browser_open, and invalidation of missing
+page tokens. Ambiguous transport failure remains latched. No page is rebound by
+URL or title and no action is replayed. Live EnglishJobs preflight exposed valid
+clickout links longer than 2048 characters; URL capacity now matches the 8192
+navigation limit while card count and other fields remain bounded.
+
+The signed app build, 29 Python tests, bundled real-Chrome fixture (including
+zombie restart, missing tab, duplicate action rejection and intact 2200-character
+link query), actual Codex discovery of eight tools, and package verification
+passed. RU/EN copy reviewed; Swift sources were unchanged in this follow-up.
+The comparison uses the same
+reference traversal algorithm at the direct MCP client boundary and inside the
+adapter. It isolates aggregation and overhead, not model reasoning or a complete
+morning job. Public pages only; no scheduler or applications.
+
+Twelve live page reads passed: two EnglishJobs pages (20 cards each) and one
+JustJoin Warsaw page (50 cards), with direct/wrapper/wrapper/direct ordering.
+Mean three-page wall time was 35.92 s direct and 36.64 s wrapped. Client-boundary
+calls fell from 106 to 9 and serialized responses from 2,567,832 to 97,297 bytes.
+Peak driver RSS increased from 212.88 to 264.00 MiB; Chrome peaks were 2397.20 and
+2410.61 MiB. This demonstrates aggregation, not faster browser execution or RAM
+savings. EnglishJobs IDs matched exactly; JustJoin had 42 common IDs across four
+50-card pages (58-ID union), so identical JustJoin coverage is not claimed.
+The first direct round overlapped the isolated fixture check; two observations
+per lane and changing live content do not establish a causal speed ranking.
+
+Reproduction: run `python3 -B BrowserRuntime/benchmark.py` with `--resources`
+pointing to the built BrowserRuntime, `--workload BrowserRuntime/benchmark-workload.json`
+and `--output` pointing to a new private directory. Launch/warm-up are excluded;
+RSS samples are process-tree sums, not unique physical memory. No model tokens
+or reasoning time are measured. Reference client memory is recorded separately.
+The first diagnostic run exposed URL clipping, was stopped after finding it,
+and is excluded from the final comparison. Full morning traversal, qualification,
+company/location extraction, and authenticated LinkedIn comparison remain future
+work. The original intermittent page disappearance cause remains unestablished;
+this change safely invalidates the token and allows a fresh explicit task.

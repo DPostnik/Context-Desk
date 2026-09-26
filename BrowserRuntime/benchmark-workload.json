@@ -1,0 +1,34 @@
+[
+  {
+    "name": "englishjobs-1",
+    "url": "https://englishjobs.pl/jobs/frontend_developer",
+    "selectors": {
+      "card": "#results .job",
+      "title": "[itemprop=title]",
+      "link": "a.js-joblink",
+      "idAttribute": "id",
+      "next": "a[aria-label^=\"Goto Next Page\"]"
+    }
+  },
+  {
+    "name": "englishjobs-2",
+    "url": "https://englishjobs.pl/jobs/frontend_developer?page=2",
+    "selectors": {
+      "card": "#results .job",
+      "title": "[itemprop=title]",
+      "link": "a.js-joblink",
+      "idAttribute": "id",
+      "next": "a[aria-label^=\"Goto Next Page\"]"
+    }
+  },
+  {
+    "name": "justjoin-warsaw-1",
+    "url": "https://justjoin.it/job-offers/warszawa",
+    "selectors": {
+      "card": "h3:has(a.offer_list_offer_title_link)",
+      "title": "a",
+      "link": "a",
+      "next": "a[aria-label=\"Next\"]"
+    }
+  }
+]

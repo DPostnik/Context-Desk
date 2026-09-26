@@ -6,7 +6,7 @@ import tempfile
 import tarfile
 import hashlib
 import base64
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 import time
 import unittest
 
@@ -72,6 +72,68 @@ class BrowserTests(unittest.TestCase):
         self.assertTrue(self.browser.failed)
         with self.assertRaises(Rejected):
             self.browser.native('click', {'uid': '1_1', 'pageId': 7})
+
+    def test_missing_page_invalidates_token_without_rebinding(self):
+        self.browser.injected = lambda *args: {'isError': True, 'content': [{'type': 'text', 'text': 'Error: No page found'}]}
+        with self.assertRaises(Rejected):
+            self.browser.evaluate('() => 1')
+        self.assertIsNone(self.browser.session)
+        self.assertEqual(json.loads((Path(self.directory.name) / 'records/owner.json').read_text())['reason'], 'owned_page_missing')
+        with self.assertRaises(Rejected):
+            self.browser.owner('owner')
+        self.assertFalse(self.browser.failed)
+
+    def test_exit_before_action_never_dispatches_or_replays(self):
+        host, transport = Mock(), Mock()
+        host.process_gone.return_value = True
+        self.browser.chrome, self.browser.transport = host, transport
+        with self.assertRaises(Rejected):
+            self.browser.native('click', {'pageId': 7, 'uid': '1_1'})
+        self.assertEqual(self.calls, [])
+        transport.close.assert_called_once()
+        self.assertIsNone(self.browser.session)
+        self.assertIsNone(self.browser.transport)
+        self.assertFalse(self.browser.failed)
+
+    def test_explicit_open_after_exit_creates_new_task(self):
+        self.browser.chrome = Mock()
+        self.browser.chrome.process_gone.return_value = True
+        def rpc(name, args):
+            self.calls.append((name, args))
+            if name == 'new_page':
+                return {'content': [{'type': 'text', 'text': '9: ' + args['url']}]}
+            return envelope({'url': 'https://example.test/', 'readyState': 'complete'})
+        self.browser.injected = rpc
+        opened = self.browser.open('https://example.test/')
+        self.assertNotEqual(opened['session'], 'owner')
+        self.assertEqual(opened['pageId'], 9)
+        self.assertEqual([name for name, _ in self.calls], ['new_page', 'navigate_page', 'evaluate_script'])
+
+    def test_explicit_open_detects_user_closed_tab_without_adopting_other_tab(self):
+        def rpc(name, args):
+            self.calls.append((name, args))
+            if name == 'list_pages':
+                return {'content': [{'type': 'text', 'text': '## Pages\n8: https://other.test/'}]}
+            if name == 'new_page':
+                return {'content': [{'type': 'text', 'text': '9: ' + args['url']}]}
+            return envelope({'url': 'https://example.test/', 'readyState': 'complete'})
+        self.browser.injected = rpc
+        self.assertEqual(self.browser.open('https://example.test/')['pageId'], 9)
+        self.assertFalse(any(args.get('pageId') == 8 for _, args in self.calls))
+
+    def test_explicit_open_keeps_live_owned_tab_busy(self):
+        self.browser.injected = lambda *args: {'content': [{'type': 'text', 'text': '## Pages\n7: https://example.test/'}]}
+        with self.assertRaises(Rejected):
+            self.browser.open('https://example.test/')
+        self.assertEqual(self.browser.session, 'owner')
+
+    def test_ambiguous_failure_cannot_be_cleared_by_open(self):
+        self.browser.failed = True
+        self.browser.chrome = Mock()
+        with self.assertRaises(Rejected):
+            self.browser.open('https://example.test/')
+        self.browser.chrome.process_gone.assert_not_called()
+        self.assertEqual(self.calls, [])
 
     def observation(self, cards, **extra):
         return {'url': 'https://example.test/', 'cards': cards, 'placeholders': len(cards),

@@ -22,7 +22,7 @@
       company: clip(config.company ? text(node.querySelector(config.company)) : '', 200),
       location: clip(config.location ? text(node.querySelector(config.location)) : '', 200),
       badges: clip(config.badges ? text(node.querySelector(config.badges)) : '', 300),
-      url: clip(url, 2048)
+      url: clip(url, 8192)
     };
   });
   const next = config.next ? document.querySelector(config.next) : null;

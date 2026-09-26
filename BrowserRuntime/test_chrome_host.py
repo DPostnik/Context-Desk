@@ -68,3 +68,24 @@ class ChromeHostTests(unittest.TestCase):
         with patch('chrome_host.subprocess.Popen') as launch:
             self.host.close_created_for_test()
             launch.assert_not_called()
+
+    def test_zombie_requires_same_birth_and_foreign_pid_is_preserved(self):
+        with patch.object(self.host, 'process_field', side_effect=lambda pid, field: 'Z' if field == 'stat' else 'birth'):
+            self.assertTrue(self.host.process_gone(self.owner))
+            self.assertFalse(self.host.process_gone(dict(self.owner, birth='other')))
+        with patch.object(self.host, 'process_field', return_value='S'):
+            self.assertFalse(self.host.process_gone(self.owner))
+        with patch.object(self.host, 'process_field', return_value=None):
+            self.assertTrue(self.host.process_gone(self.owner))
+
+    def test_zombie_record_allows_one_fresh_launch(self):
+        self.host.persist(self.owner)
+        child = Mock(pid=456)
+        child.poll.return_value = None
+        with patch.object(self.host, 'process_field', side_effect=lambda pid, field: 'Z' if field == 'stat' else 'birth'), \
+             patch('chrome_host.os.access', return_value=True), \
+             patch('chrome_host.subprocess.Popen', return_value=child) as launch, \
+             patch.object(self.host, 'endpoint', return_value='http://127.0.0.1:9999'):
+            self.assertEqual(self.host.ensure(), 'http://127.0.0.1:9999')
+        self.assertEqual(launch.call_count, 1)
+        self.assertEqual(self.host.owner['pid'], 456)

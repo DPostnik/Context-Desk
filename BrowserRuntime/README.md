@@ -28,6 +28,9 @@ Browser data lives in `~/Library/Application Support/Context Desk/browser/`.
 Records persist until you delete them; they may contain job or other page data.
 No automatic action replay or automatic continuation after reconnect is performed.
 One task owns the work tab at a time. Other tasks must wait for it to close.
+After Chrome exits, call `browser_open` explicitly to start a new task with the
+same profile. Old session tokens are invalidated; actions are never replayed.
+An uncertain transport failure still requires reconnecting the adapter.
 
 ## Русский
 
@@ -58,6 +61,9 @@ Chrome остаётся открытым при переподключении �
 содержать данные вакансий или других страниц. Действия не повторяются автоматически;
 после переподключения задача не продолжается сама. Рабочей вкладкой владеет одна
 задача; остальные ждут её закрытия.
+После закрытия Chrome явно вызови `browser_open`, чтобы начать новую задачу
+с тем же профилем. Старые session становятся недействительными; действия
+не повторяются. При неопределённом сбое связи нужно переподключить адаптер.
 
 ## Development contract
 
