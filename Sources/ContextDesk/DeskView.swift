@@ -787,7 +787,7 @@ struct SettingsView: View {
             Section(L10n.text("Браузер", "Browser")) {
                 Toggle(L10n.text("Использовать Chrome DevTools", "Use Chrome DevTools"),
                        isOn: Binding(get: { model.state.browserEnabled == true }, set: { model.selectBrowserEnabled($0) }))
-                Text(L10n.text("Отдельный профиль Chrome для задач агента. Вход на сайты выполняется в этом браузере; текущие разрешения проектов сохраняются.", "A separate Chrome profile for agent tasks. Sign in to websites in that browser; existing project permissions are preserved."))
+                Text(L10n.text("Отдельный профиль Chrome для задач агента. Входи на сайты вручную. Браузер остаётся открытым после переподключения; разрешения проектов сохраняются.", "A separate Chrome profile for agent tasks. Sign in manually. The browser stays open after reconnecting; project permissions are preserved."))
                     .font(.callout).foregroundStyle(.secondary)
                 Button(L10n.text("Инструкция по установке", "Installation instructions")) {
                     if let resources = Bundle.main.resourceURL {

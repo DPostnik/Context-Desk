@@ -6,6 +6,9 @@ from pathlib import Path
 import re
 import tempfile
 import threading
+import sys
+
+sys.dont_write_bytecode = True
 
 from install import ROOT, LOCK
 from server import Browser, Rejected
@@ -47,9 +50,12 @@ def main():
         (root / 'runtime.json').write_bytes((ROOT / 'runtime.json').read_bytes())
         (root / ('chrome-devtools-' + LOCK['version'])).symlink_to(ROOT / ('chrome-devtools-' + LOCK['version']))
         browser = Browser(root)
+        host = None
         try:
             url = 'http://127.0.0.1:' + str(fixture.server_port) + '/'
             opened = browser.open(url)
+            host = browser.chrome
+            assert browser.evaluate('() => navigator.webdriver') is False
             token = opened['session']
             config = {'card': '.card', 'title': 'a', 'link': 'a', 'idAttribute': 'data-key',
                       'company': '.company', 'scroll': '#list', 'next': '#next', 'loading': '#loading'}
@@ -77,10 +83,26 @@ def main():
             assert browser.verify_result(token, '#receipt', text='Fixture received 1')['verified']
             metrics = dict(browser.metrics)
             browser.close_session(token)
+            for _ in range(3):
+                browser.stop()
+                assert host.child.poll() is None
+                browser = Browser(root)
+                reopened = browser.open(url)
+                assert browser.chrome.owner['pid'] == host.child.pid
+                assert browser.chrome.child is None
+                try:
+                    assert browser.cards(reopened['session'], config)['complete']
+                except Exception:
+                    print(browser.text(browser.native('list_pages', {})), flush=True)
+                    raise
+                browser.close_session(reopened['session'])
             print(json.dumps({'result': 'passed', 'pages': 2, 'cardsPerPage': 12, 'noOpDetected': True,
-                              'submissionCount': 1, 'metrics': metrics}, indent=2))
+                              'submissionCount': 1, 'normalChrome': True, 'reconnectCycles': 3, 'metrics': metrics}, indent=2))
         finally:
             browser.stop()
+            fixture_host = host or browser.chrome
+            if fixture_host:
+                fixture_host.close_created_for_test()
             fixture.shutdown()
 
 

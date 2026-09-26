@@ -137,7 +137,7 @@ def main():
     if args.task == 'build':
         digest = hashlib.sha256()
         browser_resources = [ROOT / 'BrowserRuntime' / name for name in
-                             ('server.py', 'transport.py', 'install.py', 'cards.js', 'runtime.lock.json', 'README.md')]
+                             ('server.py', 'transport.py', 'chrome_host.py', 'install.py', 'cards.js', 'runtime.lock.json', 'README.md')]
         for path in sorted([ROOT / 'Package.swift', ROOT / 'Package.resolved'] + list((ROOT / 'Sources').rglob('*')) + browser_resources):
             if path.is_file():
                 digest.update(str(path.relative_to(ROOT)).encode() + b'\0' + path.read_bytes())

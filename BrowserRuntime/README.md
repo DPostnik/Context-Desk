@@ -17,7 +17,10 @@ verifies its SHA-512 and all extracted files, and runs no npm installation scrip
 
 In Settings → Browser, enable Use Chrome DevTools and select Apply browser setting
 after current tasks finish. The agent opens a separate Chrome profile on first use.
-Sign in manually there. This does not copy your normal Chrome or Codex credentials.
+Chrome starts separately in manual debugging mode, then the adapter attaches.
+Sign in manually there. Google still decides whether to accept sign-in. Chrome
+stays open across adapter reconnects; close its window yourself when finished.
+This does not copy your normal Chrome or Codex credentials.
 The component is disabled by default. Turning it off also requires Apply or restart.
 
 Browser data lives in `~/Library/Application Support/Context Desk/browser/`.
@@ -43,7 +46,9 @@ python3 BrowserRuntime/install.py
 
 В настройках → Браузер включи «Использовать Chrome DevTools» и нажми «Применить
 настройку браузера» после завершения текущих задач. При первом обращении агента
-откроется отдельный профиль Chrome. Войди на сайты вручную в нём. Данные входа
+откроется отдельный профиль Chrome в режиме ручной отладки; адаптер подключится
+после запуска. Войди на сайты вручную. Решение о разрешении входа принимает Google.
+Chrome остаётся открытым при переподключении адаптера; закрой его окно, когда закончишь. Данные входа
 обычного Chrome и Codex не копируются. По умолчанию компонент выключен. Отключение
 тоже применяется кнопкой или после перезапуска.
 
@@ -80,3 +85,9 @@ Run `python3 -m unittest discover -s BrowserRuntime -p 'test_*.py'` for offline
 checks. Run `python3 BrowserRuntime/smoke.py` after installing for the real Chrome
 fixture checks. App build and Swift checks use the repository's usual scripts.
 See `BrowserRuntime/PLAN.md` in the repository for the delivery sequence.
+
+The host records the dedicated Chrome PID, process birth, exact launch command and
+browser endpoint ID. Attachment requires a matching process and an exclusively
+loopback listener owned by that PID. It never uses autoConnect or launches with
+`--enable-automation`, `--disable-sync` or a mock keychain.
+Reference: https://github.com/ChromeDevTools/chrome-devtools-mcp/blob/main/docs/advanced-usage.md#connecting-to-a-running-chrome-instance

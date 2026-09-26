@@ -15,8 +15,12 @@ import time
 import uuid
 from urllib.parse import urlparse
 
+# App resources are signed; never create __pycache__ inside the bundle.
+sys.dont_write_bytecode = True
+
 from install import LOCK, ROOT, verify
 from transport import StdioRPC
+from chrome_host import ChromeHost
 
 VERSION = '1.0.0'
 SCRIPT = Path(__file__).with_name('cards.js').read_text()
@@ -72,6 +76,7 @@ class Browser:
         self.records = self.root / 'records'
         self.records.mkdir(exist_ok=True, mode=0o700)
         self.transport = None
+        self.chrome = None
         self.injected = rpc
         self.failed = False
         self.stopped = threading.Event()
@@ -89,11 +94,11 @@ class Browser:
         entry = verify(self.root / ('chrome-devtools-' + LOCK['version']))
         node = Path(config['node'])
         require(node.is_absolute() and os.access(node, os.X_OK), 'node_unavailable')
-        profile = self.root / 'profile'
-        profile.mkdir(exist_ok=True, mode=0o700)
+        self.chrome = ChromeHost(self.root, language=LANGUAGE)
+        endpoint = self.chrome.ensure(cancelled=self.stopped)
         env = {key: value for key, value in os.environ.items() if key in ('PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL')}
         env.update(CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS='1', CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS='1')
-        self.transport = StdioRPC([str(node), str(entry), '--user-data-dir=' + str(profile),
+        self.transport = StdioRPC([str(node), str(entry), '--browser-url=' + endpoint,
             '--page-id-routing', '--no-usage-statistics', '--no-performance-crux',
             '--workspace=' + str(self.root)], env=env, max_line=8_000_000).start()
         try:

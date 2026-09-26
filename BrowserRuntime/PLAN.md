@@ -42,3 +42,23 @@ tests, 14 adapter tests, bundled real-Chrome fixture, real-Codex tool discovery
 No live Settings UI click-through or production speedup measurement is claimed.
 Dedicated RAM sampling and automatic checkpoint resume remain future work; the
 current checkpoint is durable evidence and never a replay queue.
+
+## Manual sign-in follow-up — 2026-09-26
+
+Source: user screenshot of Google's “This browser or app may not be secure” error.
+The adapter now starts a dedicated Chrome in manual debugging mode and connects
+with upstream `--browser-url`. It omits automation, disabled-sync and mock-keychain
+flags. The same dedicated profile is retained; no user credentials are copied.
+Chrome survives adapter shutdown. Reattachment checks the recorded PID, birth,
+command, loopback listener ownership and browser endpoint ID before connecting.
+Python bytecode caching is disabled to preserve the signed app bundle.
+
+Signed build, 75 Swift tests, 21 Python tests, real Codex discovery of eight tools,
+and package signature/source-digest/ZIP verification passed. Both languages were
+reviewed. The real Chrome fixture verified native webdriver=false, lazy cards,
+pagination, at-most-once fixture submission and reuse of the same Chrome process.
+An initial reconnect fixture returned upstream “No page found”; the adapter did
+not replay the operation. A fresh run and a further three consecutive reconnect cycles passed. The initial
+missing-page cause was not established; stale page IDs are never silently rebound.
+Google account acceptance remains
+unverified and requires the user's manual sign-in after restarting the app.
