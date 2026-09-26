@@ -435,7 +435,7 @@ class PlaywriterAdapter:
                             'if (typeof fn !== "function") throw Error("evaluate source must be a function");'
                             'return fn(argument);'
                             '}')
-            body = f'const __cdValue=await __cdPage.evaluate({json.dumps(page_wrapper)},{source_and_arg});'
+            body = f'const __cdValue=await __cdPage.evaluate({page_wrapper},{source_and_arg});'
         elif operation == 'wait':
             body = (f'await __cdPage.getByText({json.dumps(args["text"])}).waitFor('
                     f'{{state:"visible",timeout:{timeout}}});const __cdValue={{visible:true}};')

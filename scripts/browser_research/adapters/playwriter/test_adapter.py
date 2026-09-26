@@ -213,6 +213,8 @@ class PlaywriterTest(unittest.TestCase):
         # Host and page use distinct globals; no browser, relay, or package code runs.
         cases = [("() => 2", None),
                  ("arg => arg.answer * 2", {'answer': 21}),
+                 ("async arg => ({text: arg.text, count: await Promise.resolve(3)})",
+                  {'text': 'Привет "world"\n雪'}),
                  ("() => { globalThis.hostMarker = 99; return typeof process }", None)]
         scripts = []
         for index, (function, arg) in enumerate(cases):
@@ -230,9 +232,12 @@ const page = {
   isClosed: () => false,
   url: () => 'http://127.0.0.1:34982/run-1/A',
   async evaluate(expression, arg) {
-    const source = typeof expression === 'function' ? expression.toString() : expression;
+    const isFunction = typeof expression === 'function';
+    const source = isFunction ? expression.toString() : expression;
     const value = vm.runInContext('(' + source + ')', pageWorld);
-    return typeof value === 'function' ? await value(arg) : value;
+    // Playwright invokes function arguments, but evaluates strings as expressions.
+    // A string whose result is a function must not be implicitly invoked here.
+    return isFunction ? await value(arg) : value;
   }
 };
 const context = {pages: () => [page]};
@@ -253,8 +258,9 @@ const getCDPSession = async () => ({send: async () => ({targetInfo:{targetId:'A1
         completed = subprocess.run(['node', '-e', node_script], input=json.dumps(scripts),
                                    text=True, capture_output=True, timeout=5, check=True)
         observed = json.loads(completed.stdout)
-        self.assertEqual([entry['value'] for entry in observed['values']], [2, 42, 'undefined'])
-        self.assertEqual([entry['hostMarker'] for entry in observed['values']], [None, None, None])
+        self.assertEqual([entry['value'] for entry in observed['values']],
+                         [2, 42, {'text': 'Привет "world"\n雪', 'count': 3}, 'undefined'])
+        self.assertEqual([entry['hostMarker'] for entry in observed['values']], [None] * len(cases))
         self.assertEqual(observed['pageMarker'], 99)
 
     def test_e09_transport_loss_and_owned_transport_only(self):

@@ -68,6 +68,11 @@ cessation; `cancel` therefore never reports a cancellation pass.
 | `upload` | `locator(selector).setInputFiles(filePaths)` for existing files in declared app-owned synthetic roots |
 | `download` | `waitForEvent('download')` plus click, then `saveAs` to a new path in a declared app-owned private root |
 
+The evaluate wrapper is passed as a function value, not a quoted function
+expression. Playwright evaluates strings without invoking a returned function.
+The Node VM regression check preserves that distinction and checks argument
+serialization, asynchronous results and separation of host/page globals.
+
 Generated code never calls `resetPlaywright`, `context.newPage`, navigation,
 direct CDP discovery, or arbitrary MCP tool names. The caller supplies only
 the listed arguments; all others are rejected. The result marker reports tool
