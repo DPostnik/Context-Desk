@@ -13,7 +13,7 @@ async function api(path, data) {
 }
 // Exposed only as a page-event sink, never as an oracle approval/reset control.
 window.fixtureEvent = (kind, detail = {}) => api('event', {
-  target: C.target, generation: C.generation, kind, detail
+  target: C.target, generation: C.generation, top_level: !C.frame, kind, detail
 }).catch(report);
 function button(id, handler) {
   $(id).onclick = async event => { try { await handler(event); } catch (error) { report(error); } };

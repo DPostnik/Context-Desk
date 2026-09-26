@@ -16,8 +16,11 @@ def digest(data):
 
 def revision():
     root = Path(__file__).parent
-    return digest(b''.join(p.name.encode() + b'\0' + p.read_bytes()
-                           for p in sorted(root.iterdir()) if p.suffix in {'.py', '.html', '.js'}))
+    # Include adapters/runner/contract, with relative paths to avoid collisions.
+    return digest(b''.join(p.relative_to(root).as_posix().encode() + b'\0' + p.read_bytes()
+                           for p in sorted(root.rglob('*'))
+                           if p.is_file() and p.suffix in {'.py', '.html', '.js'}
+                           and '__pycache__' not in p.parts))
 
 
 def private_json(path, value):
@@ -33,6 +36,8 @@ def record(experiment, variant, status, **fields):
     if status not in STATUSES:
         raise ValueError(status)
     value = dict(schema_version=1, run_id=uuid.uuid4().hex,
+                 adapter_contract_version=None, host_audit=[], adapter_state=None,
+                 artifact_identity=None, run_generation=None,
                  experiment_id=experiment, variant=variant, requirement_ids=[],
                  candidate_id=None, candidate_version=None, evidence_level='fixture self-check',
                  hypothesis='', environment_manifest=None, fixture_revision=revision(),

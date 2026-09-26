@@ -106,8 +106,9 @@ selection/consent; no browser tool is called by this preflight.
 The bounded first report may end at this named prerequisite. E01/E02/E07–E09 and
 then E03–E06 need a separate owner runner with host dispatch/Stop audit, no replay,
 30-second case/60-second watchdog limits and independent five-second post-cancel
-observation. That comparative browser runner is not implemented here; no model,
-agent-server, cancellation, attachment or candidate benchmark result is claimed.
+observation. The contract-v1 runner and four adapters are implemented for offline research
+checks. Their protocol-double checks are separate from live E01–E09 results; no
+model, agent-server, attachment or candidate benchmark result follows from them.
 
 ## Evidence contract
 
@@ -118,3 +119,50 @@ blocks. Never overwrite previous records to turn a failed result into a pass.
 Preflight/fixture records apply only to their declared assertions. A missing current
 grant is `blocked`; it is not a browser-driver failure. Numeric performance/product
 SLOs and architecture selection remain outside this package.
+
+## Direct-driver package
+
+The shared [contract](contract/README.md) preserves schema v1 and adds explicit
+run/target generations, current profile/nonce/consent prerequisites and conservative
+uncertainty. The runner and adapters own disjoint source directories; constructors
+do not attach. Only one lead-owned live browser trial may run at a time.
+
+Independent lead checks:
+
+```sh
+python3 scripts/browser_research/checks/test_oracle.py
+python3 scripts/browser_research/checks/test_host_boundaries.py
+python3 scripts/browser_research/checks/test_integration.py
+```
+
+The nonce oracle considers only explicit top-level page loads; cross-origin frame
+nonces cannot identify the selected tab. Lifecycle readback separates page events
+from site responses and never turns a quiet observation into cessation. Media
+output validation also checks the original upload's item and SHA-256 binding.
+`fixture_revision` now hashes Python/HTML/JavaScript recursively, including runner,
+adapters and contract. Historical records retain their original digest.
+
+Live trial prerequisites are current user-selected profile/tab, a top-level nonce
+observed before attachment, artifact and extension identity, and browser-owned
+connection consent. Run E01/E02 and E07–E09 before E03–E06 for C01, then C02, then
+C03/C04. Pending consent means blocked, not failed browser behavior. No arbitrary
+script cessation guarantee is inferred from RPC completion or process cleanup.
+
+Candidate preparation and operation mappings: [C01 Chrome](adapters/chrome/README.md),
+[C02 Playwright](adapters/playwright/README.md),
+[C03 Playwriter](adapters/playwriter/README.md) and
+[C04 agent-browser](adapters/agent_browser/README.md). A missing mapped download
+operation is an adapter limitation; it is not evidence that the upstream browser
+tool can never complete a download workflow. Candidate conformance remains open.
+
+Run all fixed offline checks (requires the retained C01/C03 artifacts documented
+above; missing prerequisites fail rather than downloading implicitly):
+
+```sh
+python3 scripts/browser_research/checks/validate.py
+```
+
+This preserves per-command logs and a schema-v1 summary in a private
+`parallel-validation-UUID` directory. It rejects a changed source revision during
+the run. [Runner API and wire audit](runner/README.md) describe browser-free MCP
+initialization, bounded transport and explicit owner responsibilities for live trials.

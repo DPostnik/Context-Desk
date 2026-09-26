@@ -55,6 +55,35 @@ class Oracle:
 
     def outputs(self, job, destination):
         names = ('output.mp3', 'transcript.txt')
-        return (any(e == {'upload': job, 'state': 'complete'} for e in self.of('processed'))
+        return (any(e.get('upload') == job and e.get('purpose') == 'media'
+                    and e.get('item') == 7 and e.get('sha256') == self.truth['hashes']['input.mp4']
+                    for e in self.of('uploaded'))
+                and any(e == {'upload': job, 'state': 'complete'} for e in self.of('processed'))
                 and all((Path(destination) / n).is_file() and digest((Path(destination) / n).read_bytes()) == self.truth['hashes'][n] for n in names)
                 and all(any(e['job'] == job and e['name'] == n and e['sha256'] == self.truth['hashes'][n] for e in self.of('downloaded')) for n in names))
+
+    def loaded_nonce(self, target, before_ns):
+        """Require one consistent pre-attachment nonce in this run/generation."""
+        matches = [e['data'].get('detail', {}).get('nonce') for e in self.events
+                   if e['kind'] == 'page-event' and e['monotonic_ns'] < before_ns
+                   and e['data'].get('target') == target
+                   and e['data'].get('top_level') is True
+                   and e['data'].get('generation') == self.truth['generations'].get(target)
+                   and e['data'].get('kind') == 'loaded']
+        if not matches or any(not isinstance(n, str) or not n for n in matches):
+            return None
+        return matches[0] if len(set(matches)) == 1 else None
+
+    def lifecycle_readback(self, target, since_ns):
+        """Host receive times only; quiet readback never asserts cessation."""
+        events = [e for e in self.events if e['monotonic_ns'] >= since_ns]
+        page = [e for e in events if e['kind'] == 'page-event'
+                and e['data'].get('target') == target
+                and e['data'].get('generation') == self.truth['generations'].get(target)]
+        return dict(page_events=page,
+                    decoy_events=[e for e in events if e['kind'] == 'page-event'
+                                  and e['data'].get('target') == 'decoy'],
+                    site_responses=[e for e in events if e['kind'] == 'site-response'],
+                    last_page_receive_ns=max((e['monotonic_ns'] for e in page), default=None),
+                    cessation_verified=False,
+                    interpretation='Page reports are observations, not proof of absence of future work')
