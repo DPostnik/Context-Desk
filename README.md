@@ -16,7 +16,7 @@ The repository contains the Swift application, tests, assets, and build scripts.
 
 Build with `zsh scripts/build-app.sh`, then open `build/Context Desk.app`. To install locally, quit the app and copy that bundle to `~/Applications/`. In the app, open a project folder and choose **Войти** to use the official ChatGPT login. Enable notifications in Settings if wanted. Projects opened here and their chats are independent of the existing Codex desktop history.
 
-The bundled app is ad-hoc signed for this Mac, not notarized for distribution. It locates the existing official Codex binary in `/Applications/ChatGPT.app`, `/Applications/Codex.app`, `/opt/homebrew/bin` or `/usr/local/bin`. The binary is not bundled or redistributed.
+The bundled app is ad-hoc signed for this Mac, not notarized for distribution. It locates the existing official Codex binary in ChatGPT/Codex bundles under `/Applications` or `~/Applications` (including the nested `CodexCLI.app` layout), then `/opt/homebrew/bin`, `/usr/local/bin`, or absolute directories in `PATH`. The binary is not bundled or redistributed.
 
 ## Optional external integration: Headroom
 
