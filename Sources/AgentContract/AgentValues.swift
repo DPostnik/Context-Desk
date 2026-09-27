@@ -16,7 +16,7 @@ public struct ResponseTiming: Codable, Sendable, Equatable {
     }
 }
 
-public struct TranscriptItem: Identifiable, Sendable, Equatable {
+public struct TranscriptItem: Identifiable, Codable, Sendable, Equatable {
     public var id: String
     public var kind: String
     public var text: String

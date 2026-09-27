@@ -8,7 +8,7 @@ native method names, arbitrary JSON or permission-answer payloads.
 Execution paths use explicit app/native identity mapping (stage 2). Stage 3 is
 implemented: `CodexIntegration` conforms to this contract, and production uses
 `AgentClient` for interactive work, scheduled Codex submissions, history,
-interactions and background generation. Stage 4 now routes the scheduler through typed executors; stages 5–6 remain planned. Interactive
+interactions and background generation. Stage 4 now routes the scheduler through typed executors; stage 5 local history is in progress and stage 6 remains planned. Interactive
 Claude, portable transcript collection/backfill, general optimizer compatibility
 and externally installable agent modules are not delivered by extraction.
 
@@ -357,7 +357,7 @@ questions, constrained forms and tool links. A nil native session on submission
 creates one; an existing session must first be prepared under the same account
 revision and route. Empty interactive model IDs explicitly request the engine's
 default, while background recipes require a named model. Portable snapshot storage
-and its schema remain unchanged; collection/backfill still belongs to stage 5.
+remains app-owned; stage 5 now populates normalized snapshots (see below).
 
 Capabilities are advertised only for a running, version-compatible connection.
 Account revision rotates at the transport when account events arrive, on explicit
@@ -433,3 +433,25 @@ app-owned configuration boundary or enable background generation, tools or metri
 
 Validation and actual build results are recorded in the stage-4 entry of
 [improvements.md](docs/improvements.md). Provider fixtures are synthetic, not live turns.
+
+## Readable local history (stage 5, in progress)
+
+Normalized snapshots now populate through the original adapter's typed history read,
+startup backfill, turn-completion refresh and item events (including unselected chats).
+The app reads snapshots before attempting an engine refresh; unavailable engines retain
+readable chats and archives. Backfill reads only and never prepares/resumes a session,
+changes selection, transfers approvals, or drains queues. Failed reads retain the last
+snapshot. Capture timestamps prevent late reads from replacing newer item events.
+
+The v1 snapshot adds optional presentation fields for phase, turn identity and response
+timing; old items without them remain readable. Revisions hash normalized content.
+The Codex adapter reports complete only for terminal turns whose items are fully
+represented text messages. Tool details, attachments, unknown items and active turns
+produce partial snapshots. Streaming deltas are not a durable write-ahead transcript:
+only item events and successful history reads are persisted, so an interrupted stream
+can leave incomplete text until a later successful read. Snapshot notices disclose this
+and distinguish missing local data from an empty conversation.
+
+This delivers the first local-history slice of stage 5, not interactive Claude or
+full two-engine acceptance. Live-provider/UI verification remains separate from the
+synthetic adapter and model regression tests.

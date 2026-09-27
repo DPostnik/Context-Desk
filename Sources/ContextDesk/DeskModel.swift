@@ -70,6 +70,10 @@ private struct ChatRunState {
     let summaryExecutable: URL?
     let summaryHome: URL
     @Published var items: [TranscriptItem] = []
+    @Published var localHistoryNotice: String?
+    private var historyBackfillTask: Task<Void, Never>?
+    private var historyRefreshTasks: [String: Task<Void, Never>] = [:]
+    private var historyEventRevisions: [String: Int] = [:]
     @Published var pending: [PendingAction] = []
     @Published var usage: [String: UsageSnapshot] = [:]
     @Published var models: [AgentModelInfo] = []
@@ -254,6 +258,7 @@ private struct ChatRunState {
             }
             clearConnectionError()
             await refreshAccount()
+            startHistoryBackfill()
             if !pluginRuntimes.isEmpty {
                 pluginTask = Task { [weak self] in
                     while !Task.isCancelled {
@@ -414,7 +419,7 @@ private struct ChatRunState {
     }
     func newChat() {
         showingArchive = false
-        selectionGeneration = UUID(); chatID = nil; items = []
+        selectionGeneration = UUID(); chatID = nil; items = []; localHistoryNotice = nil
         draft = projectID.flatMap { newChatDrafts[$0] } ?? ""
         showingJobs = false; loadingChat = false
     }
@@ -425,24 +430,74 @@ private struct ChatRunState {
         showingJobs = false; projectID = chat.projectID; chatID = chat.id
         draft = chatDrafts[chat.id] ?? ""
         let generation = UUID(); selectionGeneration = generation
-        loadingChat = true; items = []
+        defer { if selectionGeneration == generation { loadingChat = false } }
+        loadingChat = true; items = []; localHistoryNotice = nil
         do {
+            let saved = try await store.loadTranscript(conversationID: chat.id)
+            guard selectionGeneration == generation else { return }
+            items = saved.map(LocalHistory.items) ?? []
+            localHistoryNotice = LocalHistory.notice(saved)
+            if saved != nil { loadingChat = false }
+        } catch {
+            if selectionGeneration == generation { self.error = error.localizedDescription }
+        }
+        guard selectionGeneration == generation else { return }
+        do {
+            let eventRevision = historyEventRevisions[chat.id, default: 0]
+            let capturedAt = Date()
             let turns = try await connection.history(sessionForChat(chat.id))
             guard selectionGeneration == generation else { return }
             let timings = try await store.loadTimings(threadID: chat.id)
             guard selectionGeneration == generation else { return }
+            guard historyEventRevisions[chat.id, default: 0] == eventRevision else { return }
             items = turns.flatMap { turn in
                 var entries = turn.items
                 for index in entries.indices { entries[index].turnID = turn.id }
                 ResponseTiming.apply(turn.timing(fallback: timings[turn.id ?? ""]), to: &entries)
                 return entries
             }
+            let snapshot = try LocalHistory.snapshot(conversation: ConversationID(chat.id),
+                source: sessionForChat(chat.id), turns: turns, timings: timings, capturedAt: capturedAt)
+            try await store.saveTranscript(snapshot)
+            guard selectionGeneration == generation else { return }
+            localHistoryNotice = snapshot.completeness == .complete ? nil : LocalHistory.notice(snapshot)
             if let completion = state.chats.first(where: { $0.id == chat.id })?.unreadCompletionID,
                let turn = turns.first(where: { "turn:" + chat.id + ":" + ($0.id ?? "") == completion }) {
                 unreadResponseItems[chat.id] = turn.items.last(where: { $0.kind == "assistant" })?.id
             }
         } catch { if selectionGeneration == generation { self.error = error.localizedDescription } }
         if selectionGeneration == generation { loadingChat = false }
+    }
+
+    /// Read-only backfill: never resumes sessions, dispatches work or changes the selected chat.
+    func backfillHistory(_ chats: [Chat]) async {
+        for chat in chats {
+            guard !Task.isCancelled, connected else { return }
+            guard chatIsAvailable(chat.id), !isBusy(threadID: chat.id),
+                  state.chats.contains(where: { $0.id == chat.id }), !isChangingChat(chat.id) else { continue }
+            do {
+                let capturedAt = Date()
+                let session = try sessionForChat(chat.id)
+                let turns = try await connection.history(session)
+                guard !Task.isCancelled else { return }
+                let timings = try await store.loadTimings(threadID: chat.id)
+                let snapshot = try LocalHistory.snapshot(conversation: ConversationID(chat.id), source: session,
+                    turns: turns, timings: timings, capturedAt: capturedAt)
+                try await store.saveTranscript(snapshot)
+            } catch {
+                // Keep the last readable revision; opening the chat exposes any read error.
+            }
+        }
+    }
+    private func startHistoryBackfill() {
+        historyBackfillTask?.cancel()
+        let chats = state.chats
+        historyBackfillTask = Task { [weak self] in await self?.backfillHistory(chats) }
+    }
+    private func refreshHistoryAfterTurn(_ id: String) {
+        guard let chat = state.chats.first(where: { $0.id == id }) else { return }
+        historyRefreshTasks[id]?.cancel()
+        historyRefreshTasks[id] = Task { [weak self] in await self?.backfillHistory([chat]) }
     }
     func renameChat(_ id: String, title: String) async {
         guard !isChangingChat(id) else { return }
@@ -778,6 +833,9 @@ private struct ChatRunState {
     }
 
     func markResponseRead(threadID: String, completionID: String) {
+        if localHistoryNotice != nil && !items.contains(where: {
+            $0.kind == "assistant" && $0.turnID.map { "turn:" + threadID + ":" + $0 } == completionID
+        }) { return }
         guard chatID == threadID, !showingJobs, (!showingArchive || archiveViewingChat), !loadingChat,
               let index = state.chats.firstIndex(where: { $0.id == threadID }),
               state.chats[index].unreadCompletionID == completionID else { return }
@@ -854,6 +912,8 @@ private struct ChatRunState {
     }
 
     func shutdown() async {
+        historyBackfillTask?.cancel()
+        for task in historyRefreshTasks.values { task.cancel() }
         for id in Array(titleTasks.keys) { await cancelChatTitle(id) }
         await stopScheduler()
         summaryTask?.cancel()
@@ -900,6 +960,8 @@ private struct ChatRunState {
             await refreshAccount()
         case .limitsChanged: await refreshLimits()
         case .disconnected:
+            historyBackfillTask?.cancel()
+            for task in historyRefreshTasks.values { task.cancel() }
             agentDescriptor = nil; models = []
             connected = false
             for run in jobLedger.runs where run.engine == .codex && run.status.active {
@@ -965,16 +1027,23 @@ private struct ChatRunState {
             }
             finishActiveTurn(threadID: thread, turnID: turnID,
                              status: completion.status, hasError: completion.hasError)
+            if let thread { refreshHistoryAfterTurn(thread) }
             let resolved = pending.filter { $0.threadID == thread && $0.interaction.turn == turnID }
             pending.removeAll { action in resolved.contains { $0.id == action.id } }
             removeActionNotices(resolved)
             NSApplication.shared.dockTile.badgeLabel = pending.isEmpty ? nil : String(pending.count)
             if completion.hasError { error = completion.error ?? L10n.text("Задача завершилась с ошибкой", "The task failed") }
         case .item(let item):
+            if let thread { historyEventRevisions[thread, default: 0] += 1 }
+            if let thread, let source = event.session {
+                do { try await store.recordTranscriptItem(item, conversationID: thread, source: source) }
+                catch { self.error = error.localizedDescription }
+            }
             guard thread == chatID else { return }
             flushDeltas()
             TranscriptItem.merge(item, into: &items)
         case .delta(let turn, let id, let text):
+            if let thread { historyEventRevisions[thread, default: 0] += 1 }
             guard thread == chatID else { return }
             if !items.contains(where: { $0.id == id }) { items.append(TranscriptItem(id: id, kind: "assistant", text: "")) }
             if let index = items.firstIndex(where: { $0.id == id }) { items[index].turnID = turn }

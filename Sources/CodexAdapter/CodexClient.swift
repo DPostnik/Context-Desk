@@ -146,10 +146,22 @@ extension AgentModelInfo {
 }
 extension AgentHistoryTurn {
     init(_ turn: JSONValue) {
+        let complete: Bool
+        if case .array(let entries) = turn["items"] {
+            complete = turn["id"].string != nil && ["completed", "failed", "interrupted"].contains(turn["status"].string ?? "") && entries.allSatisfy { entry in
+                guard entry["id"].string != nil else { return false }
+                if entry["type"].string == "agentMessage" { return entry["text"].string != nil }
+                if entry["type"].string == "userMessage", case .array(let content) = entry["content"] {
+                    return content.allSatisfy { $0["type"].string == "text" && $0["text"].string != nil }
+                }
+                // Tool details, attachments and unknown native items are not fully represented.
+                return false
+            }
+        } else { complete = false }
         self.init(id: turn["id"].string, items: turn["items"].array.compactMap(CodexDecoding.transcriptItem),
                   startedAt: turn["startedAt"].int.map { Date(timeIntervalSince1970: Double($0)) },
                   completedAt: turn["completedAt"].int.map { Date(timeIntervalSince1970: Double($0)) },
-                  duration: turn["durationMs"].int.flatMap { $0 >= 0 ? Double($0) / 1_000 : nil })
+                  duration: turn["durationMs"].int.flatMap { $0 >= 0 ? Double($0) / 1_000 : nil }, isComplete: complete)
     }
 }
 

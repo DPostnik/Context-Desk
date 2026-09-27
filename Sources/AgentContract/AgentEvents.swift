@@ -5,7 +5,11 @@ public struct AgentTranscriptItem: Codable, Equatable, Sendable {
     public let id: String
     public let kind: Kind
     public let text: String
-    public init(id: String, kind: Kind, text: String) { self.id = id; self.kind = kind; self.text = text }
+    /// Optional presentation preserves timing/phase while remaining compatible with v1 snapshots.
+    public let presentation: TranscriptItem?
+    public init(id: String, kind: Kind, text: String, presentation: TranscriptItem? = nil) {
+        self.id = id; self.kind = kind; self.text = text; self.presentation = presentation
+    }
 }
 
 /// Portable readable evidence, never an executable replacement for native engine state.

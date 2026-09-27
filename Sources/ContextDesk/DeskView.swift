@@ -154,7 +154,7 @@ struct DeskView: View {
                     ArchiveView(model: model)
                 } else if model.showingJobs {
                     JobsView(model: model)
-                } else if !model.authenticated {
+                } else if !model.authenticated && model.chatID == nil {
                     EmptyState(icon: "person.crop.circle", title: model.connected ? L10n.text("Войди в аккаунт", "Sign in") : L10n.text("Не удалось подключиться", "Could not connect"),
                                text: model.connected ? model.accountLabel + L10n.text(". Войди через ChatGPT, чтобы начать работу.", ". Sign in with ChatGPT to get started.") : L10n.text("Повтори подключение к Codex, чтобы начать работу.", "Reconnect to Codex to get started."))
                     Button(model.connecting ? L10n.text("Подключение…", "Connecting…") : (model.connected ? L10n.text("Войти через ChatGPT", "Sign in with ChatGPT") : L10n.text("Подключиться", "Connect"))) {
@@ -503,6 +503,10 @@ struct ChatView: View {
                     Button(model.connected ? L10n.text("Войти", "Sign in") : L10n.text("Подключиться", "Connect")) { Task { if model.connected { await model.login() } else { await model.connect() } } }
                         .buttonStyle(DeskButtonStyle()).disabled(model.connecting)
                 }.padding()
+            }
+            if let notice = model.localHistoryNotice {
+                Text(notice).font(.caption).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 24).padding(.vertical, 8)
             }
             if model.loadingChat {
                 ChatLoadingIndicator()

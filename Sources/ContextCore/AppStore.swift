@@ -185,13 +185,20 @@ public actor AppStore {
         }
     }
 
-    /// Schema only at this stage: adapters will populate/backfill snapshots in stage 5.
+    /// A late backfill must not overwrite a newer captured revision.
     public func saveTranscript(_ snapshot: AgentTranscriptSnapshot) throws {
         guard snapshot.version == AgentTranscriptSnapshot.schemaVersion else { throw ConversationIdentity.invalidStorage }
         try withDatabase { db in
             guard let data = try bytes(db: db, key: "app"),
                   let chat = try JSONDecoder().decode(SavedState.self, from: data).chats.first(where: { $0.id == snapshot.conversation.value }),
                   chat.nativeSession == snapshot.source else { throw ConversationIdentity.invalidStorage }
+            if let data = try bytes(db: db, key: "transcript:" + snapshot.conversation.value) {
+                let previous = try JSONDecoder().decode(AgentTranscriptSnapshot.self, from: data)
+                guard previous.version == AgentTranscriptSnapshot.schemaVersion, previous.source == snapshot.source else {
+                    throw ConversationIdentity.invalidStorage
+                }
+                if previous.capturedAt > snapshot.capturedAt { return }
+            }
             try put(db: db, key: "transcript:" + snapshot.conversation.value, bytes: JSONEncoder().encode(snapshot))
         }
     }
@@ -206,6 +213,12 @@ public actor AppStore {
             }
             return snapshot
         }
+    }
+    public func recordTranscriptItem(_ item: TranscriptItem, conversationID: String, source: AgentSessionReference) throws {
+        let previous = try loadTranscript(conversationID: conversationID)
+        var items = previous.map(LocalHistory.items) ?? []
+        TranscriptItem.merge(item, into: &items)
+        try saveTranscript(LocalHistory.snapshot(conversation: ConversationID(conversationID), source: source, items: items))
     }
     private func put(key: String, bytes: Data) throws {
         try withDatabase { db in try put(db: db, key: key, bytes: bytes) }

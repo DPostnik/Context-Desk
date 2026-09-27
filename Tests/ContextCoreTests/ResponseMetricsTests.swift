@@ -146,6 +146,7 @@ import ContextTranscript
     let project = Project(path: folder.path)
     let chat = Chat(id: "thread", projectID: project.id, title: "History", model: "")
     model.state.projects = [project]; model.state.chats = [chat]
+    try await store.save(model.state)
     await model.openChat(chat)
     #expect(model.error == nil)
     #expect(model.items.count == 2)
@@ -153,5 +154,7 @@ import ContextTranscript
     #expect(model.items.last?.timing?.label(language: .english) == "Worked for 1m 7s")
     #expect(model.items.last?.timing?.tokens == tracker.result)
     #expect(model.items.last?.turnID == "turn")
+    let saved = try #require(try await store.loadTranscript(conversationID: chat.id))
+    #expect(LocalHistory.items(saved) == model.items)
     await connection.stop()
 }

@@ -4,7 +4,7 @@ Date: 2026-09-25; revised 2026-09-27.
 
 Source: agreed product direction, audit of version 0.2.1 at `a6d5b2c`, and user request to update the plan.
 
-Status: accepted direction and revised implementation plan. Stages 1–4 are implemented: the typed contract, identity migration and complete in-process Codex extraction now serve production paths. Codex connection/version/account lifecycle, commands, events, permissions, configuration and isolated generation run through `AgentIntegration`. Stages 5–6 remain planned. See [AGENT_CONTRACT.md](AGENT_CONTRACT.md) for boundaries and acceptance evidence.
+Status: accepted direction and revised implementation plan. Stages 1–4 are implemented: the typed contract, identity migration and complete in-process Codex extraction now serve production paths. Codex connection/version/account lifecycle, commands, events, permissions, configuration and isolated generation run through `AgentIntegration`. Stage 5 is in progress (readable local history); interactive Claude and stage 6 remain planned. See [AGENT_CONTRACT.md](AGENT_CONTRACT.md) for boundaries and acceptance evidence.
 
 ## Purpose
 
@@ -62,7 +62,7 @@ The existing process-plugin protocol v1 configures Codex Responses proxies using
 | Agent engine | Task execution, native session state, its tool system and enforcement of its supported permissions. |
 | Optimization integration | Explicitly configured request processing and truthful metrics for supported routes. |
 
-The app-owned history is a portable record, not a replacement for all engine state. Today Codex owns the actual chat transcripts; SQLite stores app metadata, usage, timing and generated archive summaries. Opening an archived chat still reads its transcript from Codex. A summary is not a complete transcript.
+The app-owned history is a portable record, not a replacement for all engine state. Codex retains native execution state. SQLite stores app metadata, usage, timing, generated archive summaries and normalized readable snapshots. Opening a chat first reads its local snapshot, then refreshes through the original adapter when available. Partial snapshots explicitly disclose omitted messages, attachments or tool details. A summary is not a complete transcript.
 
 Introduce stable app conversation IDs with explicit agent/connection identities and native session references. Migrate chats, queued messages, archive summaries, timing, usage and scheduled-run associations together. Existing records map to the existing app-owned Codex connection. Preserve unavailable integrations as unavailable; retain their readable records without rerouting execution. Model selections, account status and defaults must be scoped to the integration.
 
@@ -102,7 +102,7 @@ Currently shipped:
 
 - A native SwiftUI/AppKit client backed by Codex through `AgentIntegration`, with app-dedicated credentials/state and a pinned runtime version. Native protocol, permission encoding and engine configuration live in `CodexAdapter`.
 - Projects, chat navigation, drafts, queues, archive, notifications and usage displays.
-- Stable app conversation IDs with explicit agent/connection/native-session mapping; legacy associations migrate atomically without renaming keys. Transcript snapshot storage has a versioned schema; collection/backfill remains planned.
+- Stable app conversation IDs with explicit agent/connection/native-session mapping; legacy associations migrate atomically without renaming keys. Versioned transcript snapshots populate on history reads, item events and read-only backfill; saved records remain readable without the engine.
 - Process-based provider plugins for compatible Responses request routes inside Codex, including the optional Headroom integration.
 - App-owned schedules and persistent run history: Codex jobs create app chats; Claude Code print-mode jobs record their result in run history.
 - Semantic chat titles and archive summaries generated through isolated Codex requests.
@@ -111,7 +111,7 @@ Currently shipped:
 Not yet implemented:
 
 - Interactive Claude Code sessions and agent selection for chats; the existing job-only adapter is not full interactive support.
-- App-owned portable transcripts and cross-agent handoffs.
+- Cross-agent handoffs; normalized local snapshots are implemented with explicit completeness limits.
 - Portable routine definitions and execution mappings.
 - A validated compatibility model spanning multiple agents and optimization modules.
 
@@ -119,7 +119,7 @@ Existing provider plugins are the starting point for the optimization layer. The
 
 ## Implementation plan
 
-Stages 1–4 are implemented; stages 5–6 remain planned. Each stage should preserve current behavior and pass its acceptance checks before the next dependent stage enables new execution paths.
+Stages 1–4 are implemented; stage 5 is in progress and stage 6 remains planned. Each stage should preserve current behavior and pass its acceptance checks before the next dependent stage enables new execution paths.
 
 ### 1. Define the contract against both existing engines
 
@@ -154,6 +154,8 @@ Replace engine-specific dispatch branches with the common execution contract whi
 Acceptance: both engines satisfy shared lifecycle/error tests with their different capability sets. Preserve ownership locking, durable claims, concurrency limits, import confirmation, stop behavior and uncertain-run recovery. Codex jobs still create app chats without disturbing the selected conversation; Claude job results remain readable in run history.
 
 ### 5. Deliver interactive Claude and readable local history
+
+Status (2026-09-27): in progress. Local snapshots now populate on open, item events and read-only startup/completion backfill. Offline chats and archives display saved snapshots; missing/partial snapshots are visible in Russian and English. Interactive Claude, its authentication/configuration boundary and two-engine end-to-end acceptance remain outstanding. See [local-history scope](AGENT_CONTRACT.md#readable-local-history-stage-5-in-progress).
 
 Establish the supported Claude authentication/configuration boundary and pinned protocol. Add streaming, user questions, approvals, interruption, session recovery and explicit agent selection for new chats. Implement normalized transcript persistence and adapter-based backfill with completeness/revision tracking. Keep native sessions bound to their original engine. Gate background titles, summaries, tools and metrics on independently verified capabilities.
 

@@ -23,12 +23,14 @@ public struct AgentModelInfo: Hashable, Sendable {
 public struct AgentHistoryTurn: Sendable {
     public let id: String?
     public let items: [TranscriptItem]
+    public let isComplete: Bool
     private let startedAt: Date?
     private let completedAt: Date?
     private let duration: Double?
 
-    public init(id: String?, items: [TranscriptItem], startedAt: Date?, completedAt: Date?, duration: Double?) {
+    public init(id: String?, items: [TranscriptItem], startedAt: Date?, completedAt: Date?, duration: Double?, isComplete: Bool = false) {
         self.id = id; self.items = items; self.startedAt = startedAt; self.completedAt = completedAt; self.duration = duration
+        self.isComplete = isComplete
     }
     public func timing(fallback: ResponseTiming?) -> ResponseTiming? {
         guard let completedAt = completedAt ?? fallback?.completedAt else { return nil }
@@ -36,4 +38,3 @@ public struct AgentHistoryTurn: Sendable {
                               durationSeconds: duration ?? fallback?.durationSeconds, tokens: fallback?.tokens)
     }
 }
-
