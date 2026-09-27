@@ -319,6 +319,9 @@ private struct ChatRunState {
             accountLabel = authenticated ? L10n.text("ChatGPT · \(result.plan ?? "подключён")", "ChatGPT · \(result.plan ?? "connected")") : L10n.text("Вход не выполнен", "Not signed in")
             if authenticated { await refreshModels(); await refreshLimits(); startSummaryQueue() }
             else { clearLimits() }
+        } catch let failure as AgentOperationFailure where failure.rejection == .staleContext {
+            // An account event superseded this metadata request. Never publish its obsolete result.
+            return
         } catch { self.error = error.localizedDescription }
     }
     // A successful server response makes an earlier transport warning obsolete.
@@ -353,6 +356,8 @@ private struct ChatRunState {
                 state.model = (models.first { $0.isDefault } ?? models.first)?.id ?? ""
             }
             selectModel(state.model)
+        } catch let failure as AgentOperationFailure where failure.rejection == .staleContext {
+            return
         } catch { self.error = error.localizedDescription }
     }
     func selectModel(_ model: String) {
@@ -373,6 +378,8 @@ private struct ChatRunState {
             let result = try await connection.limits()
             guard limitsRequestID == requestID, authenticated, connected else { return }
             accountLimits = result
+        } catch let failure as AgentOperationFailure where failure.rejection == .staleContext {
+            return
         } catch {
             guard limitsRequestID == requestID else { return }
             limitsError = accountLimits == nil

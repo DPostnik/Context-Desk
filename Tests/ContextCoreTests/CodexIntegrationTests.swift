@@ -3,8 +3,9 @@ import Foundation
 import Testing
 import ContextCore
 import AgentContract
+@testable import ContextDesk
 
-private func contractFixture(version: String = "0.158.0-alpha.2.1", disconnect: Bool = false) throws -> (URL, URL) {
+private func contractFixture(version: String = "0.158.0-alpha.2.1", disconnect: Bool = false, changeDuring: String = "") throws -> (URL, URL) {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     let executable = root.appendingPathComponent("engine.py")
@@ -25,10 +26,12 @@ private func contractFixture(version: String = "0.158.0-alpha.2.1", disconnect: 
         if method=='model/list': result={'data':[{'model':'fixture','isDefault':True}]}
         if method in ['test/change','account/logout']:
             print(json.dumps({'method':'account/updated','params':{}}),flush=True)
+        if method=='CHANGE_DURING' and method not in calls:
+            print(json.dumps({'method':'account/updated','params':{}}),flush=True)
         if method=='test/calls': result=calls
         else: calls.append(method)
         print(json.dumps({'id':m['id'],'result':result}),flush=True)
-    """#.replacingOccurrences(of: "VERSION", with: version).replacingOccurrences(of: "DISCONNECT", with: disconnect ? "True" : "False")
+    """#.replacingOccurrences(of: "VERSION", with: version).replacingOccurrences(of: "DISCONNECT", with: disconnect ? "True" : "False").replacingOccurrences(of: "CHANGE_DURING", with: changeDuring)
     try Data(script.utf8).write(to: executable)
     try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
     return (root, executable)
@@ -126,5 +129,41 @@ private func contractFixture(version: String = "0.158.0-alpha.2.1", disconnect: 
     else { Issue.record("Cancelled generation was not stopped before dispatch") }
     #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("unused").path))
     #expect(try await wire.request("test/calls").array.compactMap(\.string) == ["initialize"])
+    await adapter.disconnect()
+}
+
+@Test @MainActor func startupAccountUpdateDiscardsObsoleteMetadataWithoutBannerOrReplay() async throws {
+    let (root, executable) = try contractFixture(changeDuring: "account/read")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let wire = CodexConnection()
+    let adapter = CodexIntegration(client: CodexClient(transport: wire))
+    _ = try await adapter.connect(.init(executable: executable, home: root)).value()
+    let model = DeskModel(connection: adapter, store: AppStore(file: root.appendingPathComponent("state.sqlite")))
+    model.error = "Existing unrelated error"
+    await model.refreshAccount()
+    #expect(model.error == "Existing unrelated error")
+    #expect(!model.authenticated)
+    #expect(try await wire.request("test/calls").array.compactMap(\.string).filter { $0 == "account/read" }.count == 1)
+    model.error = nil
+    await model.refreshAccount()
+    #expect(model.authenticated)
+    #expect(model.models.contains { $0.id == "fixture" })
+    #expect(model.error == nil)
+    await adapter.disconnect()
+}
+
+@Test(arguments: ["model/list", "account/rateLimits/read"])
+func obsoleteMetadataIsTypedRejection(method: String) async throws {
+    let (root, executable) = try contractFixture(changeDuring: method)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let wire = CodexConnection()
+    let adapter = CodexIntegration(client: CodexClient(transport: wire))
+    _ = try await adapter.connect(.init(executable: executable, home: root)).value()
+    if method == "model/list" {
+        if case .rejected(.staleContext) = await adapter.models() {} else { Issue.record("Obsolete models were not rejected") }
+    } else {
+        if case .rejected(.staleContext) = await adapter.limits() {} else { Issue.record("Obsolete limits were not rejected") }
+    }
+    #expect(try await wire.request("test/calls").array.compactMap(\.string).filter { $0 == method }.count == 1)
     await adapter.disconnect()
 }

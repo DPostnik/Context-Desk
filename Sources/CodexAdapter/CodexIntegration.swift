@@ -98,7 +98,7 @@ public actor CodexIntegration: AgentIntegration {
         if let session, session.connection != context.connection || session.nativeID.isEmpty { throw IntegrationRejection(.wrongConnection) }
     }
     private func perform<T: Sendable>(_ context: AgentContext? = nil, session: AgentSessionReference? = nil,
-                                     delivery: AgentFailure.Delivery = .uncertain, verifyAfter: Bool = true,
+                                     delivery: AgentFailure.Delivery = .uncertain, verifyAfter: Bool = true, readOnly: Bool = false,
                                      _ body: () async throws -> T) async -> AgentResult<T> {
         do {
             let resolvedContext: AgentContext
@@ -108,6 +108,10 @@ public actor CodexIntegration: AgentIntegration {
             let value = try await CodexDispatchContext.$epoch.withValue(context.accountRevision) { try await body() }
             if verifyAfter {
                 do { try await check(context, session: session) }
+                catch let rejection as IntegrationRejection where readOnly && rejection.reason == .staleContext {
+                    // Discard obsolete metadata; the account event drives a fresh refresh.
+                    return .rejected(.staleContext)
+                }
                 catch { return .failed(.init(delivery: delivery, diagnostic: error.localizedDescription)) }
             }
             return .success(value)
@@ -119,7 +123,7 @@ public actor CodexIntegration: AgentIntegration {
         if let error = error as? AgentOperationFailure { return error.result() }
         return .failed(.init(delivery: delivery, diagnostic: error.localizedDescription))
     }
-    public func account() async -> AgentResult<AgentAccountInfo> { await perform { try await self.client.account() } }
+    public func account() async -> AgentResult<AgentAccountInfo> { await perform(readOnly: true) { try await self.client.account() } }
     public func authenticate(_ action: AgentAuthenticationAction) async -> AgentResult<AgentAuthenticationStep> {
         switch action {
         case .beginSignIn: return await perform { .openURL(try await self.client.signInURL()) }
@@ -133,8 +137,8 @@ public actor CodexIntegration: AgentIntegration {
             return result
         }
     }
-    public func models() async -> AgentResult<[AgentModelInfo]> { await perform { try await self.client.models() } }
-    public func limits() async -> AgentResult<AccountLimits> { await perform { try await self.client.limits() } }
+    public func models() async -> AgentResult<[AgentModelInfo]> { await perform(readOnly: true) { try await self.client.models() } }
+    public func limits() async -> AgentResult<AccountLimits> { await perform(readOnly: true) { try await self.client.limits() } }
     public func configure(_ tools: AgentToolConfiguration, context: AgentContext) async -> AgentResult<Void> {
         guard tools.servers.isEmpty else { return .rejected(.unsupported(.toolRegistration)) }
         return await perform(context) {
