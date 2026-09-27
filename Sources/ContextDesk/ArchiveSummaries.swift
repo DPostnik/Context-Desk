@@ -52,12 +52,12 @@ extension DeskModel {
 
     func startSummaryQueue() {
         guard summaryTask == nil, connected, authenticated,
-              archiveSummaries.values.contains(where: { $0.status == .queued && isArchived($0.threadID) }) else { return }
+              archiveSummaries.values.contains(where: { $0.status == .queued && isArchived($0.threadID) && chatIsAvailable($0.threadID) }) else { return }
         summaryTask = Task { [weak self] in
             guard let self else { return }
             defer { self.summaryActiveThread = nil; self.summaryTask = nil }
             while !Task.isCancelled && self.connected && self.authenticated {
-                guard let next = self.archiveSummaries.values.filter({ $0.status == .queued && self.isArchived($0.threadID) })
+                guard let next = self.archiveSummaries.values.filter({ $0.status == .queued && self.isArchived($0.threadID) && self.chatIsAvailable($0.threadID) })
                     .sorted(by: { $0.updatedAt < $1.updatedAt }).first else { return }
                 self.summaryActiveThread = next.threadID
                 await self.buildArchiveSummary(next)
@@ -146,10 +146,11 @@ extension DeskModel {
     }
 
     private func readSummarySource(_ id: String) async throws -> SummarySource {
+        let native = try nativeThread(id)
         let result = try await connection.request("thread/read", params: .object([
-            "threadId": .string(id), "includeTurns": .bool(true)
+            "threadId": .string(native), "includeTurns": .bool(true)
         ]))
-        guard result["thread"]["id"].string == id else {
+        guard result["thread"]["id"].string == native else {
             throw ClientFailure(L10n.text("Получена история другого чата", "Received history for a different chat"))
         }
         return try SummarySource(thread: result["thread"])

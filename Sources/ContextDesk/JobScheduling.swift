@@ -69,7 +69,7 @@ import ContextCore
     func stopJob(_ run: JobRun) async {
         if let runner = claudeRunners[run.id] { await runner.stop(); return }
         if let thread = run.threadID, let turn = run.turnID {
-            do { _ = try await connection.request("turn/interrupt", params: .object(["threadId": .string(thread), "turnId": .string(turn)])) }
+            do { _ = try await connection.request("turn/interrupt", params: .object(["threadId": .string(try nativeThread(thread)), "turnId": .string(turn)])) }
             catch { self.error = error.localizedDescription }
         } else { jobTasks[run.id]?.cancel() }
     }

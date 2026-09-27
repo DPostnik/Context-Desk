@@ -5,9 +5,9 @@ contains a Foundation-only Swift target, typed operations and events, preflight
 validation and conservative delivery tracking. It has no engine transport imports,
 native method names, arbitrary JSON or permission-answer payloads.
 
-This is a contract foundation, not an extracted adapter. Existing execution paths
-are unchanged and do not yet conform to `AgentIntegration`. Stages 2–6 remain
-planned. In particular, no new interactive Claude support, portable persisted
+This is a contract foundation, not an extracted adapter. Execution paths now use
+explicit app/native identity mapping (stage 2), but do not yet conform to
+`AgentIntegration`. Stages 3–6 remain planned. In particular, no new interactive Claude support, portable persisted
 history, optimizer compatibility or general plugin installation is delivered.
 
 ## Evidence and current capability matrix
@@ -45,11 +45,11 @@ No provider documentation or live-provider tests were needed for this source aud
 
 ## Identity and ownership
 
-`ConversationID` is app-owned and distinct from `AgentSessionReference`. A native
-reference is scoped to both agent and connection. Unknown agent IDs round-trip as
-unavailable identities, never as a default engine. Stage 2 must atomically migrate
-all dependent records before using these types in persistence. Merely defining
-these types does not migrate existing data or resume queues.
+`ConversationID` is an opaque app-owned string, distinct from `AgentSessionReference`;
+new values use UUID strings. A native reference is scoped to both agent and
+connection. Unknown agent IDs round-trip as unavailable identities, never as a
+default engine. Stage 2 now migrates persisted associations without renaming legacy
+keys or resuming queues; details are below.
 
 `AgentContext` adds an account revision. Rotate it after account changes; reject
 old model selections, submissions and approval answers. Adapters retain the opaque
@@ -121,8 +121,8 @@ Transcript snapshot schema v1 records app conversation ID, original native refer
 revision, capture time and completeness. Text/tool output stays literal historical
 data. An unavailable or partial snapshot must never be displayed as complete; an
 empty item list is not proof of completeness. Readers must reject unsupported schema
-versions. Stage 2 defines storage/migration; stage 5 implements backfill/readable
-history. No hidden engine state or cross-engine continuation is implied.
+versions. Stage 2 implements schema storage/migration; stage 5 implements
+engine-backed collection, backfill and readable history. No hidden engine state or cross-engine continuation is implied.
 
 ## Verification and remaining boundaries
 
@@ -146,3 +146,67 @@ checks passed. A duplicate-descriptor regression also fixed explicit scheduler l
 release; direct-runner compatibility and a pre-layout UI test assertion were corrected
 during verification. Provider behavior is audited from source and existing fixtures,
 not newly verified against live accounts. No app-owned copy changed.
+
+
+## Identity migration (stage 2)
+
+Implemented 2026-09-27. `Chat.id` is now the app key; `nativeSession` stores the
+agent/connection/native-ID triple. Existing key values remain unchanged, including
+non-UUID legacy fixture IDs. New chats receive an independent UUID string, persist
+the mapping before submitting a turn, and never use an app ID as a native RPC ID.
+`ConversationID`'s serialized string value remains compatible with UUID strings
+from the stage-1 schema.
+
+The original app-owned Codex home has the stable, store-local
+`AgentConnectionID.originalCodex` identity. Legacy `model`/`defaultRoute` fields are
+explicitly scoped by `SavedState.defaultConnection`; an unavailable default cannot
+silently create a chat through the original connection. Other connection catalogs
+and account lifecycle management remain part of adapter/interactive extraction.
+
+The migration uses a SQLite `BEGIN IMMEDIATE` transaction, re-reads after taking
+the write lock, validates unique app IDs and unique scoped native references, writes
+explicit session associations and schema version 2, and parks unfinished summary
+work. Commit failure rolls everything back. Unknown identity versions, missing
+version-2 associations, malformed summary references and attempts to rebind an
+existing app ID fail closed. Startup stops before connection/scheduler dispatch on
+storage-load failure. Unknown integrations are retained, not converted to Codex.
+
+All dependent keys are adopted together through **identity preservation**:
+
+- Queues keep their app key, content, model, effort and project; startup remains paused.
+- Usage, per-turn timings, archive summaries and unread completion IDs keep their keys.
+- Drafts and running-turn/approval state use app IDs in memory.
+- Scheduled-run JSON keeps its historical `threadID` field as an app reference;
+  `JobRun.conversationID` exposes the typed interpretation. The file needs no rewrite,
+  so there is no cross-file remapping window. Existing crash recovery keeps unfinished
+  runs uncertain and schedules paused. Migration does not enable any schedule.
+
+Outgoing read/resume/send/interrupt/rename/archive/delete requests resolve the
+native session only for the original available connection. Incoming thread-scoped
+Codex events resolve back to app keys before transcript, usage, completion, approval
+or queue handling. Unknown thread-scoped requests are rejected and unknown events
+are ignored. Identical native IDs on another connection cannot receive those events.
+Background titles, summary execution and queue controls also check connection
+availability. Route plugins belonging only to unavailable connections are not started.
+These checks are a temporary orchestration boundary until stage 3 moves native
+protocol handling into the adapter target.
+
+`transcript:<app-ID>` stores normalized snapshot schema v1, preserving the source
+reference, revision, capture time and completeness. Save/read validates version and
+source association; chat deletion removes its snapshot with metadata. This API does
+not yet capture or backfill engine transcripts and is not a claim of offline history
+availability. Existing metadata, summary content and job outputs remain readable;
+opening engine-owned history still requires its original available integration.
+
+Migration tests use synthetic SQLite/job files, inject a commit failure, verify
+byte-preserving rollback and cross-file links, retain uncertain runs, exercise
+colliding native IDs/unavailable connections, reject rebinding/future versions,
+and check normalized event/usage routing. Existing send/queue/scheduler fixtures
+verify native wire IDs differ from newly created app IDs. No private app data is
+used for migration validation.
+
+Stage-2 verification: final signed app build passed with SwiftPM/macOS 26.5 SDK on
+2026-09-27, followed by all 123 tests (optional scheduler renderer skipped), contract
+boundary, signature/source-digest and diff checks. New unavailable/storage errors
+were reviewed in Russian and English. No live-provider turn, private-state migration
+or installed-app click-through was performed.

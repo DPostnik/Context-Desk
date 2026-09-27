@@ -1,4 +1,5 @@
 import Foundation
+import AgentContract
 import Darwin
 
 public enum JobEngine: String, Codable, CaseIterable, Sendable {
@@ -102,6 +103,8 @@ public enum JobRunStatus: String, Codable, Sendable {
     }
 }
 public struct JobRun: Identifiable, Codable, Sendable {
+    /// Kept under the legacy JSON key so migration cannot break cross-file links.
+    public var conversationID: ConversationID? { threadID.map { ConversationID($0) } }
     public var id = UUID()
     public var jobID: UUID
     public var engine: JobEngine

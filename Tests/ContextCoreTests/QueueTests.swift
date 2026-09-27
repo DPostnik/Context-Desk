@@ -33,6 +33,7 @@ import ContextCore
     model.state.defaultRoute = .direct
     let project = Project(path: folder.path)
     model.state.projects = [project]; model.projectID = project.id; model.chatID = "t"
+    model.state.chats = [Chat(id: "t", projectID: project.id, title: "Fixture", model: "")]
     model.connected = true; model.authenticated = true
     model.draft = "First"
     await model.send()
@@ -193,7 +194,9 @@ private func parallelChatFixture() throws -> (URL, URL) {
     #expect(model.draft == "New conversation")
     #expect(model.canSend)
     await model.send()
-    #expect(model.chatID == "new-thread")
+    #expect(model.chatID == model.state.chats.last?.id)
+    #expect(model.chatID != "new-thread")
+    #expect(model.state.chats.last?.nativeSession?.nativeID == "new-thread")
     #expect(model.state.chats.last?.projectID == b.id)
     #expect(model.queuedMessages.map(\.text) == ["A queued"])
     let after = try await connection.request("test/requests").array
@@ -211,6 +214,7 @@ private func parallelChatFixture() throws -> (URL, URL) {
                           summaryExecutable: executable, summaryHome: folder)
     let project = Project(path: folder.path)
     model.state.projects = [project]; model.projectID = project.id
+    model.state.chats = ["a", "b"].map { Chat(id: $0, projectID: project.id, title: $0, model: "") }
     model.state.defaultRoute = .direct; model.connected = true; model.authenticated = true
     model.chatID = "a"; model.draft = "slow"
     let first = Task { await model.send() }

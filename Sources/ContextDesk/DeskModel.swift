@@ -3,6 +3,7 @@ import Foundation
 import SwiftUI
 import UserNotifications
 import ContextCore
+import AgentContract
 
 struct PendingAction: Identifiable {
     let id: String
@@ -141,7 +142,7 @@ private struct ChatRunState {
     var chats: [Chat] { projectID.map { state.orderedChats(projectID: $0, archived: false) } ?? [] }
     var currentAction: PendingAction? { pending.first { $0.threadID == chatID } }
     var currentUsage: UsageSnapshot? { chatID.flatMap { usage[$0] } }
-    var canSend: Bool { !selectedChatIsArchived && !isChangingChat(currentRunKey) && routeIsAvailable(currentRoute) && connected && authenticated && selectedProject != nil && !sending && !loadingChat && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    var canSend: Bool { (chatID.map { chatIsAvailable($0) } ?? (state.defaultConnection == .originalCodex)) && !selectedChatIsArchived && !isChangingChat(currentRunKey) && routeIsAvailable(currentRoute) && connected && authenticated && selectedProject != nil && !sending && !loadingChat && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     var supportedEfforts: [String] {
         models.first { $0["model"].string == state.model }?["supportedReasoningEfforts"].array.compactMap { $0["reasoningEffort"].string } ?? []
     }
@@ -149,7 +150,7 @@ private struct ChatRunState {
     func boot() async {
         guard !booted else { return }; booted = true
         defer { isBootstrapping = false }
-        do { state = try await store.load(); usage = try await store.loadUsage(); projectID = state.projects.first?.id } catch { self.error = error.localizedDescription }
+        do { state = try await store.load(); usage = try await store.loadUsage(); projectID = state.projects.first?.id } catch { self.error = error.localizedDescription; return }
         await restoreSummaryQueue()
         for chat in state.chats where chat.hasUnreadResponse {
             let project = state.projects.first { $0.id == chat.projectID }
@@ -169,7 +170,7 @@ private struct ChatRunState {
     var defaultRoute: RequestRoute { state.defaultRoute ?? .direct }
     var currentRoute: RequestRoute { selectedChat.map { $0.route ?? .direct } ?? defaultRoute }
     var neededPluginIDs: Set<String> {
-        Set(([defaultRoute] + state.chats.compactMap(\.route)).filter { $0 != .direct }.map(\.rawValue))
+        Set(((state.defaultConnection == .originalCodex ? [defaultRoute] : []) + state.chats.filter { chatIsAvailable($0.id) }.compactMap(\.route)).filter { $0 != .direct }.map(\.rawValue))
     }
     var availableRoutes: [RequestRoute] {
         [.direct] + Set(plugins.map(\.route) + [defaultRoute, currentRoute] + state.chats.compactMap(\.route))
@@ -425,7 +426,7 @@ private struct ChatRunState {
         let generation = UUID(); selectionGeneration = generation
         loadingChat = true; items = []
         do {
-            let result = try await connection.request("thread/read", params: .object(["threadId": .string(chat.id), "includeTurns": .bool(true)]))
+            let result = try await connection.request("thread/read", params: .object(["threadId": .string(try nativeThread(chat.id)), "includeTurns": .bool(true)]))
             guard selectionGeneration == generation else { return }
             let turns = result["thread"]["turns"].array
             let timings = try await store.loadTimings(threadID: chat.id)
@@ -450,7 +451,7 @@ private struct ChatRunState {
         manuallyNamedChatIDs.insert(id)
         await cancelChatTitle(id)
         do {
-            _ = try await connection.request("thread/name/set", params: .object(["threadId": .string(id), "name": .string(title)]))
+            _ = try await connection.request("thread/name/set", params: .object(["threadId": .string(try nativeThread(id)), "name": .string(title)]))
             if let i = state.chats.firstIndex(where: { $0.id == id }) { state.chats[i].title = title; persist() }
         } catch { self.error = error.localizedDescription }
     }
@@ -466,7 +467,7 @@ private struct ChatRunState {
         defer { archivingChatIDs.remove(id) }
         do {
             _ = try await connection.request(archived ? "thread/archive" : "thread/unarchive",
-                                             params: .object(["threadId": .string(id)]))
+                                             params: .object(["threadId": .string(try nativeThread(id))]))
         } catch {
             self.error = (archived ? L10n.text("Не удалось подтвердить архивирование: ", "Could not confirm archiving: ") : L10n.text("Не удалось подтвердить восстановление: ", "Could not confirm restoring: ")) + error.localizedDescription
             return
@@ -501,7 +502,7 @@ private struct ChatRunState {
         runs[id, default: ChatRunState()].queuePaused = true
         defer { deletingChatIDs.remove(id) }
         do {
-            _ = try await connection.request("thread/delete", params: .object(["threadId": .string(id)]))
+            _ = try await connection.request("thread/delete", params: .object(["threadId": .string(try nativeThread(id))]))
         } catch {
             // Keep the chat and queue on any unconfirmed server result. Never retry deletion.
             runs[id, default: ChatRunState()].queuePaused = true
@@ -541,7 +542,7 @@ private struct ChatRunState {
         persist()
     }
     func sendQueuedMessageNow(_ id: String) async {
-        guard connected, let message = queuedMessages.first(where: { $0.id == id }),
+        guard connected, let message = queuedMessages.first(where: { $0.id == id }), chatIsAvailable(message.threadID),
               !isChangingChat(message.threadID), !isArchived(message.threadID) else { return }
         let thread = message.threadID
         let run = runs[thread] ?? ChatRunState()
@@ -558,7 +559,7 @@ private struct ChatRunState {
         runs[thread, default: ChatRunState()].priorityMessageID = id
         runs[thread, default: ChatRunState()].queuePaused = true
         do {
-            _ = try await connection.request("turn/interrupt", params: .object(["threadId": .string(thread), "turnId": .string(turn)]))
+            _ = try await connection.request("turn/interrupt", params: .object(["threadId": .string(try nativeThread(thread)), "turnId": .string(turn)]))
             // Only matching turn/completed releases this chat's next message.
         } catch {
             if runs[thread]?.priorityMessageID == id {
@@ -569,13 +570,13 @@ private struct ChatRunState {
         }
     }
     func resumeQueue() {
-        guard let thread = chatID, !isChangingChat(thread), !isArchived(thread) else { return }
+        guard let thread = chatID, chatIsAvailable(thread), !isChangingChat(thread), !isArchived(thread) else { return }
         runs[thread, default: ChatRunState()].queuePaused = false
         scheduleQueue(threadID: thread)
     }
     private func drainQueue(threadID: String) async {
         let run = runs[threadID] ?? ChatRunState()
-        guard !isChangingChat(threadID), !isArchived(threadID), !run.queuePaused, !run.running, !run.sending, connected, authenticated,
+        guard chatIsAvailable(threadID), !isChangingChat(threadID), !isArchived(threadID), !run.queuePaused, !run.running, !run.sending, connected, authenticated,
               let next = queuedMessages.first(where: { $0.threadID == threadID }),
               let project = state.projects.first(where: { $0.id == next.projectID }) else { return }
         let route = state.chats.first(where: { $0.id == threadID })?.route ?? .direct
@@ -637,6 +638,8 @@ private struct ChatRunState {
         let access = project.accessMode ?? .standard
         let route = scheduledRoute ?? (threadID == nil ? defaultRoute : (state.chats.first { $0.id == threadID }?.route ?? .direct))
         do {
+            if let threadID { _ = try nativeThread(threadID) }
+            else if scheduledRun == nil && state.defaultConnection != .originalCodex { throw ConversationIdentity.unavailable }
             if route != .direct {
                 guard let runtime = pluginRuntimes[route.rawValue], routeIsAvailable(route) else { throw ClientFailure(routeMessage(route)) }
                 pluginStatuses[route.rawValue] = try await runtime.status()
@@ -648,7 +651,11 @@ private struct ChatRunState {
                 params["modelProvider"] = .string(route.providerID)
                 if !selectedModel.isEmpty { params["model"] = .string(selectedModel) }
                 let result = try await connection.request("thread/start", params: .object(params))
-                guard let created = result["thread"]["id"].string else { throw ClientFailure(L10n.text("Не получен ID разговора", "No conversation ID received")) }
+                guard let nativeCreated = result["thread"]["id"].string, !nativeCreated.isEmpty else { throw ClientFailure(L10n.text("Не получен ID разговора", "No conversation ID received")) }
+                let session = AgentSessionReference(connection: .originalCodex, nativeID: nativeCreated)
+                guard ConversationIdentity.appID(for: nativeCreated, in: state) == nil else { throw ConversationIdentity.invalidStorage }
+                var chat = Chat(session: session, projectID: project.id, title: ChatTitle.placeholder(), model: selectedModel)
+                let created = chat.id
                 id = created
                 tokenTotals[created] = .zero
                 runs[created] = runs[runKey]
@@ -660,16 +667,15 @@ private struct ChatRunState {
                     newChatDrafts.removeValue(forKey: project.id)
                 }
                 loadedThreads.insert(created)
-                var chat = Chat(id: created, projectID: project.id, title: ChatTitle.placeholder(), model: selectedModel)
                 chat.route = route
                 if let scheduledRun, let run = jobLedger.runs.first(where: { $0.id == scheduledRun }) { chat.title = run.name }
                 state.chats.append(chat)
-                if scheduledRun != nil { try await store.save(state) } else { persist() }
+                try await store.save(state)
             }
             guard let id else { throw ClientFailure(L10n.text("Не выбран разговор", "No conversation selected")) }
             if !loadedThreads.contains(id) {
                 var resumeParams = access.threadParameters
-                resumeParams["threadId"] = .string(id)
+                resumeParams["threadId"] = .string(try nativeThread(id))
                 resumeParams["cwd"] = .string(project.path)
                 resumeParams["modelProvider"] = .string(route.providerID)
                 _ = try await connection.request("thread/resume", params: .object(resumeParams))
@@ -680,7 +686,7 @@ private struct ChatRunState {
                 try Task.checkCancellation()
                 guard !schedulerStopping else { throw CancellationError() }
             }
-            var params: [String: JSONValue] = ["threadId": .string(id), "input": .array([.object(["type": .string("text"), "text": .string(text), "text_elements": .array([])])])]
+            var params: [String: JSONValue] = ["threadId": .string(try nativeThread(id)), "input": .array([.object(["type": .string("text"), "text": .string(text), "text_elements": .array([])])])]
             params.merge(access.turnParameters(projectPath: project.path)) { _, new in new }
             if !selectedModel.isEmpty { params["model"] = .string(selectedModel) }
             if !selectedEffort.isEmpty { params["effort"] = .string(selectedEffort) }
@@ -692,7 +698,7 @@ private struct ChatRunState {
                 guard let turn = result["turn"]["id"].string else { throw ClientFailure(L10n.text("Не получен ID запуска", "No turn ID received")) }
                 jobLedger = try await jobStore.attach(scheduledRun, thread: id, turn: turn)
                 if Task.isCancelled || schedulerStopping {
-                    _ = try await connection.request("turn/interrupt", params: .object(["threadId": .string(id), "turnId": .string(turn)]))
+                    _ = try await connection.request("turn/interrupt", params: .object(["threadId": .string(try nativeThread(id)), "turnId": .string(turn)]))
                 }
             }
             clearConnectionError()
@@ -750,7 +756,7 @@ private struct ChatRunState {
         runs[thread, default: ChatRunState()].queuePaused = true
         runs[thread, default: ChatRunState()].stopRequested = true
         guard let turn = runs[thread]?.turnID else { return }
-        do { _ = try await connection.request("turn/interrupt", params: .object(["threadId": .string(thread), "turnId": .string(turn)])) }
+        do { _ = try await connection.request("turn/interrupt", params: .object(["threadId": .string(try nativeThread(thread)), "turnId": .string(turn)])) }
         catch { self.error = error.localizedDescription }
     }
     func refreshJobs() async {
@@ -820,7 +826,7 @@ private struct ChatRunState {
         await openChat(chat)
     }
     func answer(_ action: PendingAction, result: JSONValue) async {
-        guard pending.contains(where: { $0.id == action.id }), connected else { return }
+        guard pending.contains(where: { $0.id == action.id }), chatIsAvailable(action.threadID), connected else { return }
         do {
             try await connection.answer(id: action.rpcID, result: result)
             pending.removeAll { $0.id == action.id }
@@ -829,7 +835,7 @@ private struct ChatRunState {
         } catch { self.error = error.localizedDescription }
     }
     func generateChatTitle(_ id: String, firstMessage: String, model: String, route: RequestRoute) {
-        guard titleTasks[id] == nil, !manuallyNamedChatIDs.contains(id),
+        guard chatIsAvailable(id), titleTasks[id] == nil, !manuallyNamedChatIDs.contains(id),
               state.chats.contains(where: { $0.id == id }) else { return }
         let runner = ArchiveSummaryRunner()
         titleRunners[id] = runner
@@ -870,8 +876,19 @@ private struct ChatRunState {
     }
     private func persist() { let snapshot = state; Task { do { try await store.save(snapshot) } catch { self.error = error.localizedDescription } } }
 
-    private func receive(_ event: JSONValue) async {
-        let method = event["method"].string ?? "", p = event["params"]
+    func receive(_ event: JSONValue) async {
+        let method = event["method"].string ?? ""
+        var p = event["params"]
+        if let native = p["threadId"].string {
+            guard let appID = ConversationIdentity.appID(for: native, in: state) else {
+                if event["id"] != .null { try? await connection.rejectUnknown(id: event["id"]) }
+                return
+            }
+            var fields = p.object; fields["threadId"] = .string(appID); p = .object(fields)
+        } else if event["id"] != .null {
+            try? await connection.rejectUnknown(id: event["id"])
+            return
+        }
         if event["id"] != .null {
             let supported = ["item/commandExecution/requestApproval", "item/fileChange/requestApproval", "item/tool/requestUserInput", "item/permissions/requestApproval", "mcpServer/elicitation/request"]
             guard supported.contains(method) else {

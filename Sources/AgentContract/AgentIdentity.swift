@@ -12,6 +12,8 @@ public struct AgentConnectionID: Codable, Hashable, Sendable {
     public let agent: AgentID
     public let id: UUID
     public init(agent: AgentID, id: UUID) { self.agent = agent; self.id = id }
+    /// The original app-owned Codex home. This identity is local to an app store.
+    public static let originalCodex = Self(agent: .codex, id: UUID(uuidString: "F0362513-6DDA-4E2A-9F74-807F29BCE001")!)
 }
 
 /// Rotated on account changes; stale requests, approvals and model catalogs must be rejected.
@@ -24,8 +26,9 @@ public struct AgentContext: Codable, Hashable, Sendable {
 }
 
 public struct ConversationID: Codable, Hashable, Sendable {
-    public let value: UUID
-    public init(_ value: UUID = UUID()) { self.value = value }
+    /// Legacy keys remain opaque app IDs; new conversations use fresh UUID strings.
+    public let value: String
+    public init(_ value: String = UUID().uuidString) { self.value = value }
 }
 
 public struct AgentSessionReference: Codable, Hashable, Sendable {

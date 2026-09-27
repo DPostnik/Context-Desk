@@ -1,4 +1,5 @@
 import Foundation
+import AgentContract
 import CryptoKit
 
 public enum ArchiveSummaryStatus: String, Codable, Sendable {
@@ -43,6 +44,7 @@ public struct SummaryPart: Codable, Equatable, Sendable {
 }
 
 public struct ArchiveSummaryRecord: Codable, Equatable, Identifiable, Sendable {
+    public var conversationID: ConversationID { ConversationID(threadID) }
     public var id: String { threadID }
     public var threadID: String
     public var projectID: UUID

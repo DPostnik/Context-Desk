@@ -1,4 +1,5 @@
 import Foundation
+import AgentContract
 
 public struct Project: Identifiable, Codable, Hashable, Sendable {
     public var id: UUID
@@ -26,6 +27,9 @@ public enum AccessMode: String, Codable, CaseIterable, Sendable {
     }
 }
 public struct Chat: Identifiable, Codable, Hashable, Sendable {
+    /// App identity; never pass this value directly to an engine.
+    public var conversationID: ConversationID { ConversationID(id) }
+    public var nativeSession: AgentSessionReference?
     /// The latest completion remains unread until its transcript end is visible.
     public var unreadCompletionID: String?
     public var hasUnreadResponse: Bool { unreadCompletionID != nil }
@@ -42,9 +46,16 @@ public struct Chat: Identifiable, Codable, Hashable, Sendable {
     public var updated: Date
     public init(id: String, projectID: UUID, title: String, model: String) {
         self.id = id; self.projectID = projectID; self.title = title; self.model = model; updated = Date()
+        self.nativeSession = AgentSessionReference(connection: .originalCodex, nativeID: id)
+    }
+    public init(session: AgentSessionReference, projectID: UUID, title: String, model: String) {
+        self.init(id: UUID().uuidString, projectID: projectID, title: title, model: model)
+        nativeSession = session
     }
 }
 public struct QueuedMessage: Codable, Identifiable, Sendable, Equatable {
+    /// `threadID` is the historical storage name for the app conversation key.
+    public var conversationID: ConversationID { ConversationID(threadID) }
     public var id: String
     public var threadID: String
     public var projectID: UUID
@@ -57,6 +68,9 @@ public struct QueuedMessage: Codable, Identifiable, Sendable, Equatable {
     }
 }
 public struct SavedState: Codable, Sendable {
+    public var identityVersion: Int? = 2
+    /// `model` and `defaultRoute` belong to this connection, never another engine.
+    public var defaultConnection: AgentConnectionID? = .originalCodex
     public var browserEnabled: Bool?
     public var defaultRoute: RequestRoute?
     public var queuedMessages: [QueuedMessage]?

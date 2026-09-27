@@ -4,7 +4,7 @@ Date: 2026-09-25; revised 2026-09-27.
 
 Source: agreed product direction, audit of version 0.2.1 at `a6d5b2c`, and user request to update the plan.
 
-Status: accepted direction and revised implementation plan. Stage 1 has a typed contract foundation and a source-audited capability matrix; execution still uses the existing paths. Stages 2–6 remain planned. See [AGENT_CONTRACT.md](AGENT_CONTRACT.md) for boundaries and acceptance evidence.
+Status: accepted direction and revised implementation plan. Stages 1–2 provide the typed contract foundation, capability matrix, app conversation identities and persistence migration. Execution still uses the existing engines through identity-checked routing. Stages 3–6 remain planned. See [AGENT_CONTRACT.md](AGENT_CONTRACT.md) for boundaries and acceptance evidence.
 
 ## Purpose
 
@@ -102,6 +102,7 @@ Currently shipped:
 
 - A native SwiftUI/AppKit client backed by Codex, with app-dedicated credentials and state.
 - Projects, chat navigation, drafts, queues, archive, notifications and usage displays.
+- Stable app conversation IDs with explicit agent/connection/native-session mapping; legacy associations migrate atomically without renaming keys. Transcript snapshot storage has a versioned schema; collection/backfill remains planned.
 - Process-based provider plugins for compatible Responses request routes inside Codex, including the optional Headroom integration.
 - App-owned schedules and persistent run history: Codex jobs create app chats; Claude Code print-mode jobs record their result in run history.
 - Semantic chat titles and archive summaries generated through isolated Codex requests.
@@ -119,7 +120,7 @@ Existing provider plugins are the starting point for the optimization layer. The
 
 ## Implementation plan
 
-Stage 1's contract foundation is implemented; subsequent stages remain planned. Each stage should preserve current behavior and pass its acceptance checks before the next dependent stage enables new execution paths.
+Stages 1–2 are implemented; subsequent stages remain planned. Each stage should preserve current behavior and pass its acceptance checks before the next dependent stage enables new execution paths.
 
 ### 1. Define the contract against both existing engines
 
@@ -130,6 +131,8 @@ Define typed identities, operations, events, outcomes and capabilities for inter
 Acceptance: document the capability matrix for current Codex and Claude jobs; classify unsupported operations explicitly; define uncertain delivery, cancellation and recovery without fallback or replay. Native RPC payloads must not be part of the app-facing API.
 
 ### 2. Introduce identity and persistence migration
+
+Status (2026-09-27): implemented. Existing IDs are retained as app keys, with explicit original-Codex session references; new chats use independently generated IDs. The SQLite migration preserves queues, summary/usage/timing keys and existing job-run links without a cross-file rename. Pending legacy summaries become stale/uncertain, queues stay paused, and scheduler recovery remains unchanged. Requests/events resolve through connection-scoped native mapping; unavailable connections do not dispatch. Snapshot storage checks schema, source, completeness and revision; engine-backed collection/backfill remains stage 5. See [storage details](AGENT_CONTRACT.md#identity-migration-stage-2).
 
 Add app conversation IDs, agent/connection references and native session mapping. Migrate dependent records together, including queues, summaries, timings, usage and job-run links. Define the transcript snapshot schema now; full readable-history delivery is part of stage 5.
 
