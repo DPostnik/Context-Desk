@@ -43,13 +43,14 @@ public actor AppStore {
                 try put(db: db, key: "app", bytes: bytes)
                 var statement: OpaquePointer?
                 defer { sqlite3_finalize(statement) }
-                guard sqlite3_prepare_v2(db, "DELETE FROM state WHERE key=? OR key=?", -1, &statement, nil) == SQLITE_OK else {
+                guard sqlite3_prepare_v2(db, "DELETE FROM state WHERE key=? OR key=? OR key=?", -1, &statement, nil) == SQLITE_OK else {
                     throw ClientFailure(L10n.text("Не удалось удалить метрики чата", "Could not delete chat metrics"))
                 }
                 let key = "usage:" + threadID
                 let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
                 _ = key.withCString { sqlite3_bind_text(statement, 1, $0, -1, transient) }
                 _ = ("timing:" + threadID).withCString { sqlite3_bind_text(statement, 2, $0, -1, transient) }
+                _ = ("archiveSummary:" + threadID).withCString { sqlite3_bind_text(statement, 3, $0, -1, transient) }
                 guard sqlite3_step(statement) == SQLITE_DONE,
                       sqlite3_exec(db, "COMMIT", nil, nil, nil) == SQLITE_OK else {
                     throw ClientFailure(L10n.text("Не удалось сохранить удаление чата", "Could not save the chat deletion"))
@@ -62,6 +63,43 @@ public actor AppStore {
     }
     public func saveUsage(threadID: String, snapshot: UsageSnapshot) throws {
         try put(key: "usage:" + threadID, bytes: JSONEncoder().encode(snapshot))
+    }
+
+    public func loadArchiveSummaries() throws -> [String: ArchiveSummaryRecord] {
+        try withDatabase { db in
+            var statement: OpaquePointer?; defer { sqlite3_finalize(statement) }
+            guard sqlite3_prepare_v2(db, "SELECT value FROM state WHERE key LIKE 'archiveSummary:%'", -1, &statement, nil) == SQLITE_OK else {
+                throw ClientFailure(L10n.text("Не удалось прочитать итоги", "Could not read summaries"))
+            }
+            var result: [String: ArchiveSummaryRecord] = [:]
+            while sqlite3_step(statement) == SQLITE_ROW {
+                guard let bytes = sqlite3_column_blob(statement, 0) else { continue }
+                let value = try JSONDecoder().decode(ArchiveSummaryRecord.self,
+                    from: Data(bytes: bytes, count: Int(sqlite3_column_bytes(statement, 0))))
+                result[value.threadID] = value
+            }
+            return result
+        }
+    }
+
+    public func saveArchiveSummary(_ record: ArchiveSummaryRecord) throws {
+        try put(key: "archiveSummary:" + record.threadID, bytes: JSONEncoder().encode(record))
+    }
+
+    /// The archive flag and durable pending work must commit together.
+    public func saveArchivingChat(_ state: SavedState, summary: ArchiveSummaryRecord?) throws {
+        try withDatabase { db in
+            guard sqlite3_exec(db, "BEGIN IMMEDIATE", nil, nil, nil) == SQLITE_OK else {
+                throw ClientFailure(L10n.text("Не удалось сохранить архив", "Could not save archive"))
+            }
+            do {
+                try put(db: db, key: "app", bytes: JSONEncoder().encode(state))
+                if let summary { try put(db: db, key: "archiveSummary:" + summary.threadID, bytes: JSONEncoder().encode(summary)) }
+                guard sqlite3_exec(db, "COMMIT", nil, nil, nil) == SQLITE_OK else {
+                    throw ClientFailure(L10n.text("Не удалось сохранить архив", "Could not save archive"))
+                }
+            } catch { sqlite3_exec(db, "ROLLBACK", nil, nil, nil); throw error }
+        }
     }
     public func loadUsage() throws -> [String: UsageSnapshot] {
         try withDatabase { db in

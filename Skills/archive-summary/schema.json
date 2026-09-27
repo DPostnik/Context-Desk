@@ -1,0 +1,25 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["overview", "activities"],
+  "properties": {
+    "overview": {"type": "string"},
+    "activities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["goal", "actions", "outcome", "unfinished", "reusableSteps", "variableInputs", "evidence"],
+        "properties": {
+          "goal": {"type": "string"},
+          "actions": {"type": "array", "items": {"type": "string"}},
+          "outcome": {"type": "string"},
+          "unfinished": {"type": "array", "items": {"type": "string"}},
+          "reusableSteps": {"type": "array", "items": {"type": "string"}},
+          "variableInputs": {"type": "array", "items": {"type": "string"}},
+          "evidence": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    }
+  }
+}

@@ -12,6 +12,7 @@ cp .build/local-build/build-info.json "$app/Contents/Resources/build-info.json"
 cp Assets/AppIcon/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
 mkdir -p "$app/Contents/Resources/BrowserRuntime"
 cp BrowserRuntime/{server.py,transport.py,chrome_host.py,install.py,cards.js,runtime.lock.json,README.md} "$app/Contents/Resources/BrowserRuntime/"
+cp -R Skills "$app/Contents/Resources/Skills"
 cat > "$app/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

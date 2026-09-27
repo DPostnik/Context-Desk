@@ -58,7 +58,8 @@ Model-level speed or token savings have not yet been measured for this integrati
 
 App state lives in `~/Library/Application Support/Context Desk/`:
 
-- `metadata.sqlite`: projects, thread IDs and latest usage snapshots.
+- `metadata.sqlite`: projects, thread IDs, usage, and archive summary records/queue.
+- `workflows/`: editable archive-summary, routine-optimizer and history-patterns skills, copied from the bundle on first launch without overwriting existing recipes.
 - `codex/`: separate `CODEX_HOME`; the official engine owns login and transcripts.
 - `probe-home/`: unauthenticated compatibility probe state.
 - `plugins/<id>/`: separately installed provider plugins and their private runtime data.
@@ -78,7 +79,15 @@ zsh scripts/build-app.sh
 open 'build/Context Desk.app'
 ```
 
-The build and test scripts select a compatible SDK and retain a fallback for older broken SwiftPM installations. After an app change, rebuild the bundle, quit the running app with Cmd+Q, and reopen it. Tests use a local Python protocol simulator; no model calls or account credentials. The probe initializes the real official engine in a separate home, reads account status and counts local schedule definitions; it sends no model turn.
+The build and test scripts select a compatible SDK and retain a fallback for older broken SwiftPM installations. After an app change, rebuild the bundle, quit the running app with Cmd+Q, and reopen it. Default tests use local protocol simulators with no model calls or account credentials. `CONTEXTDESK_SUMMARY_LIVE=1 zsh scripts/test.sh` explicitly enables one synthetic summary model request using the app's dedicated account and a separate, unauthenticated skill-discovery check. The probe initializes the real official engine in a separate home, reads account status and counts local schedule definitions; it sends no model turn.
+
+## Archive summaries
+
+Confirmed archiving queues a compact analytical summary in the background. View it in the archive; use **Summarize archived chats** to backfill older records. Original transcripts remain with Codex. A restored and changed chat gets a revised summary when archived again; unchanged parts are reused. Summary generation uses the source chat's model and provider route and consumes account allowance. Pending work survives restarts; requests with an unknown outcome remain stopped until **Generate summary again** is explicitly selected.
+
+The summary executor is pinned to Codex CLI `0.158.0-alpha.2.1`. It uses a separate ephemeral thread with no environments, disabled local/external tools, read-only permissions and user-reviewed approvals; unexpected requests fail closed. It never resumes or compacts the source thread. Long histories use bounded parts, retain source references and dates, and disclose shortened tool output and unavailable attachments. Large replies exceeding the connection limit remain a visible failure; no partial history is described as complete.
+
+The recipe and structured-output schema live in `workflows/archive-summary/`. Other workflows can read ready records through `workflows/history-patterns/scripts/read_summaries.py`; its coverage report includes unarchived or missing records. Finding recurring work and optimizing routine creation are discoverable skills, not an automatically enabled schedule. The scheduled-job viewer remains read-only.
 
 TOMLDecoder is pinned to 0.4.5 with `Package.resolved`. SwiftUI/AppKit, SQLite and Foundation come from the OS. Updating the installed Codex binary can change its experimental protocol; rerun the probe and contracts before relying on a newer version.
 

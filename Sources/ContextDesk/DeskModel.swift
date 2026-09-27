@@ -49,6 +49,14 @@ private struct ChatRunState {
     @Published var archiveViewingChat = false
     @Published var showingJobs = false
     @Published var jobs: [ScheduledJob] = []
+    @Published var archiveSummaries: [String: ArchiveSummaryRecord] = [:]
+    @Published var summaryActiveThread: String?
+    var summaryTask: Task<Void, Never>?
+    let summaryRunner = ArchiveSummaryRunner()
+    let summaryResources: URL?
+    let summaryExecutable: URL?
+    let summaryHome: URL
+    var summaryProviderArguments: [String] = []
     @Published var items: [TranscriptItem] = []
     @Published var pending: [PendingAction] = []
     @Published var usage: [String: UsageSnapshot] = [:]
@@ -81,7 +89,7 @@ private struct ChatRunState {
     var busy: Bool { runs[currentRunKey]?.running == true }
     var queuePaused: Bool { runs[currentRunKey]?.queuePaused ?? true }
     var priorityMessageID: String? { runs[currentRunKey]?.priorityMessageID }
-    var anyBusy: Bool { !deletingChatIDs.isEmpty || !archivingChatIDs.isEmpty || runs.values.contains { $0.running || $0.sending } }
+    var anyBusy: Bool { summaryTask != nil || !deletingChatIDs.isEmpty || !archivingChatIDs.isEmpty || runs.values.contains { $0.running || $0.sending } }
     func isBusy(threadID: String) -> Bool { runs[threadID]?.running == true }
     private var turnStarts: [String: Date] = [:]
     private var tokenTotals: [String: TokenCounters] = [:]
@@ -106,10 +114,13 @@ private struct ChatRunState {
     let connection: CodexConnection
     let store: AppStore
     init(connection: CodexConnection = CodexConnection(), store: AppStore = AppStore(file: Locations.root.appendingPathComponent("metadata.sqlite")),
-         pluginDirectory: URL = PluginCatalog.defaultDirectory) {
+         pluginDirectory: URL = PluginCatalog.defaultDirectory,
+         summaryResources: URL? = Bundle.main.resourceURL?.appendingPathComponent("Skills"),
+         summaryExecutable: URL? = nil, summaryHome: URL = Locations.codexHome) {
         self.connection = connection
         self.store = store
         self.pluginDirectory = pluginDirectory
+        self.summaryResources = summaryResources; self.summaryExecutable = summaryExecutable; self.summaryHome = summaryHome
         refreshPlugins()
     }
 
@@ -127,6 +138,7 @@ private struct ChatRunState {
         guard !booted else { return }; booted = true
         defer { isBootstrapping = false }
         do { state = try await store.load(); usage = try await store.loadUsage(); projectID = state.projects.first?.id } catch { self.error = error.localizedDescription }
+        await restoreSummaryQueue()
         for chat in state.chats where chat.hasUnreadResponse {
             let project = state.projects.first { $0.id == chat.projectID }
             notices.append(DeskNotice(threadID: chat.id, title: L10n.text("Непрочитанный ответ", "Unread response"),
@@ -210,9 +222,16 @@ private struct ChatRunState {
             }
         }
         do {
+            summaryProviderArguments = arguments
             arguments += try BrowserConfiguration.arguments(enabled: state.browserEnabled == true, resources: Bundle.main.resourceURL)
             try await connection.start(executable: Locations.codexExecutable(), home: Locations.codexHome, extraArguments: arguments)
             connected = true
+            if summaryResources != nil {
+                do {
+                    try prepareSummarySkills()
+                    _ = try await connection.request("skills/extraRoots/set", params: .object(["extraRoots": .array([.string(summarySkillsDirectory.path)])]))
+                } catch { self.error = L10n.text("Не удалось подключить навыки рутин: ", "Could not load routine skills: ") + error.localizedDescription }
+            }
             clearConnectionError()
             await refreshAccount()
             if !pluginRuntimes.isEmpty {
@@ -257,7 +276,7 @@ private struct ChatRunState {
             clearConnectionError()
             authenticated = result["account"] != .null
             accountLabel = authenticated ? L10n.text("ChatGPT · \(result["account"]["planType"].string ?? "подключён")", "ChatGPT · \(result["account"]["planType"].string ?? "connected")") : L10n.text("Вход не выполнен", "Not signed in")
-            if authenticated { await refreshModels(); await refreshLimits() }
+            if authenticated { await refreshModels(); await refreshLimits(); startSummaryQueue() }
             else { clearLimits() }
         } catch { self.error = error.localizedDescription }
     }
@@ -422,7 +441,7 @@ private struct ChatRunState {
     }
     func canDeleteChat(_ id: String) -> Bool {
         connected && state.chats.contains(where: { $0.id == id }) &&
-        !isChangingChat(id) && !isBusy(threadID: id) &&
+        !isChangingChat(id) && summaryActiveThread != id && !isBusy(threadID: id) &&
         runs[id]?.sending != true && !pending.contains(where: { $0.threadID == id })
     }
     func setChatArchived(_ id: String, archived: Bool) async {
@@ -445,7 +464,18 @@ private struct ChatRunState {
         }
         state.chats[index].sidebarOrder = nil
         loadedThreads.remove(id)
-        do { try await store.save(state) }
+        do {
+            var summary: ArchiveSummaryRecord?
+            if archived {
+                var record = archiveSummaries[id] ?? ArchiveSummaryRecord(threadID: id, projectID: state.chats[index].projectID)
+                // An unknown outcome remains stopped even if the chat is archived again.
+                if record.status != .uncertain { record.enqueue() }
+                summary = record
+            }
+            try await store.saveArchivingChat(state, summary: summary)
+            if let summary { archiveSummaries[id] = summary }
+            startSummaryQueue()
+        }
         catch { self.error = L10n.text("Статус чата изменён в Codex, но не удалось сохранить его в приложении: ", "The chat status changed in Codex, but could not be saved in the app: ") + error.localizedDescription }
     }
     func deleteChat(_ id: String) async {
@@ -466,6 +496,7 @@ private struct ChatRunState {
         state.chats.removeAll { $0.id == id }
         state.queuedMessages = queuedMessages.filter { $0.threadID != id }
         usage.removeValue(forKey: id)
+        archiveSummaries.removeValue(forKey: id)
         chatDrafts.removeValue(forKey: id)
         loadedThreads.remove(id)
         runs.removeValue(forKey: id)
@@ -754,6 +785,9 @@ private struct ChatRunState {
         } catch { self.error = error.localizedDescription }
     }
     func shutdown() async {
+        summaryTask?.cancel()
+        await summaryRunner.stop()
+        await summaryTask?.value
         await connection.stop()
         await stopPlugins()
     }

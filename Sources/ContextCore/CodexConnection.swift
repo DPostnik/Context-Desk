@@ -14,6 +14,7 @@ public actor CodexConnection {
     private var pending: [String: CheckedContinuation<JSONValue, any Error>] = [:]
     private var timeouts: [String: Task<Void, Never>] = [:]
     private var reader: Task<Void, Never>?
+    public private(set) var serverUserAgent: String?
 
     public init() {
         let pair = AsyncStream<JSONValue>.makeStream()
@@ -59,10 +60,11 @@ public actor CodexConnection {
             for await data in chunks.stream { await self?.ingest(data, token: token) }
         }
         do {
-            _ = try await request("initialize", params: .object([
+            let initialized = try await request("initialize", params: .object([
                 "clientInfo": .object(["name": .string("context_desk"), "title": .string("Context Desk"), "version": .string("0.1.0")]),
                 "capabilities": .object(["experimentalApi": .bool(true)])
             ]))
+            serverUserAgent = initialized["userAgent"].string
             try send(.object(["method": .string("initialized"), "params": .object([:])]))
         } catch { stop(); throw error }
     }
