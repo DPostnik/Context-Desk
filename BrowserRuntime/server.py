@@ -187,7 +187,7 @@ class Browser:
         require(self.session is None, 'browser_busy_close_owned_session_first')
         token = uuid.uuid4().hex
         marker = 'about:blank#context-desk-' + token
-        value = self.native('new_page', {'url': marker})
+        value = self.native('new_page', {'url': marker, 'background': True})
         matches = re.findall(r'^(\d+): ' + re.escape(marker) + r'(?:\s|$)', self.text(value), re.M)
         if len(matches) != 1:
             self.failed = True
@@ -215,9 +215,9 @@ class Browser:
         self.owner(token)
         config = selectors(config)
         require(isinstance(timeout, (int, float)) and 1 <= timeout <= 20, 'invalid_timeout')
-        # Focus only the already-owned tab so lazy loading can run. Never select
-        # a browser-global current tab or a target supplied by page content.
-        self.native('select_page', {'pageId': self.page, 'bringToFront': True})
+        # Select the owned tool context without activating Chrome. Hidden pages
+        # may load slowly; keep the bounded partial-result path instead of focusing.
+        self.native('select_page', {'pageId': self.page, 'bringToFront': False})
         self.read(config, advance='start')
         end = time.monotonic() + timeout
         merged, prior, stable = {}, None, 0
