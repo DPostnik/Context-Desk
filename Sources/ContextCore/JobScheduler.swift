@@ -75,6 +75,8 @@ public struct ManagedJob: Identifiable, Codable, Equatable, Sendable {
     public var nextRun: Date?
     public var source: String?
     public var sourceDisabled = false
+    /// Missing on legacy jobs: never infer consent from a project access mode.
+    public var acceptsExternalPolicy: Bool?
     public init() {}
     public func validate() throws {
         guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,

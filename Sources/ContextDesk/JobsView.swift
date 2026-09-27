@@ -82,7 +82,7 @@ struct JobsView: View {
                 if job.engine == .codex {
                     Text(L10n.text("Каждый запуск создаёт новый чат с текущими разрешениями проекта.", "Each run creates a new chat using the project's current permissions.")).font(.caption).foregroundStyle(.secondary)
                 } else {
-                    Text(L10n.text("Claude Code использует существующий вход и правила разрешений CLI. Новые запросы разрешений отклоняются; результат сохраняется здесь. Требуется версия \(ClaudeJobRunner.version).", "Claude Code uses existing CLI sign-in and permission rules. New permission requests are denied; results are saved here. Version \(ClaudeJobRunner.version) is required.")).font(.caption).foregroundStyle(.secondary)
+                    Text(L10n.text("Claude Code использует существующий вход и правила разрешений CLI. Новые запросы разрешений отклоняются; результат сохраняется здесь. Требуется версия \(AgentIntegrationFactory.claudeVersion).", "Claude Code uses existing CLI sign-in and permission rules. New permission requests are denied; results are saved here. Version \(AgentIntegrationFactory.claudeVersion) is required.")).font(.caption).foregroundStyle(.secondary)
                 }
                 Text(job.prompt).textSelection(.enabled)
                 Divider()
@@ -125,7 +125,7 @@ struct JobEditor: View {
             Form {
                 TextField(L10n.text("Название", "Name"), text: $job.name)
                 Picker(L10n.text("Исполнитель", "Agent"), selection: $job.engine) { ForEach(JobEngine.allCases, id: \.self) { Text($0.title).tag($0) } }
-                    .onChange(of: job.engine) { _, _ in job.model = ""; job.effort = ""; job.route = .direct }
+                    .onChange(of: job.engine) { _, _ in job.model = ""; job.effort = ""; job.route = .direct; job.acceptsExternalPolicy = nil }
                 Picker(L10n.text("Проект", "Project"), selection: $job.projectID) {
                     Text(L10n.text("Выбери проект", "Choose a project")).tag(nil as UUID?)
                     ForEach(model.state.projects) { Text($0.name).tag(Optional($0.id)) }
@@ -134,6 +134,11 @@ struct JobEditor: View {
                 if job.engine == .codex {
                     Picker(L10n.text("Маршрут", "Route"), selection: $job.route) { ForEach(model.availableRoutes, id: \.self) { Text(model.routeTitle($0)).tag($0) } }
                     TextField(L10n.text("Рассуждение", "Reasoning effort"), text: $job.effort, prompt: Text(L10n.text("По умолчанию", "Default")))
+                }
+                if job.engine == .claude {
+                    Text(L10n.text("Claude использует аккаунт, маршрут и правила установленного CLI. Новые запросы разрешений отклоняются. Интерактивные чаты, выбор усилия, статистика и оптимизаторы приложения недоступны.", "Claude uses the installed CLI account, route and rules. New permission prompts are denied. Interactive chats, effort selection, metrics and app optimizers are unavailable.")).font(.caption).frame(maxWidth: 460, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+                    Toggle(L10n.text("Принимаю внешние правила Claude для этого задания", "Use external Claude policy for this task"), isOn: Binding(get: { job.acceptsExternalPolicy == true }, set: { job.acceptsExternalPolicy = $0 }))
+                    Text(L10n.text("Требуется проект с полным доступом. Ограничения стандартного режима Claude не поддерживает; запуск будет заблокирован.", "Requires a full-access project. Claude cannot enforce standard project restrictions; execution will be blocked.")).font(.caption).foregroundStyle(.secondary).frame(maxWidth: 460, alignment: .leading).fixedSize(horizontal: false, vertical: true)
                 }
                 Picker(L10n.text("Расписание", "Schedule"), selection: $mode) {
                     Text(L10n.text("Повторять", "Repeat")).tag("rule")

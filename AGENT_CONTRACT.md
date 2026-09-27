@@ -8,7 +8,7 @@ native method names, arbitrary JSON or permission-answer payloads.
 Execution paths use explicit app/native identity mapping (stage 2). Stage 3 is
 implemented: `CodexIntegration` conforms to this contract, and production uses
 `AgentClient` for interactive work, scheduled Codex submissions, history,
-interactions and background generation. Stages 4–6 remain planned. Interactive
+interactions and background generation. Stage 4 now routes the scheduler through typed executors; stages 5–6 remain planned. Interactive
 Claude, portable transcript collection/backfill, general optimizer compatibility
 and externally installable agent modules are not delivered by extraction.
 
@@ -34,10 +34,10 @@ capability switch.
 | Token usage/account limits | Available where exposed by engine | Not normalized by current runner; unsupported, not zero |
 | Browser/workflow registration | App-owned browser launch settings and workflow roots; arbitrary live tool-server registration is explicitly unsupported | Unsupported by current runner |
 | Optimization route | Explicit direct or available Responses plugin; engine-specific configuration | External CLI configuration; neither verified direct nor verified optimizer route |
-| Project permission intent | Standard workspace write/no network/ask; explicitly selected unrestricted/never | Existing runner does not receive `Project.accessMode`; cannot claim either policy |
+| Project permission intent | Standard workspace write/no network/ask; explicitly selected unrestricted/never | Standard restrictions rejected; full access additionally requires explicit external-policy consent |
 
 Evidence: `Sources/ContextDesk/DeskModel.swift`, `JobScheduling.swift`,
-`Sources/ContextCore/Models.swift`, `ClaudeJobRunner.swift`,
+`Sources/ContextCore/Models.swift`, `Sources/ClaudeAdapter/ClaudeJobRunner.swift`,
 `Sources/CodexAdapter/ArchiveSummaryRunner.swift`, `BrowserConfiguration.swift`, `Sources/ContextCore/ProviderPlugin.swift`
 and `RequestRoute.swift`. Claude runner pins `2.1.260`; both interactive and isolated
 Codex paths now require `0.158.0-alpha.2.1`. The installed CLI reports that version.
@@ -80,9 +80,9 @@ support intentionally accepts only the combinations the current implementation
 actually encodes; unverified combinations fail closed.
 
 Claude's `externalPolicyDenyPrompts` is a distinct explicit policy. It MUST NOT be
-inferred from either project access mode. Stage 4 must reject unsupported project
-restrictions before dispatch, or add a separately verified policy and explicit UI
-choice. Defining the contract does not fix the existing scheduler's restriction gap.
+inferred from either project access mode. Stage 4 rejects standard project
+restrictions before dispatch and requires explicit per-job consent even on full-access
+projects. Old and imported jobs have no implicit consent.
 `externalConfiguration` exposes CLI-controlled routing without promising a direct
 connection. Missing routes cannot be replaced by direct, another optimizer or agent.
 
@@ -108,8 +108,8 @@ registration returns unsupported when an engine cannot safely configure them.
    uncertain-run pauses and requires explicit review/recovery. Reconnecting may
    read history; it must not resubmit work or answer pending approvals.
 
-`AgentDeliveryTracker` tests these shared rules without changing current scheduler
-behavior. Stage 4 must run the same lifecycle fixtures against both real adapters.
+`AgentDeliveryTracker` tests these shared rules. Stage 4 adds a parameterized scheduler
+fixture covering completion and uncertain recovery through both production executors.
 
 ## Isolated generation and history
 
@@ -382,8 +382,8 @@ browser launch encoding and executable discovery. Plugin process supervision and
 app workflow/recipe ownership remain in core/application. No existing external
 credentials, engine homes or schedules are copied or changed. Arbitrary runtime
 MCP-server registration is not advertised; the supported browser is configured at
-connection startup. Stage 4 will replace the remaining scheduler engine branch and
-migrate the existing Claude print runner; extraction alone does not fix its sandbox gap.
+connection startup. Stage 4 subsequently replaces the scheduler engine branch and
+migrates the existing Claude print runner, rejecting unsupported project restrictions.
 
 Final stage-3 validation (2026-09-27): `zsh scripts/build-app.sh` passed with
 SwiftPM/macOS 26.5 SDK, then `zsh scripts/test.sh` and `zsh scripts/test.sh --direct`
@@ -396,3 +396,40 @@ duplicate submission, uncertain acknowledgement and cancellation before generati
 Bundle signature/source digest, dependency rejection fixtures, paired Russian/English
 copy review and diff checks passed. Installed CLI version was checked read-only;
 no live-provider model turn or installed-app UI interaction was performed.
+
+
+## Scheduled executors (stage 4)
+
+Implemented 2026-09-27. `AgentScheduledExecutor` is the narrow scheduled-execution
+contract in the Foundation-only target. It consumes `AgentExecutionRequest`, advertises
+`AgentDescriptor`, returns typed terminal or deferred outcomes, and supports stop.
+It avoids falsely claiming that print mode implements interactive `AgentIntegration`.
+`AgentIntegrationFactory` registers the executors and automatic-start readiness.
+The scheduler no longer dispatches or stops native runners by engine-specific branches.
+
+`CodexScheduledExecutor` is app orchestration: it validates the bound job and descriptor,
+then preserves chat creation, durable session/turn links and existing typed integration
+submission/events. Deferred results stay active until the matching event; the executor
+remains available for stop. `ClaudeAdapter` owns CLI discovery, pinned `2.1.260` checks,
+arguments, process capture and decoding. Core/UI cannot access its runner outside the
+composition root. The direct-build module/link recipe includes the separate target.
+
+Claude descriptors declare external CLI identity and external configuration routing,
+scheduled execution and interruption only. Each one-shot executor gets an ephemeral
+context; this is not a verified external account identity or account-management API.
+No credentials are copied and CLI routing is not represented as verified direct routing.
+A legacy direct route means no app optimizer, with external routing disclosed in UI;
+non-direct app routes are rejected. Nonempty effort overrides are rejected.
+Explicit external-policy consent is stored as an optional field, absent on legacy/imported
+jobs. Only a full-access project plus that consent creates `externalPolicyDenyPrompts`.
+Standard workspace/network restrictions always fail closed, even with the consent flag.
+
+A durable running claim is written after CLI version validation, before model dispatch.
+Failed persistence prevents execution. Duplicate execution on a consumed executor is
+rejected. Cancellation before dispatch is cancelled; cancellation or malformed output
+after process launch is uncertain. These outcomes pause the schedule and never replay.
+CLI authentication remains external; stage 4 does not establish interactive Claude's
+app-owned configuration boundary or enable background generation, tools or metrics.
+
+Validation and actual build results are recorded in the stage-4 entry of
+[improvements.md](docs/improvements.md). Provider fixtures are synthetic, not live turns.

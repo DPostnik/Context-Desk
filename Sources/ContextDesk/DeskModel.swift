@@ -56,7 +56,8 @@ private struct ChatRunState {
     let jobStore: JobStore
     var schedulerTask: Task<Void, Never>?
     var jobTasks: [UUID: Task<Void, Never>] = [:]
-    var claudeRunners: [UUID: ClaudeJobRunner] = [:]
+    var jobExecutorFactories = AgentIntegrationFactory.scheduled
+    var jobExecutors: [UUID: any AgentScheduledExecutor] = [:]
     var schedulerStopping = false
     @Published var archiveSummaries: [String: ArchiveSummaryRecord] = [:]
     @Published var summaryActiveThread: String?

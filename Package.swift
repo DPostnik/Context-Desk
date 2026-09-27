@@ -13,10 +13,11 @@ let package = Package(
         .target(name: "AgentContract"),
         .systemLibrary(name: "CSQLite"),
         .target(name: "ContextCore", dependencies: ["AgentContract", "CSQLite", "TOMLDecoder"]),
+        .target(name: "ClaudeAdapter", dependencies: ["AgentContract", "ContextCore"]),
         .target(name: "CodexAdapter", dependencies: ["AgentContract", "ContextCore"]),
         .target(name: "ContextTranscript", dependencies: ["ContextCore"]),
-        .executableTarget(name: "ContextDesk", dependencies: ["ContextCore", "ContextTranscript", "CodexAdapter"]),
+        .executableTarget(name: "ContextDesk", dependencies: ["ContextCore", "ContextTranscript", "CodexAdapter", "ClaudeAdapter"]),
         .executableTarget(name: "ContextProbe", dependencies: ["ContextCore", "CodexAdapter"]),
-        .testTarget(name: "ContextCoreTests", dependencies: ["AgentContract", "ContextCore", "CodexAdapter", "ContextTranscript", "ContextDesk"])
+        .testTarget(name: "ContextCoreTests", dependencies: ["AgentContract", "ContextCore", "CodexAdapter", "ClaudeAdapter", "ContextTranscript", "ContextDesk"])
     ]
 )

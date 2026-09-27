@@ -17,7 +17,7 @@ import ContextCore
         guard schedulerReady, !schedulerStopping else { return }
         for job in jobLedger.jobs where job.enabled && job.nextRun.map({ $0 <= now }) == true {
             // Offline Codex work remains due; no network call has been made and no run is claimed.
-            if job.engine == .codex && (!connected || !authenticated) { continue }
+            guard AgentIntegrationFactory.scheduledReadiness[job.engine]?(self) == true else { continue }
             await launchJob(job.id, manual: false, now: now)
         }
     }
@@ -40,44 +40,59 @@ import ContextCore
                   FileManager.default.fileExists(atPath: project.path) else {
                 await finishJob(run.id, status: .failed, output: L10n.text("Проект недоступен. Проверь папку задания.", "Project unavailable. Check the task folder.")); return
             }
-            if job.engine == .codex && (!connected || !authenticated || !routeIsAvailable(job.route)) {
-                await finishJob(run.id, status: .failed, output: L10n.text("Подключись к Codex и проверь выбранный маршрут.", "Connect to Codex and check the selected route.")); return
+            guard let makeExecutor = jobExecutorFactories[job.engine] else {
+                await finishJob(run.id, status: .blocked, output: L10n.text("Исполнитель недоступен", "The agent is unavailable")); return
             }
             guard !schedulerStopping else { await finishJob(run.id, status: .interrupted); return }
+            let executor = makeExecutor(self, job, run, project)
+            jobExecutors[run.id] = executor
             jobTasks[run.id] = Task { [weak self] in
                 guard let self else { return }
-                defer { jobTasks.removeValue(forKey: run.id); claudeRunners.removeValue(forKey: run.id) }
-                if job.engine == .codex {
-                    await deliverScheduled(job, run: run, project: project)
-                } else {
-                    let runner = ClaudeJobRunner(); claudeRunners[run.id] = runner
-                    do {
-                        jobLedger = try await jobStore.attach(run.id)
-                        let (status, output) = try await runner.run(prompt: job.prompt, model: job.model, cwd: URL(fileURLWithPath: project.path))
-                        await finishJob(run.id, status: status, output: output)
-                    } catch {
-                        await finishJob(run.id, status: error is CancellationError ? .interrupted : .uncertain, output: error.localizedDescription)
+                defer {
+                    jobTasks.removeValue(forKey: run.id)
+                    if jobLedger.runs.first(where: { $0.id == run.id })?.status.active != true {
+                        jobExecutors.removeValue(forKey: run.id)
                     }
+                }
+                do {
+                    let descriptor = try await executor.descriptor().value()
+                    let request = job.executionRequest(runID: run.id, project: project, descriptor: descriptor)
+                    let result = try await executor.execute(request) { [weak self] in
+                        guard let self else { throw CancellationError() }
+                        try await self.attachScheduledRun(run.id)
+                    }.value()
+                    if case .finished(let outcome, let output) = result {
+                        await finishJob(run.id, status: JobRunStatus(outcome), output: output)
+                    }
+                } catch {
+                    let status: JobRunStatus
+                    if let failure = error as? AgentOperationFailure {
+                        status = failure.uncertain ? .uncertain : failure.rejection != nil ? .blocked : .failed
+                    } else { status = error is CancellationError ? .interrupted : .failed }
+                    await finishJob(run.id, status: status, output: error.localizedDescription)
                 }
             }
         } catch { self.error = error.localizedDescription; schedulerReady = false }
     }
+    func attachScheduledRun(_ id: UUID) async throws {
+        try Task.checkCancellation()
+        guard !schedulerStopping else { throw CancellationError() }
+        jobLedger = try await jobStore.attach(id)
+    }
     func finishJob(_ id: UUID, status: JobRunStatus, output: String = "") async {
-        do { jobLedger = try await jobStore.finish(id, status: status, output: output) }
+        do { jobLedger = try await jobStore.finish(id, status: status, output: output); jobExecutors.removeValue(forKey: id) }
         catch { schedulerReady = false; self.error = error.localizedDescription }
     }
     func stopJob(_ run: JobRun) async {
-        if let runner = claudeRunners[run.id] { await runner.stop(); return }
-        if let thread = run.threadID, let turn = run.turnID {
-            do { try await connection.interrupt(sessionForChat(thread), turn: turn) }
-            catch { self.error = error.localizedDescription }
-        } else { jobTasks[run.id]?.cancel() }
+        jobTasks[run.id]?.cancel()
+        await jobExecutors[run.id]?.stop()
     }
+
     func stopScheduler() async {
         schedulerStopping = true; schedulerReady = false
         schedulerTask?.cancel(); schedulerTask = nil
         for task in jobTasks.values { task.cancel() }
-        for runner in claudeRunners.values { await runner.stop() }
+        for executor in Array(jobExecutors.values) { await executor.stop() }
         for task in Array(jobTasks.values) { await task.value }
         for run in jobLedger.runs where run.status.active { await finishJob(run.id, status: .uncertain) }
         await jobStore.release()

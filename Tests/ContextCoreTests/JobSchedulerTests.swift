@@ -1,3 +1,4 @@
+import ClaudeAdapter
 @_spi(NativeProtocol) import CodexAdapter
 import Foundation
 import Darwin
@@ -232,7 +233,7 @@ private func jobFixture() -> ManagedJob {
     defer { try? FileManager.default.removeItem(at: root) }
     let model = DeskModel(store: AppStore(file: root.appendingPathComponent("state.sqlite")), jobStore: JobStore(file: root.appendingPathComponent("jobs.json")))
     let project = Project(path: "/tmp/example-project"); model.state.projects = [project]
-    var job = jobFixture(); job.projectID = project.id; job.schedule = JobSchedule(); job.source = "codex:example"; job.enabled = false
+    var job = jobFixture(); job.projectID = project.id; job.schedule = JobSchedule(); job.source = "claude:example"; job.enabled = false; job.engine = .claude
     let host = NSHostingView(rootView: JobEditor(model: model, job: job).environment(\.locale, L10n.locale).preferredColorScheme(.light).background(Color.white))
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 700), styleMask: [.borderless], backing: .buffered, defer: false)
     window.contentView = host; host.frame = NSRect(x: 0, y: 0, width: 640, height: 700)

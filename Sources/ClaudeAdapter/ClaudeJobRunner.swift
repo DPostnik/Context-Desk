@@ -1,12 +1,43 @@
 import Foundation
 import Darwin
+import ContextCore
+import AgentContract
 
 /// Pinned print-mode adapter. Existing Claude authentication and permission rules are used in place.
-public actor ClaudeJobRunner {
+public actor ClaudeJobRunner: AgentScheduledExecutor {
+    private let context = AgentContext(connection: .init(agent: .claudeCode, id: UUID()), accountRevision: UUID())
+    private var consumed = false
+    private var dispatched = false
+    private let executableOverride: URL?
     public static let version = "2.1.260"
     private var process: Process?
     private var stopped = false
-    public init() {}
+    public init(executable: URL? = nil) { executableOverride = executable }
+
+    public func descriptor() -> AgentResult<AgentDescriptor> {
+        .success(AgentDescriptor(context: context, identityMode: .externalCLI,
+            capabilities: [.scheduledExecution, .interruption], permissions: .externalPolicyOnly,
+            routes: [.externalConfiguration]))
+    }
+
+    public func execute(_ request: AgentExecutionRequest,
+                        willStart: @escaping @Sendable () async throws -> Void) async -> AgentResult<AgentScheduledResult> {
+        guard !consumed else { return .rejected(.unknownRequest) }
+        guard case .success(let descriptor) = descriptor() else { return .unavailable }
+        if let rejection = descriptor.validate(request) { return .rejected(rejection) }
+        guard request.kind == .scheduled, request.model.effort?.isEmpty != false else { return .rejected(.invalidInput) }
+        consumed = true
+        do {
+            let (status, output) = try await run(prompt: request.prompt, model: request.model.model,
+                cwd: URL(fileURLWithPath: request.projectPath), executable: executableOverride, willStart: willStart)
+            return .success(.finished(status == .completed ? .completed : status == .blocked ? .blocked : .failed, output: output))
+        } catch {
+            if error is CancellationError {
+                return .success(.finished(dispatched ? .uncertain : .cancelled, output: ""))
+            }
+            return .failed(.init(delivery: dispatched ? .uncertain : .notSent, diagnostic: error.localizedDescription))
+        }
+    }
     public static func executable() throws -> URL {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let candidates = [home.appendingPathComponent(".local/bin/claude").path, "/opt/homebrew/bin/claude", "/usr/local/bin/claude"]
@@ -24,7 +55,7 @@ public actor ClaudeJobRunner {
         stopped = true
         if let process, process.isRunning { process.terminate() }
     }
-    private func capture(executable: URL, arguments: [String], cwd: URL, prompt: String, timeout: TimeInterval) async throws -> (Int32, Data) {
+    private func capture(executable: URL, arguments: [String], cwd: URL, prompt: String, timeout: TimeInterval, execution: Bool = false) async throws -> (Int32, Data) {
         guard !stopped else { throw CancellationError() }
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("contextdesk-job-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -43,6 +74,7 @@ public actor ClaudeJobRunner {
         child.environment = environment
         child.standardInput = stdin; child.standardOutput = stdout; child.standardError = stderr
         try child.run(); process = child
+        if execution { dispatched = true }
         let deadline = Date().addingTimeInterval(timeout)
         var limited = false
         while child.isRunning {
@@ -72,13 +104,18 @@ public actor ClaudeJobRunner {
         }
         return (child.terminationStatus, data)
     }
-    public func run(prompt: String, model: String, cwd: URL, executable: URL? = nil) async throws -> (JobRunStatus, String) {
+    public func run(prompt: String, model: String, cwd: URL, executable: URL? = nil, willStart: @escaping @Sendable () async throws -> Void = {}) async throws -> (JobRunStatus, String) {
         let executable = try executable ?? Self.executable()
         let (_, versionData) = try await capture(executable: executable, arguments: ["--version"], cwd: cwd, prompt: "", timeout: 15)
         guard String(decoding: versionData, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) == Self.version + " (Claude Code)" else {
             throw ClientFailure(L10n.text("Для заданий требуется проверенная версия Claude Code \(Self.version).", "Scheduled tasks require the verified Claude Code version \(Self.version)."))
         }
-        let (code, bytes) = try await capture(executable: executable, arguments: Self.arguments(model: model), cwd: cwd, prompt: prompt, timeout: 3600)
+        try Task.checkCancellation()
+        guard !stopped else { throw CancellationError() }
+        try await willStart()
+        try Task.checkCancellation()
+        guard !stopped else { throw CancellationError() }
+        let (code, bytes) = try await capture(executable: executable, arguments: Self.arguments(model: model), cwd: cwd, prompt: prompt, timeout: 3600, execution: true)
         let value = try JSONDecoder().decode(JSONValue.self, from: bytes)
         guard value["type"].string == "result", value["is_error"].bool != nil, let text = value["result"].string ?? value["errors"].array.first?.string else {
             throw ClientFailure(L10n.text("Claude Code не вернул распознаваемый результат.", "Claude Code returned no recognized result."))
