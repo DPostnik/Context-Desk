@@ -1,4 +1,4 @@
-@_spi(NativeProtocol) import CodexAdapter
+@_spi(NativeProtocol) @testable import CodexAdapter
 import AppKit
 import Foundation
 import Testing
@@ -8,17 +8,17 @@ import ContextTranscript
 
 @Test func responseTimingUsesServerHistoryAndMilliseconds() throws {
     let old = ResponseTiming(startedAt: Date(timeIntervalSince1970: 1), completedAt: Date(timeIntervalSince1970: 2))
-    let timing = try #require(ResponseTiming.parse(.object([
+    let timing = try #require(CodexDecoding.responseTiming(.object([
         "startedAt": .number(100), "completedAt": .number(168), "durationMs": .number(67_500)
     ]), fallback: old))
     #expect(timing.label(language: .english) == "Worked for 1m 7s")
     #expect(timing.label(language: .russian) == "Время работы: 1 мин 7 с")
     #expect(timing.completedAt == Date(timeIntervalSince1970: 168))
-    #expect(ResponseTiming.parse(.object(["startedAt": .number(100)])) == nil)
-    #expect(ResponseTiming.parse(.null, fallback: old) == old)
-    let timestampsOnly = try #require(ResponseTiming.parse(.object(["startedAt": .number(100), "completedAt": .number(156)])))
+    #expect(CodexDecoding.responseTiming(.object(["startedAt": .number(100)])) == nil)
+    #expect(CodexDecoding.responseTiming(.null, fallback: old) == old)
+    let timestampsOnly = try #require(CodexDecoding.responseTiming(.object(["startedAt": .number(100), "completedAt": .number(156)])))
     #expect(timestampsOnly.label(language: .english) == "Worked for 56s")
-    let invalid = try #require(ResponseTiming.parse(.object(["startedAt": .number(200), "completedAt": .number(156), "durationMs": .number(-1)])))
+    let invalid = try #require(CodexDecoding.responseTiming(.object(["startedAt": .number(200), "completedAt": .number(156), "durationMs": .number(-1)])))
     #expect(invalid.label(language: .english) == "Work finished")
 }
 
@@ -52,8 +52,8 @@ import ContextTranscript
     tracker.observe(TokenCounters(input: 150, cached: 0, output: 15))
     #expect(tracker.result?.counts == TokenCounters(input: 50, cached: 0, output: 5))
     #expect(tracker.result?.isPartial == true)
-    #expect(TokenCounters(.object(["inputTokens": .number(1), "cachedInputTokens": .number(2), "outputTokens": .number(1)])) == nil)
-    #expect(TokenCounters(.object(["inputTokens": .number(-1), "cachedInputTokens": .number(0), "outputTokens": .number(1)])) == nil)
+    #expect(CodexDecoding.tokenCounters(.object(["inputTokens": .number(1), "cachedInputTokens": .number(2), "outputTokens": .number(1)])) == nil)
+    #expect(CodexDecoding.tokenCounters(.object(["inputTokens": .number(-1), "cachedInputTokens": .number(0), "outputTokens": .number(1)])) == nil)
 }
 
 @Test func responseTokenDetailsPersistWithTimingAndReadOldRecords() async throws {

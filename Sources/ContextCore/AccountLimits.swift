@@ -5,19 +5,8 @@ public struct AccountLimits: Sendable {
     public let ordinaryUsageAllowed: Bool?
     public let fetchedAt: Date
 
-    public init(response: JSONValue, date: Date = Date()) {
-        let mapped = response["rateLimitsByLimitId"].object
-        if mapped.isEmpty {
-            let legacy = response["rateLimits"]
-            buckets = legacy.object.isEmpty ? [] : [LimitBucket(id: legacy["limitId"].string ?? "codex", value: legacy)]
-        } else {
-            buckets = mapped.keys.sorted().compactMap { id in
-                guard let value = mapped[id], !value.object.isEmpty else { return nil }
-                return LimitBucket(id: id, value: value)
-            }
-        }
-        ordinaryUsageAllowed = response["ordinaryUsageAllowed"].bool
-        fetchedAt = date
+    public init(buckets: [LimitBucket], ordinaryUsageAllowed: Bool?, fetchedAt: Date) {
+        self.buckets = buckets; self.ordinaryUsageAllowed = ordinaryUsageAllowed; self.fetchedAt = fetchedAt
     }
 }
 
@@ -26,13 +15,8 @@ public struct LimitBucket: Identifiable, Sendable {
     public let name: String
     public let windows: [LimitWindow]
 
-    init(id: String, value: JSONValue) {
-        self.id = id
-        name = value["limitName"].string ?? (id == "codex" ? "Codex" : id)
-        windows = ["primary", "secondary"].compactMap { key in
-            guard case .object = value[key] else { return nil }
-            return LimitWindow(id: key, value: value[key])
-        }
+    public init(id: String, name: String, windows: [LimitWindow]) {
+        self.id = id; self.name = name; self.windows = windows
     }
 }
 
@@ -42,11 +26,9 @@ public struct LimitWindow: Identifiable, Sendable {
     public let durationMinutes: Int?
     public let resetsAt: Date?
 
-    init(id: String, value: JSONValue) {
-        self.id = id
-        remainingPercent = value["usedPercent"].int.map { 100 - min(100, max(0, $0)) }
-        durationMinutes = value["windowDurationMins"].int.flatMap { $0 > 0 ? $0 : nil }
-        resetsAt = value["resetsAt"].int.flatMap { $0 > 0 ? Date(timeIntervalSince1970: Double($0)) : nil }
+    public init(id: String, remainingPercent: Int?, durationMinutes: Int?, resetsAt: Date?) {
+        self.id = id; self.remainingPercent = remainingPercent
+        self.durationMinutes = durationMinutes; self.resetsAt = resetsAt
     }
 
     public var title: String {

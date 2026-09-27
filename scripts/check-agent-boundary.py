@@ -29,6 +29,11 @@ for folder in ['ContextCore', 'ContextDesk', 'ContextTranscript']:
         if folder in ['ContextDesk', 'ContextTranscript']:
             if re.search(r'\bJSONValue\b|"(?:thread|turn|account|item|model|mcpServer|serverRequest)/[^"\n]+"', source):
                 failures.append(f'{path}: native payload/method in application/UI')
+        if folder == 'ContextCore':
+            if re.search(r'\["(?:tokenUsage|inputTokens|cachedInputTokens|outputTokens|rateLimitsByLimitId|rateLimits|durationMs|turns)"\]', source):
+                failures.append(f'{path}: native Codex decoder in shared core')
+            if re.search(r'\bCodexDecoding\b', source):
+                failures.append(f'{path}: native decoder bypasses adapter')
         if folder != 'ContextDesk' and re.search(r'import\s+CodexAdapter', source):
             failures.append(f'{path}: adapter dependency in shared core/transcript')
 if '.target(name: "CodexAdapter", dependencies: ["AgentContract", "ContextCore"]),' not in package:
@@ -37,4 +42,4 @@ if (root / 'Sources/ContextCore/CodexConnection.swift').exists():
     failures.append('Native transport must live in CodexAdapter')
 if failures:
     sys.exit('\n'.join(failures))
-print('AgentContract and Codex command/event boundaries passed (stage 3b).')
+print('AgentContract and Codex command/event boundaries passed (stage 3c).')

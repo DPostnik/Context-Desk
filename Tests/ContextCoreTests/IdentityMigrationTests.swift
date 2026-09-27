@@ -49,7 +49,7 @@ private func legacyState() -> SavedState {
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: folder) }
     let file = folder.appendingPathComponent("metadata.sqlite"), legacy = legacyState()
-    let snapshot = UsageSnapshot(event: .object([:]), date: Date(timeIntervalSince1970: 42))
+    let snapshot = UsageSnapshot(measuredAt: Date(timeIntervalSince1970: 42))
     let timing = ResponseTiming(startedAt: nil, completedAt: Date(timeIntervalSince1970: 42))
     let summary = ArchiveSummaryRecord(threadID: "legacy", projectID: legacy.projects[0].id)
     let run = JobRun(jobID: UUID(), engine: .codex, name: "Old run", started: Date(), status: .uncertain, threadID: "legacy")
@@ -119,8 +119,8 @@ private func legacyState() -> SavedState {
     #expect(ConversationIdentity.appID(for: "same", in: restored) == a.id)
     #expect(ConversationIdentity.appID(for: "same", in: restored, connection: foreign) == b.id)
     #expect(throws: ClientFailure.self) { try ConversationIdentity.nativeID(for: b.id, in: restored) }
-    let usageA = UsageSnapshot(event: .object([:]), date: Date(timeIntervalSince1970: 1))
-    let usageB = UsageSnapshot(event: .object([:]), date: Date(timeIntervalSince1970: 2))
+    let usageA = UsageSnapshot(measuredAt: Date(timeIntervalSince1970: 1))
+    let usageB = UsageSnapshot(measuredAt: Date(timeIntervalSince1970: 2))
     try await store.saveUsage(threadID: a.id, snapshot: usageA)
     try await store.saveUsage(threadID: b.id, snapshot: usageB)
     #expect(try await store.loadUsage() == [a.id: usageA, b.id: usageB])

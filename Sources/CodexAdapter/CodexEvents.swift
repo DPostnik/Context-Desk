@@ -196,13 +196,13 @@ enum CodexEventDecoder {
         case "account/rateLimits/updated": payload = .limitsChanged
         case "client/disconnected": payload = .disconnected
         case "client/error": payload = .diagnostic(p["message"].string ?? L10n.text("Ошибка Codex", "Codex error"))
-        case "thread/tokenUsage/updated": payload = .usage(turn: p["turnId"].string, total: TokenCounters(p["tokenUsage"]["total"]), snapshot: UsageSnapshot(event: p))
+        case "thread/tokenUsage/updated": payload = .usage(turn: p["turnId"].string, total: CodexDecoding.tokenCounters(p["tokenUsage"]["total"]), snapshot: CodexDecoding.usageSnapshot(event: p))
         case "turn/started":
             guard let id = p["turn"]["id"].string else { return nil }; payload = .started(turn: id)
         case "turn/completed":
             guard let id = p["turn"]["id"].string else { return nil }; payload = .completed(.init(p["turn"], id: id))
         case "item/started", "item/completed":
-            guard var item = TranscriptItem.parse(p["item"]) else { return nil }; item.turnID = p["turnId"].string; payload = .item(item)
+            guard var item = CodexDecoding.transcriptItem(p["item"]) else { return nil }; item.turnID = p["turnId"].string; payload = .item(item)
         case "item/agentMessage/delta":
             guard let id = p["itemId"].string else { return nil }; payload = .delta(turn: p["turnId"].string, item: id, text: p["delta"].string ?? "")
         case "error": payload = .diagnostic(p["error"]["message"].string ?? p["message"].string ?? L10n.text("Ошибка Codex", "Codex error"))

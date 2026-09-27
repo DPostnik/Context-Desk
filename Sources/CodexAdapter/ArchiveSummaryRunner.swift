@@ -148,7 +148,7 @@ public actor ArchiveSummaryRunner {
                         }
                     }
                     if method == "thread/tokenUsage/updated", params["turnId"].string == turnID {
-                        tokens = TokenCounters(params["tokenUsage"]["total"])
+                        tokens = CodexDecoding.tokenCounters(params["tokenUsage"]["total"])
                     }
                     if method == "item/completed", params["turnId"].string == turnID,
                        params["item"]["type"].string == "agentMessage" { text = params["item"]["text"].string ?? "" }

@@ -79,6 +79,9 @@ public struct SummarySource: Sendable {
         public var reference: String
         public var kind: String
         public var text: String
+        public init(reference: String, kind: String, text: String) {
+            self.reference = reference; self.kind = kind; self.text = text
+        }
     }
     public struct Chunk: Sendable {
         public var fragments: [Fragment]
@@ -93,51 +96,10 @@ public struct SummarySource: Sendable {
 
     public static func hash(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
 
-    /// Bound each model input, retaining every user/assistant text segment. Tool details are explicitly limited.
-    public init(thread: JSONValue) throws {
-        guard case .array(let turns) = thread["turns"] else {
-            throw ClientFailure(L10n.text("История чата недоступна", "Conversation history is unavailable"))
-        }
+    /// Bound normalized fragments without depending on an engine's history protocol.
+    public init(digest: String, fragments: [Fragment], turnDates: [String: Double], omittedDetails: Bool) throws {
+        self.digest = digest; self.turnDates = turnDates; self.omittedDetails = omittedDetails
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
-        digest = Self.hash(try encoder.encode(thread["turns"]))
-        var fragments: [Fragment] = [], seen: Set<String> = []
-        omittedDetails = false
-        for turn in turns {
-            guard let turnID = turn["id"].string, turn["status"].string != "inProgress",
-                  case .array(let items) = turn["items"] else {
-                throw ClientFailure(L10n.text("История содержит незавершённый или неполный запрос", "History contains an active or incomplete turn"))
-            }
-            if case .number(let date) = turn["completedAt"], date.isFinite { turnDates[turnID] = date }
-            for item in items {
-                guard let itemID = item["id"].string, let kind = item["type"].string else {
-                    throw ClientFailure(L10n.text("Неполный элемент истории", "Incomplete history item"))
-                }
-                // Reasoning is not needed to infer the user's repeated activities.
-                if kind == "reasoning" { continue }
-                let text: String
-                if kind == "agentMessage" { text = item["text"].string ?? "" }
-                else if kind == "userMessage" {
-                    text = item["content"].array.map { content in
-                        if let text = content["text"].string { return text }
-                        omittedDetails = true
-                        return "[Non-text input: \(content["type"].string ?? "unknown")]"
-                    }.joined(separator: "\n")
-                } else {
-                    let raw = String(decoding: try encoder.encode(item), as: UTF8.self)
-                    text = String(raw.prefix(3000))
-                    if raw.count > 3000 { omittedDetails = true }
-                }
-                let characters = Array(text)
-                for offset in stride(from: 0, to: max(1, characters.count), by: 6000) {
-                    let reference = "\(turnID)/\(itemID)/\(offset / 6000)"
-                    guard seen.insert(reference).inserted else {
-                        throw ClientFailure(L10n.text("Повторяющийся идентификатор в истории", "Duplicate history identifier"))
-                    }
-                    fragments.append(Fragment(reference: reference, kind: kind,
-                        text: String(characters[offset..<min(offset + 6000, characters.count)])))
-                }
-            }
-        }
         references = fragments.map(\.reference)
         chunks = []
         var group: [Fragment] = [], size = 0

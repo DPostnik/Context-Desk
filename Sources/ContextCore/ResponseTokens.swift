@@ -10,12 +10,6 @@ public struct TokenCounters: Codable, Sendable, Equatable {
     public init(input: Int, cached: Int, output: Int) {
         self.input = input; self.cached = cached; self.output = output
     }
-    public init?(_ raw: JSONValue) {
-        guard let input = raw["inputTokens"].int, let cached = raw["cachedInputTokens"].int,
-              let output = raw["outputTokens"].int, input >= 0, cached >= 0, cached <= input,
-              output >= 0, !input.addingReportingOverflow(output).overflow else { return nil }
-        self.init(input: input, cached: cached, output: output)
-    }
     public func subtracting(_ previous: Self) -> Self? {
         guard input >= previous.input, cached >= previous.cached, output >= previous.output,
               cached - previous.cached <= input - previous.input else { return nil }

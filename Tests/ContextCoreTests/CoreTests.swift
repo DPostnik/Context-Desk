@@ -1,4 +1,4 @@
-import CodexAdapter
+@testable import CodexAdapter
 import Foundation
 import Testing
 @testable import ContextCore
@@ -18,12 +18,12 @@ import Testing
 
 @Test func usageDoesNotDoubleCountCachedTokens() throws {
     let event = try JSONDecoder().decode(JSONValue.self, from: Data(#"{"tokenUsage":{"last":{"totalTokens":250},"total":{"inputTokens":1000,"cachedInputTokens":700,"outputTokens":90,"reasoningOutputTokens":50},"modelContextWindow":1000}}"#.utf8))
-    let usage = UsageSnapshot(event: event)
+    let usage = CodexDecoding.usageSnapshot(event: event)
     #expect(usage.contextFraction == 0.25)
     #expect(usage.uncached == 300)
     #expect(usage.output == 90)
-    #expect(UsageSnapshot(event: .object([:])).contextFraction == nil)
-    #expect(UsageSnapshot(event: .object([:])).input == nil)
+    #expect(CodexDecoding.usageSnapshot(event: .object([:])).contextFraction == nil)
+    #expect(CodexDecoding.usageSnapshot(event: .object([:])).input == nil)
 }
 
 @Test func databasePreservesProjectAndThreadIdentity() async throws {
@@ -43,7 +43,7 @@ import Testing
     state.chats[0].title = "Новое имя"
     try await reopened.save(state)
     #expect(try await database.load().chats[0].title == "Новое имя")
-    let snapshot = UsageSnapshot(event: .object([:]), date: Date(timeIntervalSince1970: 10))
+    let snapshot = UsageSnapshot(measuredAt: Date(timeIntervalSince1970: 10))
     try await database.saveUsage(threadID: "thread-1", snapshot: snapshot)
     #expect(try await reopened.loadUsage()["thread-1"] == snapshot)
 }
@@ -94,6 +94,6 @@ import Testing
 
 @Test func compactionAppearsInTranscript() throws {
     let raw: JSONValue = .object(["id": .string("compaction-1"), "type": .string("contextCompaction")])
-    #expect(TranscriptItem.parse(raw)?.kind == "activity")
-    #expect(TranscriptItem.parse(.object(["id": .string("unknown"), "type": .string("future")])) == nil)
+    #expect(CodexDecoding.transcriptItem(raw)?.kind == "activity")
+    #expect(CodexDecoding.transcriptItem(.object(["id": .string("unknown"), "type": .string("future")])) == nil)
 }

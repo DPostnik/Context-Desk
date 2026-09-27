@@ -254,7 +254,7 @@ private func parallelChatFixture() throws -> (URL, URL) {
     model.state.queuedMessages = ["a", "b", "failed-delete"].map {
         QueuedMessage(id: "q-" + $0, threadID: $0, projectID: project.id, text: $0, model: "", effort: "")
     }
-    let snapshot = UsageSnapshot(event: .object([:]))
+    let snapshot = UsageSnapshot()
     for id in ["a", "b"] {
         model.usage[id] = snapshot
         try await store.saveUsage(threadID: id, snapshot: snapshot)
@@ -317,7 +317,7 @@ private func parallelChatFixture() throws -> (URL, URL) {
     #expect(model.isBusy(threadID: "b"))
     model.chatID = "a"
     model.state.queuedMessages = [QueuedMessage(id: "q-a", threadID: "a", projectID: project.id, text: "Saved draft", model: "", effort: "")]
-    let snapshot = UsageSnapshot(event: .object([:]))
+    let snapshot = UsageSnapshot()
     model.usage["a"] = snapshot
     try await store.saveUsage(threadID: "a", snapshot: snapshot)
     let archive = Task { await model.setChatArchived("a", archived: true) }

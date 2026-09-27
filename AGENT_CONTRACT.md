@@ -6,7 +6,7 @@ validation and conservative delivery tracking. It has no engine transport import
 native method names, arbitrary JSON or permission-answer payloads.
 
 Execution paths use explicit app/native identity mapping (stage 2). Stage 3 is
-in progress: the transport, typed commands/events and approval boundary now live in `CodexAdapter`,
+in progress: the transport, typed commands/events, native decoders and approval boundary now live in `CodexAdapter`,
 but production does not yet conform to `AgentIntegration`. Stages 4–6 remain planned. In particular, no new interactive Claude support, portable persisted
 history, optimizer compatibility or general plugin installation is delivered.
 
@@ -135,8 +135,8 @@ SwiftPM and the direct compiler fallback both include it.
 
 The stage-3 command increment extends the dependency check to prohibit native
 transport access and raw RPC dispatch in application/UI targets. The event increment additionally prohibits `JSONValue` and native method literals
-in app/UI sources. Shared-core native decoder helpers and full runtime contract
-adoption remain separate work. New app-owned UI copy must
+in app/UI sources. The decoder increment also rejects native Codex history/usage/limit
+field access in shared core. Full runtime contract adoption remains separate work. New app-owned UI copy must
 be paired Russian/English when these types are connected to presentation; this
 stage adds no product copy.
 
@@ -306,3 +306,29 @@ old generations, turn resolution, timing/missing usage and oversized-input recov
 Existing routing, notice, queue, scheduler, isolation and persistence fixtures passed.
 Russian/English copy was reviewed; boundary, signature/source digest and diff checks
 passed. No live-provider approval or installed-app click-through was performed.
+
+
+## Codex extraction: native decoders (stage 3, third increment)
+
+`CodexDecoding` is internal to `CodexAdapter`. It decodes account limit buckets,
+cumulative token counters, context usage, transcript items, timing and archive
+summary source history. App/UI code cannot access these helpers. Core models now
+have value-based initializers; storage, token differences, display formatting and
+bounded summary chunk assembly remain independent of Codex payloads. Summary
+source digests, evidence references, Unicode segmentation and rejection of active,
+incomplete or duplicate history are preserved. The JSON value utility remains in
+core for app-owned structured-output schemas and existing plugin/Claude job data;
+it is not itself a Codex transport API.
+
+The dependency check rejects native Codex history, usage and limit field access
+in core as well as existing app/UI protocol bypasses. Existing decoder fixtures
+now exercise the internal adapter, while migration and queue fixtures construct
+normalized usage values. Full `AgentIntegration` conformance, connection/version
+and capability lifecycle remain pending; stage 3 is still in progress.
+
+Stage-3 decoder verification (2026-09-27): signed app build passed with
+SwiftPM/macOS 26.5 SDK, followed by 133 passing tests (optional scheduler renderer
+skipped). Source-digest stability and active/duplicate history rejection have
+explicit regression coverage. Bundle source digest/signature, boundary rejection
+fixture, preserved Russian/English pairs and diff checks passed. No live-provider
+or installed-UI acceptance was performed.

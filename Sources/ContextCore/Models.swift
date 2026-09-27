@@ -122,14 +122,6 @@ public struct ResponseTiming: Codable, Sendable, Equatable {
         self.startedAt = startedAt; self.completedAt = completedAt
         self.durationSeconds = durationSeconds; self.tokens = tokens
     }
-    // Codex 0.155.0-alpha.16.4: startedAt/completedAt are Unix seconds; durationMs is milliseconds.
-    public static func parse(_ turn: JSONValue, fallback: Self? = nil) -> Self? {
-        guard let completedAt = turn["completedAt"].int.map({ Date(timeIntervalSince1970: Double($0)) }) ?? fallback?.completedAt else { return nil }
-        let startedAt = turn["startedAt"].int.map { Date(timeIntervalSince1970: Double($0)) } ?? fallback?.startedAt
-        let duration = turn["durationMs"].int.flatMap { $0 >= 0 ? Double($0) / 1_000 : nil }
-        return Self(startedAt: startedAt, completedAt: completedAt,
-                    durationSeconds: duration ?? fallback?.durationSeconds, tokens: fallback?.tokens)
-    }
     public func label(language: AppLanguage = L10n.language) -> String {
         guard let elapsed = durationSeconds ?? startedAt.map({ completedAt.timeIntervalSince($0) }),
               elapsed.isFinite, elapsed >= 0, elapsed < Double(Int.max) else {
@@ -159,19 +151,6 @@ public struct TranscriptItem: Identifiable, Sendable, Equatable {
     public init(id: String, kind: String, text: String, phase: String? = nil, timing: ResponseTiming? = nil) {
         self.id = id; self.kind = kind; self.text = text; self.phase = phase; self.timing = timing
     }
-    public static func parse(_ raw: JSONValue) -> Self? {
-        guard let id = raw["id"].string, let type = raw["type"].string else { return nil }
-        switch type {
-        case "userMessage":
-            return Self(id: id, kind: "user", text: raw["content"].array.compactMap { $0["text"].string }.joined(separator: "\n"))
-        case "agentMessage": return Self(id: id, kind: "assistant", text: raw["text"].string ?? "", phase: raw["phase"].string)
-        case "contextCompaction": return Self(id: id, kind: "activity", text: L10n.text("Контекст разговора сжат", "Conversation context compacted"))
-        case "commandExecution": return Self(id: id, kind: "activity", text: raw["command"].string ?? L10n.text("Выполнение команды", "Running command"))
-        case "fileChange": return Self(id: id, kind: "activity", text: L10n.text("Изменение файлов · \(raw["status"].string ?? "")", "File changes · \(raw["status"].string ?? "")"))
-        case "mcpToolCall": return Self(id: id, kind: "activity", text: raw["tool"].string ?? L10n.text("Вызов инструмента", "Calling tool"))
-        default: return nil
-        }
-    }
     public static func merge(_ item: Self, into items: inout [Self]) {
         if let index = items.firstIndex(where: { $0.id == item.id }) {
             var updated = item
@@ -193,11 +172,10 @@ public struct UsageSnapshot: Codable, Sendable, Equatable {
     public var cached: Int?
     public var output: Int?
     public var measuredAt: Date
-    public init(event: JSONValue, date: Date = Date()) {
-        let usage = event["tokenUsage"]
-        last = usage["last"]["totalTokens"].int; window = usage["modelContextWindow"].int
-        input = usage["total"]["inputTokens"].int; cached = usage["total"]["cachedInputTokens"].int
-        output = usage["total"]["outputTokens"].int; measuredAt = date
+    public init(last: Int? = nil, window: Int? = nil, input: Int? = nil, cached: Int? = nil,
+                output: Int? = nil, measuredAt: Date = Date()) {
+        self.last = last; self.window = window; self.input = input
+        self.cached = cached; self.output = output; self.measuredAt = measuredAt
     }
     public var contextFraction: Double? {
         guard let last, let window, last >= 0, window > 0 else { return nil }

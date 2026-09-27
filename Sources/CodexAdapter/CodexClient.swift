@@ -51,7 +51,7 @@ public actor CodexClient {
         return result["data"].array.compactMap(CodexModel.init)
     }
     public func limits() async throws -> AccountLimits {
-        AccountLimits(response: try await transport.request("account/rateLimits/read"))
+        CodexDecoding.accountLimits(response: try await transport.request("account/rateLimits/read"))
     }
     public func registerWorkflows(at directory: URL) async throws {
         _ = try await transport.request("skills/extraRoots/set", params: .object(["extraRoots": .array([.string(directory.path)])]))
@@ -110,7 +110,7 @@ public actor CodexClient {
         try await read(session)["turns"].array.map(CodexHistoryTurn.init)
     }
     public func summarySource(_ session: AgentSessionReference) async throws -> SummarySource {
-        try await SummarySource(thread: read(session))
+        try await CodexDecoding.summarySource(thread: read(session))
     }
     private func read(_ session: AgentSessionReference) async throws -> JSONValue {
         let id = try nativeID(session)
@@ -168,7 +168,7 @@ public struct CodexHistoryTurn: Sendable {
 
     init(_ turn: JSONValue) {
         id = turn["id"].string
-        items = turn["items"].array.compactMap(TranscriptItem.parse)
+        items = turn["items"].array.compactMap(CodexDecoding.transcriptItem)
         startedAt = turn["startedAt"].int.map { Date(timeIntervalSince1970: Double($0)) }
         completedAt = turn["completedAt"].int.map { Date(timeIntervalSince1970: Double($0)) }
         duration = turn["durationMs"].int.flatMap { $0 >= 0 ? Double($0) / 1_000 : nil }
