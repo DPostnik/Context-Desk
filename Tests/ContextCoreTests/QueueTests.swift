@@ -29,7 +29,7 @@ import ContextCore
     let connection = CodexConnection()
     try await connection.start(executable: executable, home: folder)
     let store = AppStore(file: folder.appendingPathComponent("state.sqlite"))
-    let model = DeskModel(connection: connection, store: store)
+    let model = DeskModel(connection: connection, store: store, summaryExecutable: executable, summaryHome: folder)
     model.state.defaultRoute = .direct
     let project = Project(path: folder.path)
     model.state.projects = [project]; model.projectID = project.id; model.chatID = "t"
@@ -75,7 +75,7 @@ import ContextCore
     try await store.save(model.state)
     let restored = try await store.load()
     #expect(restored.queuedMessages == model.state.queuedMessages)
-    #expect(DeskModel(connection: connection, store: store).queuePaused)
+    #expect(DeskModel(connection: connection, store: store, summaryExecutable: executable, summaryHome: folder).queuePaused)
     await model.sendQueuedMessageNow(try #require(model.visibleQueue.first?.id))
     for _ in 0..<100 {
         if model.busy && !model.sending { break }
@@ -141,7 +141,8 @@ private func parallelChatFixture() throws -> (URL, URL) {
     defer { try? FileManager.default.removeItem(at: folder) }
     let connection = CodexConnection()
     try await connection.start(executable: executable, home: folder)
-    let model = DeskModel(connection: connection, store: AppStore(file: folder.appendingPathComponent("state.sqlite")))
+    let model = DeskModel(connection: connection, store: AppStore(file: folder.appendingPathComponent("state.sqlite")),
+                          summaryExecutable: executable, summaryHome: folder)
     let a = Project(path: folder.appendingPathComponent("a").path)
     let b = Project(path: folder.appendingPathComponent("b").path)
     model.state.projects = [a, b]
@@ -206,7 +207,8 @@ private func parallelChatFixture() throws -> (URL, URL) {
     defer { try? FileManager.default.removeItem(at: folder) }
     let connection = CodexConnection()
     try await connection.start(executable: executable, home: folder)
-    let model = DeskModel(connection: connection, store: AppStore(file: folder.appendingPathComponent("state.sqlite")))
+    let model = DeskModel(connection: connection, store: AppStore(file: folder.appendingPathComponent("state.sqlite")),
+                          summaryExecutable: executable, summaryHome: folder)
     let project = Project(path: folder.path)
     model.state.projects = [project]; model.projectID = project.id
     model.state.defaultRoute = .direct; model.connected = true; model.authenticated = true
@@ -234,7 +236,7 @@ private func parallelChatFixture() throws -> (URL, URL) {
     let connection = CodexConnection()
     try await connection.start(executable: executable, home: folder)
     let store = AppStore(file: folder.appendingPathComponent("state.sqlite"))
-    let model = DeskModel(connection: connection, store: store)
+    let model = DeskModel(connection: connection, store: store, summaryExecutable: executable, summaryHome: folder)
     let project = Project(path: folder.path)
     model.state.projects = [project]; model.projectID = project.id
     model.state.defaultRoute = .direct; model.connected = true; model.authenticated = true
@@ -298,7 +300,7 @@ private func parallelChatFixture() throws -> (URL, URL) {
     let connection = CodexConnection()
     try await connection.start(executable: executable, home: folder)
     let store = AppStore(file: folder.appendingPathComponent("state.sqlite"))
-    let model = DeskModel(connection: connection, store: store)
+    let model = DeskModel(connection: connection, store: store, summaryExecutable: executable, summaryHome: folder)
     let project = Project(path: folder.path)
     model.state.projects = [project]; model.projectID = project.id
     model.state.defaultRoute = .direct; model.connected = true; model.authenticated = true

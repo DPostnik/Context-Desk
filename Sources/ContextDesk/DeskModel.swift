@@ -60,6 +60,9 @@ private struct ChatRunState {
     @Published var summaryActiveThread: String?
     var summaryTask: Task<Void, Never>?
     let summaryRunner = ArchiveSummaryRunner()
+    var titleTasks: [String: Task<Void, Never>] = [:]
+    private var titleRunners: [String: ArchiveSummaryRunner] = [:]
+    private var manuallyNamedChatIDs: Set<String> = []
     let summaryResources: URL?
     let summaryExecutable: URL?
     let summaryHome: URL
@@ -444,6 +447,8 @@ private struct ChatRunState {
         guard !isChangingChat(id) else { return }
         let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return }
+        manuallyNamedChatIDs.insert(id)
+        await cancelChatTitle(id)
         do {
             _ = try await connection.request("thread/name/set", params: .object(["threadId": .string(id), "name": .string(title)]))
             if let i = state.chats.firstIndex(where: { $0.id == id }) { state.chats[i].title = title; persist() }
@@ -491,6 +496,7 @@ private struct ChatRunState {
     func deleteChat(_ id: String) async {
         guard canDeleteChat(id) else { return }
         deletingChatIDs.insert(id)
+        await cancelChatTitle(id)
         let wasPaused = runs[id]?.queuePaused ?? true
         runs[id, default: ChatRunState()].queuePaused = true
         defer { deletingChatIDs.remove(id) }
@@ -654,7 +660,7 @@ private struct ChatRunState {
                     newChatDrafts.removeValue(forKey: project.id)
                 }
                 loadedThreads.insert(created)
-                var chat = Chat(id: created, projectID: project.id, title: String(text.prefix(60)), model: selectedModel)
+                var chat = Chat(id: created, projectID: project.id, title: ChatTitle.placeholder(), model: selectedModel)
                 chat.route = route
                 if let scheduledRun, let run = jobLedger.runs.first(where: { $0.id == scheduledRun }) { chat.title = run.name }
                 state.chats.append(chat)
@@ -679,6 +685,9 @@ private struct ChatRunState {
             if !selectedModel.isEmpty { params["model"] = .string(selectedModel) }
             if !selectedEffort.isEmpty { params["effort"] = .string(selectedEffort) }
             let result = try await connection.request("turn/start", params: .object(params), timeout: 60)
+            if threadID == nil && scheduledRun == nil {
+                generateChatTitle(id, firstMessage: text, model: selectedModel, route: route)
+            }
             if let scheduledRun {
                 guard let turn = result["turn"]["id"].string else { throw ClientFailure(L10n.text("Не получен ID запуска", "No turn ID received")) }
                 jobLedger = try await jobStore.attach(scheduledRun, thread: id, turn: turn)
@@ -819,7 +828,39 @@ private struct ChatRunState {
             NSApplication.shared.dockTile.badgeLabel = pending.isEmpty ? nil : String(pending.count)
         } catch { self.error = error.localizedDescription }
     }
+    func generateChatTitle(_ id: String, firstMessage: String, model: String, route: RequestRoute) {
+        guard titleTasks[id] == nil, !manuallyNamedChatIDs.contains(id),
+              state.chats.contains(where: { $0.id == id }) else { return }
+        let runner = ArchiveSummaryRunner()
+        titleRunners[id] = runner
+        titleTasks[id] = Task { [weak self] in
+            guard let self else { return }
+            defer { self.titleTasks[id] = nil; self.titleRunners[id] = nil }
+            do {
+                let title = try await runner.title(firstMessage: firstMessage, model: model, route: route,
+                    executable: try self.summaryExecutable ?? Locations.codexExecutable(), home: self.summaryHome,
+                    workspace: self.summarySkillsDirectory.appendingPathComponent(".title-workspace"),
+                    providerArguments: self.summaryProviderArguments)
+                try Task.checkCancellation()
+                guard let index = self.state.chats.firstIndex(where: { $0.id == id }) else { return }
+                self.state.chats[index].title = title
+                self.persist()
+            } catch {
+                // Keep the neutral placeholder. Never retry an uncertain background request
+                // or interrupt the user's main conversation with a naming failure.
+            }
+        }
+    }
+
+    private func cancelChatTitle(_ id: String) async {
+        let task = titleTasks[id]
+        task?.cancel()
+        await titleRunners[id]?.stop()
+        await task?.value
+    }
+
     func shutdown() async {
+        for id in Array(titleTasks.keys) { await cancelChatTitle(id) }
         await stopScheduler()
         summaryTask?.cancel()
         await summaryRunner.stop()

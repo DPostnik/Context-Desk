@@ -107,11 +107,16 @@ private func fixture(_ root: URL, mode: String = "success") throws -> URL {
             if mode=='approval':
                 emit({'id':'approval','method':'item/fileChange/requestApproval','params':{'threadId':'summary','turnId':'generated'}})
                 continue
-            fragments=json.loads(p['input'][0]['text'].split('\n',1)[1])
-            evidence=fragments[0]['reference']
-            output={'overview':'A report was requested.','activities':[{'goal':'Weekly report','actions':[],
-                    'outcome':'Reported complete','unfinished':[],'reusableSteps':['Collect evidence'],
-                    'variableInputs':['Week'],'evidence':[evidence]}]}
+            if 'title' in p['outputSchema'].get('properties',{}):
+                source=json.loads(p['input'][0]['text'])
+                assert source['firstMessage']
+                output={'title':'Краткие названия чатов' if 'тайтл' in source['firstMessage'] else 'Weekly sales report'}
+            else:
+                fragments=json.loads(p['input'][0]['text'].split('\n',1)[1])
+                evidence=fragments[0]['reference']
+                output={'overview':'A report was requested.','activities':[{'goal':'Weekly report','actions':[],
+                        'outcome':'Reported complete','unfinished':[],'reusableSteps':['Collect evidence'],
+                        'variableInputs':['Week'],'evidence':[evidence]}]}
             emit({'method':'thread/tokenUsage/updated','params':{'threadId':'summary','turnId':'generated',
                 'tokenUsage':{'total':{'inputTokens':100,'cachedInputTokens':20,'outputTokens':30}}}})
             emit({'method':'item/completed','params':{'threadId':'unrelated','turnId':'generated',
@@ -259,4 +264,78 @@ func summaryRunnerRoutesAndFailsClosed(mode: String) async throws {
     let names = Set(result["data"].array.flatMap { $0["skills"].array }.compactMap { $0["name"].string })
     #expect(names.isSuperset(of: ["archive-summary", "routine-optimizer", "history-patterns"]))
     await connection.stop()
+}
+
+@Test func chatTitleValidationAndLocalization() throws {
+    #expect(try ChatTitle.validate(#"{"title":" Краткие названия чатов "}"#) == "Краткие названия чатов")
+    #expect(try ChatTitle.validate(#"{"title":"Weekly sales report"}"#) == "Weekly sales report")
+    for output in [#"{"title":""}"#, #"{"title":"line\nbreak"}"#, "{}", "plain text",
+                   "{\"title\":\"" + String(repeating: "a", count: 61) + "\"}"] {
+        #expect(throws: (any Error).self) { try ChatTitle.validate(output) }
+    }
+    #expect(ChatTitle.placeholder(language: .russian) == "Новый чат")
+    #expect(ChatTitle.placeholder(language: .english) == "New chat")
+}
+
+@Test(arguments: ["success", "route", "tools", "disconnect", "approval"])
+func chatTitleRunnerPreservesRouteAndIsolation(mode: String) async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let executable = try fixture(root, mode: mode)
+    do {
+        let title = try await ArchiveSummaryRunner().title(firstMessage: "В тайтл нужно резюме первого запроса", model: "test-model",
+            route: RequestRoute(rawValue: "fixture"), executable: executable, home: root,
+            workspace: root.appendingPathComponent("work"), providerArguments: [])
+        #expect(mode == "success")
+        #expect(title == "Краткие названия чатов")
+    } catch { #expect(mode != "success") }
+    let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
+    #expect(calls.components(separatedBy: #""method": "turn/start""#).count - 1 <= 1)
+    #expect(!calls.contains("thread/resume"))
+}
+
+@Test @MainActor func chatTitlePersistsAndManualRenameWins() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let executable = try fixture(root)
+    let connection = CodexConnection()
+    try await connection.start(executable: executable, home: root)
+    let file = root.appendingPathComponent("state.sqlite"), store = AppStore(file: root.appendingPathComponent("state.sqlite"))
+    let model = DeskModel(connection: connection, store: store, pluginDirectory: root.appendingPathComponent("plugins"),
+                          summaryExecutable: executable, summaryHome: root)
+    let project = Project(path: root.path)
+    model.state.projects = [project]
+    model.state.chats = [Chat(id: "chat", projectID: project.id, title: ChatTitle.placeholder(), model: "test-model")]
+    model.generateChatTitle("chat", firstMessage: "Please summarize weekly sales", model: "test-model", route: .direct)
+    await model.titleTasks["chat"]?.value
+    #expect(model.state.chats.first?.title == "Weekly sales report")
+    // Wait for the app's asynchronous persistence task to reach the actor.
+    for _ in 0..<100 {
+        if try await store.load().chats.first?.title == "Weekly sales report" { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(try await AppStore(file: file).load().chats.first?.title == "Weekly sales report")
+    model.generateChatTitle("chat", firstMessage: "Different first message", model: "test-model", route: .direct)
+    await model.renameChat("chat", title: "My own title")
+    #expect(model.state.chats.first?.title == "My own title")
+    #expect(model.titleTasks.isEmpty)
+    // A slow first turn/start response must not start naming after a manual rename.
+    model.generateChatTitle("chat", firstMessage: "Late start acknowledgment", model: "test-model", route: .direct)
+    #expect(model.titleTasks.isEmpty)
+    #expect(model.state.chats.first?.title == "My own title")
+    await model.shutdown()
+}
+
+@Test func chatTitleLiveSyntheticProbe() async throws {
+    guard ProcessInfo.processInfo.environment["CONTEXTDESK_TITLE_LIVE"] == "1" else { return }
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    for message in ["У нас есть слева меню, где есть проекты, у них есть чаты. В тайтл чата нужно вставлять короткое резюме первого запроса вместо сырого текста.",
+                    "Hi, could you help me? Every Monday I combine three sales CSV files manually. I'd like a script that produces a weekly sales report."] {
+        let title = try await ArchiveSummaryRunner().title(firstMessage: message, model: "gpt-6-astra", route: .direct,
+            executable: Locations.codexExecutable(), home: Locations.codexHome, workspace: root, providerArguments: [])
+        #expect(!title.isEmpty && title.count <= 60)
+        #expect(!message.hasPrefix(title))
+        print("SYNTHETIC CHAT TITLE: \(title)")
+    }
 }
