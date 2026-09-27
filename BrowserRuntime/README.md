@@ -71,8 +71,8 @@ Chrome остаётся открытым при переподключении �
 - `browser_cards` accepts CSS selectors as data; at most 500 cards, bounded fields,
   explicit `truncated`, `complete`, `reason` and `next`. An empty/loading shell is
   partial without an explicit `empty` selector. Completion describes one page.
-- `browser_next` needs a completed checkpoint and an observed snapshot UID. It
-  clicks once and verifies changed IDs; no-op returns partial without a replay.
+- `browser_next` needs a completed checkpoint and either an observed snapshot UID
+  or nextToken. It dispatches once and verifies changed IDs; no-op returns partial.
 - `browser_action` supports scoped native form/navigation actions. Supply an
   exact observed `expectedURL` and globally unique `actionID`. Its result is not
   a submission receipt. Use `browser_verify` for a visible text/URL postcondition.
@@ -97,3 +97,29 @@ browser endpoint ID. Attachment requires a matching process and an exclusively
 loopback listener owned by that PID. It never uses autoConnect or launches with
 `--enable-automation`, `--disable-sync` or a mock keychain.
 Reference: https://github.com/ChromeDevTools/chrome-devtools-mcp/blob/main/docs/advanced-usage.md#connecting-to-a-running-chrome-instance
+
+## Compact workflow / Компактный поиск
+
+English: `browser_cards` accepts `date` and `excerpt` selectors. A complete page may
+return `nextToken` for a visible same-origin Next target. Pass that token
+instead of `uid` to `browser_next`; the adapter checks the link again and navigates
+once. Use the snapshot/UID path for buttons or JavaScript click behavior. Full URLs
+remain in private checkpoints and card data. `expectedCards` opts into a previously
+audited static per-page count with stable, hydrated, unique cards; never use a
+site-wide total or guess this from a lazy list. Mismatches use ordinary scrolling.
+This does not change scheduled jobs or establish model-token savings.
+
+Русский: `browser_cards` принимает селекторы `date` и `excerpt`. Полностью прочитанная
+страница может вернуть `nextToken` для однозначной видимой ссылки «Далее» на том же
+сайте. Передай его вместо `uid` в `browser_next`: адаптер повторно проверит ссылку и
+выполнит один переход. Для кнопок и JavaScript-обработчиков используй снимок и UID.
+Полные URL сохраняются в локальных контрольных точках и данных карточек.
+`expectedCards` включает режим заранее проверенного статического списка с известным
+числом карточек на странице; карточки должны быть уникальны, загружены и стабильны.
+Не используй общее число вакансий сайта и не угадывай число по ленивому списку.
+При несовпадении выполняется обычная прокрутка. Расписания не меняются; экономия
+модельных токенов пока не измерена.
+
+Development: `python3 -B BrowserRuntime/workflow_smoke.py` compares generic and
+static traversal against an isolated two-page local fixture. See
+`BrowserRuntime/WORKFLOW_PLAN.md` in the repository for staged rollout and measurement limits.

@@ -1,0 +1,16 @@
+{
+  "url": "https://englishjobs.pl/jobs/frontend_developer",
+  "selectors": {
+    "card": "#results .job",
+    "title": "[itemprop=title]",
+    "link": "a.js-joblink",
+    "idAttribute": "id",
+    "company": "ul > li:nth-child(1)",
+    "location": "ul > li:nth-child(2)",
+    "date": "ul > li:nth-child(3)",
+    "excerpt": "div.text-gray-400",
+    "next": "a[aria-label^=\"Goto Next Page\"]"
+  },
+  "expectedCards": 20,
+  "scope": "Opt-in two-page pilot, inspected 2026-09-27; not a site-wide or scheduler default. Revalidate selectors and static completeness before reuse."
+}

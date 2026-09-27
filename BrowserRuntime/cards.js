@@ -22,10 +22,28 @@
       company: clip(config.company ? text(node.querySelector(config.company)) : '', 200),
       location: clip(config.location ? text(node.querySelector(config.location)) : '', 200),
       badges: clip(config.badges ? text(node.querySelector(config.badges)) : '', 300),
+      date: clip(config.date ? text(node.querySelector(config.date)) : '', 100),
+      excerpt: clip(config.excerpt ? text(node.querySelector(config.excerpt)) : '', 1000),
       url: clip(url, 8192)
     };
   });
-  const next = config.next ? document.querySelector(config.next) : null;
+  const nextNodes = config.next ? [...document.querySelectorAll(config.next)] : [];
+  const enabled = node => !node.disabled && node.getAttribute('aria-disabled') !== 'true';
+  const links = nextNodes.map(node => {
+    if (!enabled(node) || !node.matches('a[href]') || node.hasAttribute('download') ||
+        !node.getClientRects().length || getComputedStyle(node).visibility !== 'visible') return null;
+    try {
+      const target = new URL(node.href, location.href);
+      if (target.origin === location.origin && /^https?:$/.test(target.protocol) &&
+          !target.username && !target.password && target.href !== location.href && target.href.length <= 8192) {
+        return {url: target.href, text: text(node).slice(0, 200)};
+      }
+    } catch (_) { /* Malformed page URLs cannot authorize navigation. */ }
+    return null;
+  });
+  // Repeated top/bottom controls may agree; conflicting targets require a snapshot.
+  const nextLink = links.length && links.every(link => link && link.url === links[0]?.url && link.text === links[0]?.text)
+    ? links[0] : null;
   const bottom = !!pane && pane.scrollTop + pane.clientHeight >= pane.scrollHeight - 3;
   return {
     url: location.href, readyState: document.readyState, visibility: document.visibilityState,
@@ -33,6 +51,8 @@
     scroll: pane ? {top: pane.scrollTop, height: pane.clientHeight, total: pane.scrollHeight} : null,
     loading: !!(config.loading && document.querySelector(config.loading)),
     empty: !!(config.empty && document.querySelector(config.empty)),
-    next: !config.next ? 'unknown' : !next || next.disabled || next.getAttribute('aria-disabled') === 'true' ? 'absent-or-disabled' : 'available'
+    nextLink,
+    next: !config.next ? 'unknown' : !nextNodes.length || nextNodes.every(node => !enabled(node))
+      ? 'absent-or-disabled' : nextNodes.length === 1 || nextLink ? 'available' : 'unknown'
   };
 }

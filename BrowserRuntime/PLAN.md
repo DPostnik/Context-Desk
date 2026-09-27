@@ -103,3 +103,9 @@ and is excluded from the final comparison. Full morning traversal, qualification
 company/location extraction, and authenticated LinkedIn comparison remain future
 work. The original intermittent page disappearance cause remains unestablished;
 this change safely invalidates the token and allows a fresh explicit task.
+
+## Workflow optimization — 2026-09-27
+
+See [the staged workflow plan](WORKFLOW_PLAN.md) for the current audit,
+compact metadata/pagination implementation, opt-in static traversal, matched
+fixtures and pending workflow adoption. Scheduled jobs remain read-only.

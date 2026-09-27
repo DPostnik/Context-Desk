@@ -178,6 +178,74 @@ class BrowserTests(unittest.TestCase):
         self.assertFalse(result['complete'])
         self.assertEqual(result['reason'], 'page_transition_not_observed')
 
+    def test_static_count_skips_scroll_only_with_hydrated_unique_cards(self):
+        calls = []
+        card = {'id': '1', 'title': 'Loaded', 'company': 'Employer'}
+        def read(*args, **kwargs):
+            calls.append(kwargs.get('advance'))
+            return self.observation([card], bottom=False)
+        self.browser.read = read
+        result = self.browser.cards('owner', {'card': '.card', 'company': '.company'}, 1, expected_cards=1)
+        self.assertTrue(result['complete'])
+        self.assertEqual(result['reason'], 'stable_expected_cards')
+        self.assertNotIn(True, calls)
+        for rows in [[{**card, 'company': ''}], [card, card]]:
+            calls.clear()
+            def partial(*args, **kwargs):
+                calls.append(kwargs.get('advance'))
+                return self.observation(rows, bottom=False)
+            self.browser.read = partial
+            result = self.browser.cards('owner', {'card': '.card', 'company': '.company'}, 1, expected_cards=1)
+            self.assertFalse(result['complete'])
+            self.assertIn(True, calls)
+
+    def test_static_mode_scrolls_while_loading_or_link_is_unhydrated(self):
+        for extra, card in [({'loading': True}, {'id': '1', 'title': 'Card', 'url': 'https://example.test/job'}),
+                            ({}, {'id': '1', 'title': 'Card', 'url': ''})]:
+            advances = []
+            def read(*args, **kwargs):
+                advances.append(kwargs.get('advance'))
+                return self.observation([card], bottom=False, **extra)
+            self.browser.read = read
+            result = self.browser.cards('owner', {'card': '.card', 'link': 'a'}, 1, expected_cards=1)
+            self.assertFalse(result['complete'])
+            self.assertIn(True, advances)
+
+    def test_static_count_mismatch_uses_bottom_and_count_is_validated(self):
+        self.browser.read = lambda *_, **kw: self.observation([{'id': '1', 'title': 'Loaded'}])
+        result = self.browser.cards('owner', {'card': '.card'}, 1, expected_cards=20)
+        self.assertEqual(result['reason'], 'stable_page_bottom')
+        for count in [True, 0, 501, '20']:
+            with self.assertRaises(Rejected):
+                self.browser.cards('owner', {'card': '.card'}, 1, expected_cards=count)
+
+    def test_next_token_revalidates_link_and_preserves_single_dispatch(self):
+        link = {'url': 'https://example.test/?page=2', 'text': 'Next'}
+        config = {'card': '.card', 'next': 'a.next'}
+        self.browser.read = lambda *_, **kw: self.observation([{'id': '1', 'title': 'Card'}], nextLink=link)
+        first = self.browser.cards('owner', config, 1)
+        result = dispatch(self.browser, 'browser_next', {'session': 'owner', 'actionID': 'link-next-01',
+            'expectedURL': 'https://example.test/', 'nextToken': first['nextToken'], 'selectors': config, 'timeout': 1})
+        self.assertFalse(result['complete'])
+        self.assertEqual(sum(n == 'navigate_page' for n, _ in self.calls), 1)
+        self.assertFalse(any(n == 'take_snapshot' for n, _ in self.calls))
+        with self.assertRaises(Rejected):
+            self.browser.next('owner', 'link-next-02', 'https://example.test/', None, config, 1, first['nextToken'])
+
+    def test_changed_link_and_wrong_token_never_navigate(self):
+        config = {'card': '.card', 'next': 'a.next'}
+        link = {'url': 'https://example.test/?page=2', 'text': 'Next'}
+        self.browser.read = lambda *_, **kw: self.observation([{'id': '1', 'title': 'Card'}], nextLink=link)
+        first = self.browser.cards('owner', config, 1)
+        with self.assertRaises(Rejected):
+            self.browser.next('owner', 'link-next-01', 'https://example.test/', None, config, 1, 'wrong')
+        link['url'] = 'https://example.test/?page=3'
+        # The checkpoint owns a separate serialized observation, as in real Chrome.
+        self.browser.checkpoint['nextLink'] = {'url': 'https://example.test/?page=2', 'text': 'Next'}
+        with self.assertRaises(Rejected):
+            self.browser.next('owner', 'link-next-01', 'https://example.test/', None, config, 1, first['nextToken'])
+        self.assertFalse(any(n == 'navigate_page' for n, _ in self.calls))
+
     def test_untrusted_arguments_do_not_escape_allowlist(self):
         with self.assertRaises(Rejected):
             dispatch(self.browser, 'evaluate_script', {'function': 'evil()'})
