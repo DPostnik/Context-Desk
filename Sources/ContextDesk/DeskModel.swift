@@ -3,11 +3,10 @@ import Foundation
 import SwiftUI
 import UserNotifications
 import ContextCore
-import CodexAdapter
 import AgentContract
 
 struct PendingAction: Identifiable {
-    let interaction: CodexInteraction
+    let interaction: AgentInteraction
     let threadID: String
     var id: String { interaction.id.uuidString }
     var title: String {
@@ -62,18 +61,17 @@ private struct ChatRunState {
     @Published var archiveSummaries: [String: ArchiveSummaryRecord] = [:]
     @Published var summaryActiveThread: String?
     var summaryTask: Task<Void, Never>?
-    let summaryRunner = ArchiveSummaryRunner()
+    let summaryRunner: AgentGenerationRunner
     var titleTasks: [String: Task<Void, Never>] = [:]
-    private var titleRunners: [String: ArchiveSummaryRunner] = [:]
+    private var titleRunners: [String: AgentGenerationRunner] = [:]
     private var manuallyNamedChatIDs: Set<String> = []
     let summaryResources: URL?
     let summaryExecutable: URL?
     let summaryHome: URL
-    var summaryProviderArguments: [String] = []
     @Published var items: [TranscriptItem] = []
     @Published var pending: [PendingAction] = []
     @Published var usage: [String: UsageSnapshot] = [:]
-    @Published var models: [CodexModel] = []
+    @Published var models: [AgentModelInfo] = []
     @Published var effort = ""
     private var newChatDrafts: [UUID: String] = [:]
     private var chatDrafts: [String: String] = [:]
@@ -86,6 +84,7 @@ private struct ChatRunState {
             }
         }
     }
+    @Published var agentDescriptor: AgentDescriptor?
     @Published var connected = false
     @Published var authenticated = false
     @Published var connecting = false
@@ -96,7 +95,7 @@ private struct ChatRunState {
     func isChangingChat(_ id: String) -> Bool { deletingChatIDs.contains(id) || archivingChatIDs.contains(id) }
     func isArchived(_ id: String) -> Bool { state.chats.first { $0.id == id }?.isArchived == true }
     var selectedChatIsArchived: Bool { selectedChat?.isArchived == true }
-    private var completedTurns: [String: (status: String?, hasError: Bool)] = [:]
+    private var completedTurns: [String: (status: AgentExecutionOutcome, hasError: Bool)] = [:]
     private var currentRunKey: String { chatID ?? "new:" + selectionGeneration.uuidString }
     var sending: Bool { runs[currentRunKey]?.sending == true }
     var busy: Bool { runs[currentRunKey]?.running == true }
@@ -124,15 +123,16 @@ private struct ChatRunState {
     private var deltas: [String: String] = [:]
     private var selectionGeneration = UUID()
     private var booted = false
-    let connection: CodexClient
+    let connection: AgentClient
     let store: AppStore
-    init(connection: CodexClient = CodexClient(), store: AppStore = AppStore(file: Locations.root.appendingPathComponent("metadata.sqlite")),
+    init(connection: any AgentIntegration = AgentIntegrationFactory.codex(), store: AppStore = AppStore(file: Locations.root.appendingPathComponent("metadata.sqlite")),
          pluginDirectory: URL = PluginCatalog.defaultDirectory,
          summaryResources: URL? = Bundle.main.resourceURL?.appendingPathComponent("Skills"),
          summaryExecutable: URL? = nil, summaryHome: URL = Locations.codexHome,
          jobStore: JobStore = JobStore(file: Locations.root.appendingPathComponent("scheduled-jobs.json"))) {
         self.jobStore = jobStore
-        self.connection = connection
+        self.connection = AgentClient(integration: connection)
+        self.summaryRunner = AgentGenerationRunner(integration: connection)
         self.store = store
         self.pluginDirectory = pluginDirectory
         self.summaryResources = summaryResources; self.summaryExecutable = summaryExecutable; self.summaryHome = summaryHome
@@ -220,17 +220,20 @@ private struct ChatRunState {
         await connection.stop(); loadedThreads.removeAll()
         await stopPlugins()
         pluginMessages.removeAll()
-        var arguments: [String] = []
+        let optimizerEnvironment: [String: String]
+        do { optimizerEnvironment = try await connection.integration.optimizerEnvironment(home: Locations.codexHome).value() }
+        catch { self.error = error.localizedDescription; return }
+        var optimizers: [AgentOptimizerEndpoint] = []
         for id in neededPluginIDs.sorted() {
             guard let plugin = plugins.first(where: { $0.id == id }) else {
                 pluginMessages[id] = L10n.text("Плагин не установлен. Установи его и нажми «Применить выбор».", "Plugin is not installed. Install it, then click Apply selection.")
                 continue
             }
-            let runtime = ProviderPluginRuntime(plugin: plugin)
+            let runtime = ProviderPluginRuntime(plugin: plugin, environment: optimizerEnvironment)
             do {
                 let endpoint = try await runtime.start()
                 let status = try await runtime.status()
-                arguments += try plugin.providerArguments(endpoint: endpoint)
+                optimizers.append(.init(id: plugin.id, endpoint: endpoint))
                 pluginStatuses[id] = status
                 pluginRuntimes[id] = runtime
             } catch {
@@ -239,9 +242,8 @@ private struct ChatRunState {
             }
         }
         do {
-            summaryProviderArguments = arguments
-            arguments += try BrowserConfiguration.arguments(enabled: state.browserEnabled == true, resources: Bundle.main.resourceURL)
-            try await connection.start(executable: Locations.codexExecutable(), home: Locations.codexHome, extraArguments: arguments)
+            agentDescriptor = try await connection.start(.init(home: Locations.codexHome, resources: Bundle.main.resourceURL,
+                browserEnabled: state.browserEnabled == true, optimizers: optimizers))
             connected = true
             if summaryResources != nil {
                 do {
@@ -302,6 +304,7 @@ private struct ChatRunState {
     private func clearConnectionError() {
         guard let error else { return }
         let transportErrors = [
+            L10n.text("Движок недоступен. Подключись заново.", "The engine is unavailable. Reconnect."),
             L10n.text("Codex не подключён", "Codex is not connected"),
             L10n.text("Соединение закрыто", "Connection closed"),
             L10n.text("Соединение с Codex закрыто", "The connection to Codex is closed"),
@@ -674,7 +677,8 @@ private struct ChatRunState {
                 guard !schedulerStopping else { throw CancellationError() }
             }
             let submittedTurn = try await connection.send(text, to: sessionForChat(id), projectPath: project.path,
-                                                          access: access, model: selectedModel, effort: selectedEffort)
+                                                          access: access, model: selectedModel, effort: selectedEffort,
+                                                          kind: scheduledRun == nil ? .interactive : .scheduled, conversation: ConversationID(id))
             if threadID == nil && scheduledRun == nil {
                 generateChatTitle(id, firstMessage: text, model: selectedModel, route: route)
             }
@@ -710,20 +714,20 @@ private struct ChatRunState {
         await deliver(text: job.prompt, project: project, threadID: nil, localID: "local-user:" + run.id.uuidString,
                       selectedModel: job.model, selectedEffort: job.effort, scheduledRun: run.id, scheduledRoute: job.route)
     }
-    func finishActiveTurn(threadID: String?, turnID: String?, status: String?, hasError: Bool) {
+    func finishActiveTurn(threadID: String?, turnID: String?, status: AgentExecutionOutcome, hasError: Bool) {
         guard let threadID, let turnID else { return }
         completedTurns[threadID + ":" + turnID] = (status, hasError)
         if let run = jobLedger.runs.first(where: { $0.threadID == threadID && $0.status.active && ($0.turnID == nil || $0.turnID == turnID) }) {
-            let outcome: JobRunStatus = status == "completed" && !hasError ? .completed : status == "interrupted" ? .interrupted : .failed
+            let outcome: JobRunStatus = status == .uncertain ? .uncertain : status == .completed && !hasError ? .completed : status == .cancelled ? .interrupted : .failed
             Task { await finishJob(run.id, status: outcome) }
         }
         guard runs[threadID]?.turnID == turnID else { return }
         runs[threadID, default: ChatRunState()].running = false
         runs[threadID, default: ChatRunState()].turnID = nil
         runs[threadID, default: ChatRunState()].stopRequested = false
-        if runs[threadID]?.priorityMessageID != nil && (status == "interrupted" || status == "completed") && !hasError {
+        if runs[threadID]?.priorityMessageID != nil && (status == .cancelled || status == .completed) && !hasError {
             runs[threadID, default: ChatRunState()].queuePaused = false
-        } else if status != "completed" || hasError {
+        } else if status != .completed || hasError {
             runs[threadID, default: ChatRunState()].queuePaused = true
         }
         runs[threadID, default: ChatRunState()].priorityMessageID = nil
@@ -809,7 +813,7 @@ private struct ChatRunState {
         guard let chat = state.chats.first(where: { $0.id == threadID }) else { return }
         await openChat(chat)
     }
-    func answer(_ action: PendingAction, result: CodexInteractionResponse) async {
+    func answer(_ action: PendingAction, result: AgentInteractionResponse) async {
         guard pending.contains(where: { $0.id == action.id }), chatIsAvailable(action.threadID), connected else { return }
         do {
             try await connection.answer(action.interaction.id, session: action.interaction.session, response: result)
@@ -821,16 +825,15 @@ private struct ChatRunState {
     func generateChatTitle(_ id: String, firstMessage: String, model: String, route: RequestRoute) {
         guard chatIsAvailable(id), titleTasks[id] == nil, !manuallyNamedChatIDs.contains(id),
               state.chats.contains(where: { $0.id == id }) else { return }
-        let runner = ArchiveSummaryRunner()
+        let runner = AgentGenerationRunner(integration: connection.integration)
         titleRunners[id] = runner
         titleTasks[id] = Task { [weak self] in
             guard let self else { return }
             defer { self.titleTasks[id] = nil; self.titleRunners[id] = nil }
             do {
-                let title = try await runner.title(firstMessage: firstMessage, model: model, route: route,
-                    executable: try self.summaryExecutable ?? Locations.codexExecutable(), home: self.summaryHome,
-                    workspace: self.summarySkillsDirectory.appendingPathComponent(".title-workspace"),
-                    providerArguments: self.summaryProviderArguments)
+                let title = try await runner.title(source: self.sessionForChat(id), firstMessage: firstMessage, model: model, route: route,
+                    environment: .init(executable: self.summaryExecutable, home: self.summaryHome,
+                        workspace: self.summarySkillsDirectory.appendingPathComponent(".title-workspace")))
                 try Task.checkCancellation()
                 guard let index = self.state.chats.firstIndex(where: { $0.id == id }) else { return }
                 self.state.chats[index].title = title
@@ -860,13 +863,16 @@ private struct ChatRunState {
     }
     private func persist() { let snapshot = state; Task { do { try await store.save(snapshot) } catch { self.error = error.localizedDescription } } }
 
-    func receive(_ event: CodexEvent) async {
+    func receive(_ event: AgentEvent) async {
         let thread = event.session.flatMap { ConversationIdentity.appID(for: $0.nativeID, in: state, connection: $0.connection) }
         if event.session != nil && thread == nil {
             if case .interaction(let request) = event.payload { await connection.rejectInteraction(request.id) }
             return
         }
         switch event.payload {
+        case .descriptor(let descriptor):
+            if agentDescriptor?.context != descriptor.context { models = []; clearLimits() }
+            agentDescriptor = descriptor
         case .interaction(let request):
             guard let thread else { await connection.rejectInteraction(request.id); return }
             let action = PendingAction(interaction: request, threadID: thread)
@@ -875,11 +881,25 @@ private struct ChatRunState {
             removeActionNotices(pending); pending.removeAll()
             NSApplication.shared.dockTile.badgeLabel = nil
         case .accountChanged(let issue):
-            clearLimits()
+            summaryTask?.cancel()
+            for task in titleTasks.values { task.cancel() }
+            models = []; clearLimits(); loadedThreads.removeAll()
+            for id in runs.keys { runs[id]?.queuePaused = true }
+            for id in archiveSummaries.keys {
+                guard var record = archiveSummaries[id], [.queued, .reading, .generating].contains(record.status) else { continue }
+                record.status = record.status == .generating ? .uncertain : .stale
+                record.issue = L10n.text("Аккаунт изменился. Проверь итог перед новым запуском.", "The account changed. Review the summary before starting again.")
+                archiveSummaries[id] = record
+                do { try await store.saveArchiveSummary(record) } catch { self.error = error.localizedDescription }
+            }
+            for run in jobLedger.runs where run.engine == .codex && run.status.active {
+                await finishJob(run.id, status: .uncertain, output: L10n.text("Аккаунт изменился; запуск не повторён.", "The account changed; the run was not retried."))
+            }
             if let issue { error = issue }
             await refreshAccount()
         case .limitsChanged: await refreshLimits()
         case .disconnected:
+            agentDescriptor = nil; models = []
             connected = false
             for run in jobLedger.runs where run.engine == .codex && run.status.active {
                 await finishJob(run.id, status: .uncertain, output: L10n.text("Соединение потеряно; повторной отправки не было.", "Connection lost; the task was not sent again."))
@@ -937,7 +957,7 @@ private struct ChatRunState {
                 if threadID == chatID, let index = items.lastIndex(where: { $0.kind == "assistant" && $0.turnID == turnID }) { items[index].timing = timing }
                 try? await store.saveTiming(threadID: threadID, turnID: turnID, timing: timing)
                 let status = completion.status
-                let title = completion.hasError || status == "failed" ? L10n.text("Ошибка в разговоре", "Conversation error") : status == "interrupted" ? L10n.text("Ответ остановлен", "Response stopped") : L10n.text("Ответ готов", "Response ready")
+                let title = completion.hasError || (status != .completed && status != .cancelled) ? L10n.text("Ошибка в разговоре", "Conversation error") : status == .cancelled ? L10n.text("Ответ остановлен", "Response stopped") : L10n.text("Ответ готов", "Response ready")
                 let completionID = "turn:" + threadID + ":" + turnID
                 recordUnreadCompletion(threadID: threadID, completionID: completionID)
                 postNotice(threadID: threadID, title: title, identifier: completionID, completionID: completionID)

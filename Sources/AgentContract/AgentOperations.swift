@@ -45,7 +45,7 @@ public struct AgentGenerationRequest: Sendable {
 
 public enum AgentGenerationOutput: Sendable {
     case title(String)
-    case summary(AgentSummary)
+    case summary(AgentSummary, usage: AgentUsage?, seconds: Double)
 }
 
 public struct AgentSummary: Codable, Equatable, Sendable {
@@ -152,8 +152,9 @@ public struct AgentExecutionHandle: Codable, Hashable, Sendable {
     public let context: AgentContext
     public let requestID: UUID
     public let session: AgentSessionReference?
-    public init(context: AgentContext, requestID: UUID, session: AgentSessionReference?) {
-        self.context = context; self.requestID = requestID; self.session = session
+    public let turnID: String?
+    public init(context: AgentContext, requestID: UUID, session: AgentSessionReference?, turnID: String? = nil) {
+        self.context = context; self.requestID = requestID; self.session = session; self.turnID = turnID
     }
 }
 
@@ -166,19 +167,30 @@ public enum AgentCancellation: Sendable { case confirmed, requested, uncertain, 
 /// No implementation may retry execution after uncertain delivery or change agent/account/route.
 public protocol AgentIntegration: Sendable {
     var events: AsyncStream<AgentEvent> { get }
-    func connect() async -> AgentResult<AgentDescriptor>
+    /// Environment required by the existing optimizer process protocol; no credentials are copied.
+    func optimizerEnvironment(home: URL) async -> AgentResult<[String: String]>
+    func connect(_ configuration: AgentConnectionConfiguration) async -> AgentResult<AgentDescriptor>
+    func descriptor() async -> AgentResult<AgentDescriptor>
     func disconnect() async
-    func account() async -> AgentAvailability<AgentAccount>
+    func observe(sessions: [AgentSessionReference]) async
+    func account() async -> AgentResult<AgentAccountInfo>
     func authenticate(_ action: AgentAuthenticationAction) async -> AgentResult<AgentAuthenticationStep>
-    func models() async -> AgentAvailability<[AgentModel]>
-    func limits() async -> AgentAvailability<[AgentLimitWindow]>
+    func models() async -> AgentResult<[AgentModelInfo]>
+    func limits() async -> AgentResult<AccountLimits>
     func configure(_ tools: AgentToolConfiguration, context: AgentContext) async -> AgentResult<Void>
-    /// Creates a session when request.session is nil; app keeps ownership of conversation ID.
+    /// Session preparation is separate so the app can durably link a job before sending work.
+    func prepare(_ request: AgentExecutionRequest) async -> AgentResult<AgentSessionReference>
     func submit(_ request: AgentExecutionRequest) async -> AgentResult<AgentExecutionHandle>
     func cancel(_ execution: AgentExecutionHandle) async -> AgentResult<AgentCancellation>
-    func answer(_ response: AgentUserResponse) async -> AgentResult<Void>
-    func history(_ session: AgentSessionReference, conversation: ConversationID) async -> AgentResult<AgentTranscriptSnapshot>
-    func setArchived(_ archived: Bool, session: AgentSessionReference) async -> AgentResult<Void>
-    /// Bounded input, ephemeral execution, tools disabled and schema validation are mandatory.
-    func generate(_ request: AgentGenerationRequest) async -> AgentResult<AgentGenerationOutput>
+    func answer(_ id: UUID, session: AgentSessionReference, context: AgentContext, response: AgentInteractionResponse) async -> AgentResult<Void>
+    func rejectInteraction(_ id: UUID) async
+    func history(_ session: AgentSessionReference, context: AgentContext) async -> AgentResult<[AgentHistoryTurn]>
+    func summarySource(_ session: AgentSessionReference, context: AgentContext) async -> AgentResult<AgentSummarySource>
+    func rename(_ session: AgentSessionReference, title: String, context: AgentContext) async -> AgentResult<Void>
+    func setArchived(_ archived: Bool, session: AgentSessionReference, context: AgentContext) async -> AgentResult<Void>
+    func delete(_ session: AgentSessionReference, context: AgentContext) async -> AgentResult<Void>
+    /// Callback records the durable dispatch claim after isolation is verified, before any model turn.
+    func generate(_ request: AgentGenerationRequest, environment: AgentGenerationEnvironment,
+                  willStart: @escaping @Sendable () async throws -> Void) async -> AgentResult<AgentGenerationOutput>
+    func cancelGeneration(_ id: UUID) async
 }

@@ -99,7 +99,7 @@ public struct PluginStatus: Codable, Sendable, Equatable {
 /// Protocol v1: a separately installed executable serves a loopback Responses proxy.
 public actor ProviderPluginRuntime {
     private let plugin: ProviderPlugin
-    private let codexHome: URL
+    private let environment: [String: String]
     private var process: Process?
     private var output: Pipe?
     private var errors: Pipe?
@@ -108,9 +108,9 @@ public actor ProviderPluginRuntime {
     private var readyFile: URL?
     private let session: URLSession
 
-    public init(plugin: ProviderPlugin, codexHome: URL = Locations.codexHome) {
+    public init(plugin: ProviderPlugin, environment: [String: String]) {
         self.plugin = plugin
-        self.codexHome = codexHome
+        self.environment = environment
         let config = URLSessionConfiguration.ephemeral
         config.connectionProxyDictionary = [:]
         config.timeoutIntervalForRequest = 2
@@ -131,7 +131,8 @@ public actor ProviderPluginRuntime {
         child.executableURL = executable
         child.arguments = plugin.manifest.arguments + ["--state", root.path, "--ready-file", ready.path,
             "--instance", instance, "--parent", String(ProcessInfo.processInfo.processIdentifier)]
-        var env = ["PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "PYTHONUNBUFFERED": "1", "CODEX_HOME": codexHome.path]
+        var env = environment
+        env["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"; env["PYTHONUNBUFFERED"] = "1"
         for key in ["LANG", "LC_ALL", "SSL_CERT_FILE", "SSL_CERT_DIR", "TMPDIR"] {
             if let value = ProcessInfo.processInfo.environment[key] { env[key] = value }
         }

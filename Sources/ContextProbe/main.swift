@@ -22,7 +22,7 @@ import ContextCore
                     throw ClientFailure("Plugin is not installed")
                 }
                 plugin = installed
-                let process = ProviderPluginRuntime(plugin: installed, codexHome: home)
+                let process = ProviderPluginRuntime(plugin: installed, environment: ["CODEX_HOME": home.path])
                 runtime = process
                 overrides = try installed.providerArguments(endpoint: await process.start())
                 print("Plugin ready: \(installed.manifest.title) \(try await process.status().pluginVersion)")

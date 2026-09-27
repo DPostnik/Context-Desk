@@ -23,6 +23,8 @@ import ContextCore
     private let maximumLineBytes: Int
     private var sequence = 0
     private var generation = UUID()
+    private(set) var accountEpoch = UUID()
+    var isRunning: Bool { process?.isRunning == true }
     private struct PendingRequest { let token: UUID; let thread: String?; let turn: String? }
     private var approvalRequests: [JSONValue: PendingRequest] = [:]
     private var seenApprovalIDs = Set<JSONValue>()
@@ -30,6 +32,7 @@ import ContextCore
     private var timeouts: [String: Task<Void, Never>] = [:]
     private var reader: Task<Void, Never>?
     public private(set) var serverUserAgent: String?
+    private(set) var activeHome: URL?
 
     public init(maximumLineBytes: Int = 32 * 1024 * 1024) {
         self.maximumLineBytes = maximumLineBytes; buffer = JSONLineBuffer(maximumLineBytes: maximumLineBytes)
@@ -42,7 +45,7 @@ import ContextCore
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true,
                                                attributes: [.posixPermissions: 0o700])
         let child = Process(), stdin = Pipe(), stdout = Pipe(), stderr = Pipe()
-        let token = UUID(); generation = token
+        let token = UUID(); generation = token; accountEpoch = UUID()
         child.executableURL = executable
         child.arguments = ["app-server", "--listen", "stdio://", "-c", "cli_auth_credentials_store=\"file\"",
                            "-c", "analytics.enabled=false"] + extraArguments
@@ -71,6 +74,7 @@ import ContextCore
             stderr.fileHandleForReading.readabilityHandler = nil
             throw error
         }
+        activeHome = home.standardizedFileURL
         process = child; input = stdin.fileHandleForWriting; outputPipe = stdout; errorPipe = stderr
         reader = Task { [weak self] in
             for await data in chunks.stream { await self?.ingest(data, token: token) }
@@ -87,6 +91,8 @@ import ContextCore
 
     public func request(_ method: String, params: JSONValue = .object([:]), timeout: UInt64 = 30) async throws -> JSONValue {
         guard process?.isRunning == true else { throw ClientFailure(L10n.text("Codex не подключён", "Codex is not connected")) }
+        if let expected = CodexDispatchContext.epoch, expected != accountEpoch { throw CodexDispatchRejection.stale }
+        if method == "turn/start" || method == "thread/start" { try Task.checkCancellation() }
         sequence += 1; let id = String(sequence)
         return try await withCheckedThrowingContinuation { continuation in
             pending[id] = continuation
@@ -100,6 +106,7 @@ import ContextCore
         }
     }
 
+    func invalidateAccount() { accountEpoch = UUID(); approvalRequests.removeAll() }
     func isCurrent(_ token: UUID) -> Bool { token == generation }
     func answer(id: JSONValue, result: JSONValue, generation token: UUID, requestToken: UUID) throws {
         guard token == generation, approvalRequests[id]?.token == requestToken else { throw CodexPendingInteraction.invalidResponse }
@@ -120,6 +127,7 @@ import ContextCore
                 approvalRequests[id] = PendingRequest(token: token, thread: p["threadId"].string, turn: p["turnId"].string)
             } else { approvalRequests[id] = nil }
         } else if ["account/updated", "account/login/completed", "client/disconnected"].contains(method) {
+            accountEpoch = UUID()
             approvalRequests.removeAll()
         } else if method == "serverRequest/resolved" {
             let id = p["requestId"]
@@ -179,7 +187,7 @@ import ContextCore
     }
     public func stop() {
         let child = process
-        generation = UUID()
+        generation = UUID(); accountEpoch = UUID()
         cleanUp()
         if child?.isRunning == true { child?.terminate() }
     }
@@ -192,6 +200,7 @@ import ContextCore
         for task in timeouts.values { task.cancel() }; timeouts.removeAll()
         let waiting = pending.values; pending.removeAll()
         for c in waiting { c.resume(throwing: ClientFailure(L10n.text("Соединение с Codex закрыто", "The connection to Codex is closed"))) }
+        activeHome = nil
         process = nil; outputPipe = nil; errorPipe = nil
     }
 }

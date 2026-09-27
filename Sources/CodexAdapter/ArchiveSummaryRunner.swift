@@ -41,11 +41,12 @@ public actor ArchiveSummaryRunner {
     }
 
     public func title(firstMessage: String, model: String, route: RequestRoute, executable: URL,
-                      home: URL, workspace: URL, providerArguments: [String]) async throws -> String {
+                      home: URL, workspace: URL, providerArguments: [String],
+                      willStart: @Sendable () async throws -> Void = {}) async throws -> String {
         let input = String(decoding: try JSONEncoder().encode(["firstMessage": firstMessage]), as: UTF8.self)
         let output = try await generate(input: input, instructions: ChatTitle.instructions,
             schema: ChatTitle.schema, model: model, route: route, executable: executable, home: home,
-            workspace: workspace, providerArguments: providerArguments, willStart: {})
+            workspace: workspace, providerArguments: providerArguments, willStart: willStart)
         return try ChatTitle.validate(output.text)
     }
 

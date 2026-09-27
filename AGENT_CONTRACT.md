@@ -6,9 +6,11 @@ validation and conservative delivery tracking. It has no engine transport import
 native method names, arbitrary JSON or permission-answer payloads.
 
 Execution paths use explicit app/native identity mapping (stage 2). Stage 3 is
-in progress: the transport, typed commands/events, native decoders and approval boundary now live in `CodexAdapter`,
-but production does not yet conform to `AgentIntegration`. Stages 4–6 remain planned. In particular, no new interactive Claude support, portable persisted
-history, optimizer compatibility or general plugin installation is delivered.
+implemented: `CodexIntegration` conforms to this contract, and production uses
+`AgentClient` for interactive work, scheduled Codex submissions, history,
+interactions and background generation. Stages 4–6 remain planned. Interactive
+Claude, portable transcript collection/backfill, general optimizer compatibility
+and externally installable agent modules are not delivered by extraction.
 
 ## Evidence and current capability matrix
 
@@ -30,18 +32,19 @@ capability switch.
 | Isolated title/summary | Separate ephemeral runner, bounded recipes, tools disabled, schema checked, pinned version | Unsupported; never delegate to Codex |
 | Models/effort discovery | Supported | Unsupported; configured model string only |
 | Token usage/account limits | Available where exposed by engine | Not normalized by current runner; unsupported, not zero |
-| Browser/workflow registration | Existing Codex configuration | Unsupported by current runner |
+| Browser/workflow registration | App-owned browser launch settings and workflow roots; arbitrary live tool-server registration is explicitly unsupported | Unsupported by current runner |
 | Optimization route | Explicit direct or available Responses plugin; engine-specific configuration | External CLI configuration; neither verified direct nor verified optimizer route |
 | Project permission intent | Standard workspace write/no network/ask; explicitly selected unrestricted/never | Existing runner does not receive `Project.accessMode`; cannot claim either policy |
 
 Evidence: `Sources/ContextDesk/DeskModel.swift`, `JobScheduling.swift`,
 `Sources/ContextCore/Models.swift`, `ClaudeJobRunner.swift`,
 `Sources/CodexAdapter/ArchiveSummaryRunner.swift`, `BrowserConfiguration.swift`, `Sources/ContextCore/ProviderPlugin.swift`
-and `RequestRoute.swift`. Claude runner pins `2.1.260`; isolated Codex generation
-pins `0.158.0-alpha.2.1`. The ordinary Codex connection currently has no equivalent
-runtime version gate. Extraction must establish its compatibility check rather
-than claim that isolated-generation validation covers interactive execution.
-No provider documentation or live-provider tests were needed for this source audit.
+and `RequestRoute.swift`. Claude runner pins `2.1.260`; both interactive and isolated
+Codex paths now require `0.158.0-alpha.2.1`. The installed CLI reports that version.
+The interactive adapter checks the initialize response before advertising capabilities;
+isolated generation additionally verifies its own configuration and empty tool inventory.
+Validation uses synthetic providers; checking the installed version is not a paid/live
+provider execution or installed-app UI acceptance test.
 
 ## Identity and ownership
 
@@ -62,7 +65,9 @@ App orchestration owns project selection, queues, scheduler policy, durable clai
 run history and display. Each adapter instance owns one connection. `submit` starts
 a session when no native session exists; a scheduled Claude result may have no
 session reference. `success(handle)` acknowledges submission, not task completion.
-Events carry the handle to avoid associating parallel work with the selected chat.
+Events carry connection-scoped session references and opaque turn IDs so parallel work
+is never associated through the selected chat. Submission handles additionally carry
+request correlation and account context; completion outcomes are typed.
 Unsupported operations return typed rejections; unavailable engines retain readable
 records without dispatch or fallback.
 
@@ -136,7 +141,7 @@ SwiftPM and the direct compiler fallback both include it.
 The stage-3 command increment extends the dependency check to prohibit native
 transport access and raw RPC dispatch in application/UI targets. The event increment additionally prohibits `JSONValue` and native method literals
 in app/UI sources. The decoder increment also rejects native Codex history/usage/limit
-field access in shared core. Full runtime contract adoption remains separate work. New app-owned UI copy must
+field access in shared core. Full runtime contract adoption is implemented by the final stage-3 increment below. New app-owned UI copy must
 be paired Russian/English when these types are connected to presentation; this
 stage adds no product copy.
 
@@ -189,8 +194,8 @@ or queue handling. Unknown thread-scoped requests are rejected and unknown event
 are ignored. Identical native IDs on another connection cannot receive those events.
 Background titles, summary execution and queue controls also check connection
 availability. Route plugins belonging only to unavailable connections are not started.
-These checks are a temporary orchestration boundary until stage 3 moves native
-protocol handling into the adapter target.
+These identity checks complement the stage-3 adapter, which now owns native
+protocol handling in its separate target.
 
 `transcript:<app-ID>` stores normalized snapshot schema v1, preserving the source
 reference, revision, capture time and completeness. Save/read validates version and
@@ -219,8 +224,9 @@ or installed-app click-through was performed.
 transcript targets do not depend on it. Both SwiftPM and the direct compiler recipe
 include the new target. `CodexConnection` and its JSONL buffer move out of shared
 core. Native transport access is exported only through `NativeProtocol` SPI for
-the diagnostic probe and protocol fixtures. Normal application imports use
-`CodexClient`, which has no arbitrary request method.
+the diagnostic probe and protocol fixtures. At this increment, normal application imports used
+`CodexClient`, which has no arbitrary request method. The final increment below
+replaces those imports with the common `AgentClient` and an adapter composition root.
 
 The client owns account/login/logout and model discovery RPCs, limit fetching,
 workflow registration, session creation/resume/send/interrupt, naming,
@@ -238,11 +244,11 @@ permission/provider encodings move into the same target. App-owned home selectio
 route availability checks, plugin process lifecycle and workflow recipe ownership
 remain with existing orchestration. No credentials or installed engine state move.
 
-This increment deliberately does **not** advertise full stage-3 acceptance:
+Historical scope of the first increment (superseded by subsequent increments):
 the initial event/approval JSON bridge has now been removed by the increment below.
-Several native parsers remain in shared core, and interactive version gating, account
+At that point, native parsers, interactive version gating, account
 revision lifecycle, capability reporting and `AgentIntegration` conformance still
-need implementation. The command DTOs are transitional, not a second portable
+needed implementation. The command DTOs are transitional, not a second portable
 integration contract. No interactive Claude path or offline history is enabled.
 
 Stage-3 command-increment verification (2026-09-27): signed SwiftPM/macOS 26.5
@@ -289,8 +295,9 @@ support for every request type in the provider protocol.
 Native schema evidence: generated locally from Codex CLI `0.158.0-alpha.2.1` with
 `app-server generate-json-schema --experimental`, using a temporary `CODEX_HOME`.
 This inspected the schema only; it neither authenticated nor executed provider
-work. It does not establish interactive runtime version gating. The general
-`AgentIntegration` account-revision/capability lifecycle is still pending.
+work. It does not establish interactive runtime version gating. At this increment the general
+`AgentIntegration` account-revision/capability lifecycle was pending; the final
+increment below implements it.
 
 The transport has one scoped event stream. Its SPI JSON view is reserved for
 isolated runners and diagnostics, avoiding a second unconsumed copy in production.
@@ -323,8 +330,8 @@ it is not itself a Codex transport API.
 The dependency check rejects native Codex history, usage and limit field access
 in core as well as existing app/UI protocol bypasses. Existing decoder fixtures
 now exercise the internal adapter, while migration and queue fixtures construct
-normalized usage values. Full `AgentIntegration` conformance, connection/version
-and capability lifecycle remain pending; stage 3 is still in progress.
+normalized usage values. At this increment, full `AgentIntegration` conformance and connection/version/
+capability lifecycle were pending; the final increment below completes them.
 
 Stage-3 decoder verification (2026-09-27): signed app build passed with
 SwiftPM/macOS 26.5 SDK, followed by 133 passing tests (optional scheduler renderer
@@ -332,3 +339,60 @@ skipped). Source-digest stability and active/duplicate history rejection have
 explicit regression coverage. Bundle source digest/signature, boundary rejection
 fixture, preserved Russian/English pairs and diff checks passed. No live-provider
 or installed-UI acceptance was performed.
+
+
+## Codex extraction: production contract adoption (stage 3, final increment)
+
+`CodexIntegration` implements the Foundation-only `AgentIntegration` protocol.
+`AgentClient` is an engine-independent core convenience layer; only the app's
+composition root imports `CodexAdapter`. The dependency check rejects direct native
+clients/runners, adapter imports elsewhere in app/UI, raw payloads/RPCs and shared-core
+native decoders. `ContextProbe` and protocol fixtures retain diagnostic SPI access.
+
+The concrete contract preserves the shipped application's needs: preparation is
+separate from submission so app chat/job associations are durably saved before a
+turn; normalized history preserves turn boundaries and timing; events preserve
+session/turn identity, unknown usage, typed outcomes, single-use approval handles,
+questions, constrained forms and tool links. A nil native session on submission
+creates one; an existing session must first be prepared under the same account
+revision and route. Empty interactive model IDs explicitly request the engine's
+default, while background recipes require a named model. Portable snapshot storage
+and its schema remain unchanged; collection/backfill still belongs to stage 5.
+
+Capabilities are advertised only for a running, version-compatible connection.
+Account revision rotates at the transport when account events arrive, on explicit
+sign-out and when the process changes. The adapter validates typed permission,
+connection and route intent; the transport independently rechecks the captured
+revision immediately before writing. Late results from an old account are not
+accepted as current catalog/history data. Confirmed logout is allowed to rotate
+its own account revision. Prepared work cannot silently adopt a new account or
+route, and used request UUIDs cannot resend work. Cancellation is scoped to known
+session/turn/account tuples; disconnect or lost acknowledgements remain uncertain.
+
+Generation uses the same contract, explicit source/model/route and a cancellable
+request ID. Each title/summary still runs in a separate ephemeral process with
+pinned version, tool inventory, sandbox and schema checks. The durable summary
+claim runs only after isolation checks and before dispatch. Pre-dispatch cancellation
+does not launch work; account changes stop active generators and pause pending
+summaries for review. Neither failure nor uncertainty triggers a replay or fallback.
+
+The app supplies optimizer endpoints and browser/workflow intent. Codex adapter
+code owns Responses-provider arguments, the optimizer's app-home environment,
+browser launch encoding and executable discovery. Plugin process supervision and
+app workflow/recipe ownership remain in core/application. No existing external
+credentials, engine homes or schedules are copied or changed. Arbitrary runtime
+MCP-server registration is not advertised; the supported browser is configured at
+connection startup. Stage 4 will replace the remaining scheduler engine branch and
+migrate the existing Claude print runner; extraction alone does not fix its sandbox gap.
+
+Final stage-3 validation (2026-09-27): `zsh scripts/build-app.sh` passed with
+SwiftPM/macOS 26.5 SDK, then `zsh scripts/test.sh` and `zsh scripts/test.sh --direct`
+each passed 138 tests (optional scheduler renderer skipped). Existing app fixtures
+now run through the production contract adapter, including parallel chats, queue
+routing, interruption, archive/history, isolated titles/summaries and scheduled
+Codex jobs. Five runtime tests cover incompatible-version shutdown, stale prepared
+work and transport-time account checks, confirmed logout, permission/route rejection,
+duplicate submission, uncertain acknowledgement and cancellation before generation.
+Bundle signature/source digest, dependency rejection fixtures, paired Russian/English
+copy review and diff checks passed. Installed CLI version was checked read-only;
+no live-provider model turn or installed-app UI interaction was performed.

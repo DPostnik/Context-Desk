@@ -1,6 +1,5 @@
 import SwiftUI
 import ContextCore
-import CodexAdapter
 
 struct ActionView: View {
     let action: PendingAction
@@ -50,7 +49,7 @@ struct ActionView: View {
         Text(L10n.text("Этот запрос нельзя подтвердить в приложении. Его можно отклонить и продолжить разговор.", "This request cannot be approved in the app. You can decline it and continue the conversation.")).font(.caption)
     }
     private var declineButton: some View { Button(L10n.text("Отклонить", "Decline")) { submit(.deny) } }
-    private func questionFields(_ fields: [CodexInteraction.Field]) -> some View {
+    private func questionFields(_ fields: [AgentInteraction.Field]) -> some View {
         ForEach(fields) { field in
             Text(field.text).textSelection(.enabled)
             ForEach(field.options, id: \.self) { option in
@@ -60,7 +59,7 @@ struct ActionView: View {
             else { TextField(L10n.text("Твой ответ", "Your answer"), text: binding(field.id)) }
         }
     }
-    private func answerButton(_ fields: [CodexInteraction.Field]) -> some View {
+    private func answerButton(_ fields: [AgentInteraction.Field]) -> some View {
         Button(L10n.text("Ответить", "Submit answer")) {
             guard fields.allSatisfy({ !$0.required || !(answers[$0.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
                 validation = L10n.text("Заполни обязательные поля", "Fill in the required fields"); return
@@ -69,7 +68,7 @@ struct ActionView: View {
         }.buttonStyle(PointerButtonStyle(base: .borderedProminent))
     }
     private func binding(_ id: String) -> Binding<String> { Binding(get: { answers[id] ?? "" }, set: { answers[id] = $0 }) }
-    private func submit(_ value: CodexInteractionResponse) {
+    private func submit(_ value: AgentInteractionResponse) {
         submitting = true
         Task { await model.answer(action, result: value); submitting = false }
     }

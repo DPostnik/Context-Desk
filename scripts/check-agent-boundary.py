@@ -29,6 +29,11 @@ for folder in ['ContextCore', 'ContextDesk', 'ContextTranscript']:
         if folder in ['ContextDesk', 'ContextTranscript']:
             if re.search(r'\bJSONValue\b|"(?:thread|turn|account|item|model|mcpServer|serverRequest)/[^"\n]+"', source):
                 failures.append(f'{path}: native payload/method in application/UI')
+        if folder == 'ContextDesk':
+            if re.search(r'\b(?:CodexClient|ArchiveSummaryRunner|BrowserConfiguration)\b|\.providerArguments\s*\(', source):
+                failures.append(f'{path}: application bypasses AgentIntegration')
+            if path.name != 'AgentIntegrationFactory.swift' and re.search(r'import\s+CodexAdapter', source):
+                failures.append(f'{path}: adapter import outside the composition root')
         if folder == 'ContextCore':
             if re.search(r'\["(?:tokenUsage|inputTokens|cachedInputTokens|outputTokens|rateLimitsByLimitId|rateLimits|durationMs|turns)"\]', source):
                 failures.append(f'{path}: native Codex decoder in shared core')
@@ -42,4 +47,4 @@ if (root / 'Sources/ContextCore/CodexConnection.swift').exists():
     failures.append('Native transport must live in CodexAdapter')
 if failures:
     sys.exit('\n'.join(failures))
-print('AgentContract and Codex command/event boundaries passed (stage 3c).')
+print('AgentContract and Codex command/event boundaries passed (stage 3).')

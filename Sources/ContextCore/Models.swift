@@ -112,16 +112,18 @@ public struct SavedState: Codable, Sendable {
         return true
     }
 }
-/// Server turn boundaries, with locally observed timing as a fallback.
-public struct ResponseTiming: Codable, Sendable, Equatable {
-    public var startedAt: Date?
-    public var completedAt: Date
-    public var durationSeconds: Double?
-    public var tokens: ResponseTokens?
-    public init(startedAt: Date?, completedAt: Date, durationSeconds: Double? = nil, tokens: ResponseTokens? = nil) {
-        self.startedAt = startedAt; self.completedAt = completedAt
-        self.durationSeconds = durationSeconds; self.tokens = tokens
+
+public enum Locations {
+    public static var root: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Context Desk", isDirectory: true)
     }
+    public static var codexHome: URL { root.appendingPathComponent("codex", isDirectory: true) }
+    public static var automations: URL { FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/automations") }
+
+}
+
+extension ResponseTiming {
     public func label(language: AppLanguage = L10n.language) -> String {
         guard let elapsed = durationSeconds ?? startedAt.map({ completedAt.timeIntervalSince($0) }),
               elapsed.isFinite, elapsed >= 0, elapsed < Double(Int.max) else {
@@ -132,93 +134,5 @@ public struct ResponseTiming: Codable, Sendable, Equatable {
             ? L10n.text("\(seconds / 60) мин \(seconds % 60) с", "\(seconds / 60)m \(seconds % 60)s", language: language)
             : L10n.text("\(seconds) с", "\(seconds)s", language: language)
         return L10n.text("Время работы: \(duration)", "Worked for \(duration)", language: language)
-    }
-    public static func apply(_ timing: Self?, to items: inout [TranscriptItem]) {
-        guard let timing, let index = items.lastIndex(where: { $0.kind == "assistant" }) else { return }
-        items[index].timing = timing
-    }
-}
-
-public struct TranscriptItem: Identifiable, Sendable, Equatable {
-    public var id: String
-    public var kind: String
-    public var text: String
-    public var phase: String?
-    public var turnID: String?
-    public var showsAuthor = true
-    public var showsCopyControl = true
-    public var timing: ResponseTiming?
-    public init(id: String, kind: String, text: String, phase: String? = nil, timing: ResponseTiming? = nil) {
-        self.id = id; self.kind = kind; self.text = text; self.phase = phase; self.timing = timing
-    }
-    public static func merge(_ item: Self, into items: inout [Self]) {
-        if let index = items.firstIndex(where: { $0.id == item.id }) {
-            var updated = item
-            updated.timing = item.timing ?? items[index].timing
-            updated.turnID = item.turnID ?? items[index].turnID
-            items[index] = updated
-        } else if item.kind == "user", let index = items.firstIndex(where: {
-            $0.kind == "user" && $0.id.hasPrefix("local-user:") && $0.text == item.text
-        }) {
-            items[index] = item
-        } else { items.append(item) }
-    }
-}
-
-public struct UsageSnapshot: Codable, Sendable, Equatable {
-    public var last: Int?
-    public var window: Int?
-    public var input: Int?
-    public var cached: Int?
-    public var output: Int?
-    public var measuredAt: Date
-    public init(last: Int? = nil, window: Int? = nil, input: Int? = nil, cached: Int? = nil,
-                output: Int? = nil, measuredAt: Date = Date()) {
-        self.last = last; self.window = window; self.input = input
-        self.cached = cached; self.output = output; self.measuredAt = measuredAt
-    }
-    public var contextFraction: Double? {
-        guard let last, let window, last >= 0, window > 0 else { return nil }
-        return min(1, Double(last) / Double(window))
-    }
-    public var uncached: Int? {
-        guard let input, let cached, input >= cached else { return nil }; return input - cached
-    }
-}
-
-public enum Locations {
-    public static var root: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Context Desk", isDirectory: true)
-    }
-    public static var codexHome: URL { root.appendingPathComponent("codex", isDirectory: true) }
-    public static var automations: URL { FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/automations") }
-    public static func codexExecutable() throws -> URL {
-        try codexExecutable(
-            applicationDirectories: ["/Applications", FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications").path],
-            path: ProcessInfo.processInfo.environment["PATH"] ?? ""
-        )
-    }
-
-    static func codexExecutable(applicationDirectories: [String], path: String,
-                                cliDirectories: [String] = ["/opt/homebrew/bin", "/usr/local/bin"]) throws -> URL {
-        // Desktop releases may embed the CLI as a nested app instead of a loose binary.
-        let candidates = applicationDirectories.flatMap { directory in
-            ["ChatGPT.app", "Codex.app"].flatMap { app in
-                ["codex-cli/CodexCLI.app/Contents/MacOS/codex", "codex"].map {
-                    "\(directory)/\(app)/Contents/Resources/\($0)"
-                }
-            }
-        } + cliDirectories.map { "\($0)/codex" } + path.split(separator: ":").filter {
-            $0.hasPrefix("/") // Never resolve an executable relative to the working directory.
-        }.map { "\($0)/codex" }
-        guard let executable = candidates.first(where: {
-            var isDirectory: ObjCBool = false
-            return FileManager.default.fileExists(atPath: $0, isDirectory: &isDirectory)
-                && !isDirectory.boolValue && FileManager.default.isExecutableFile(atPath: $0)
-        }) else {
-            throw ClientFailure(L10n.text("Codex не найден. Установи официальный Codex CLI или приложение ChatGPT/Codex.", "Codex was not found. Install the official Codex CLI or the ChatGPT/Codex app."))
-        }
-        return URL(fileURLWithPath: executable)
     }
 }

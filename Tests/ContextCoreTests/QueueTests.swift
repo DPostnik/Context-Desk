@@ -18,7 +18,7 @@ import ContextCore
         m = json.loads(line)
         if 'id' not in m: continue
         method = m['method']
-        result = {}
+        result = {'userAgent': 'codex/0.158.0-alpha.2.1 fixture'}
         if method == 'turn/start':
             turns += 1
             result = {'turn': {'id': 'v' + str(turns)}}
@@ -30,7 +30,7 @@ import ContextCore
     let connection = CodexConnection()
     try await connection.start(executable: executable, home: folder)
     let store = AppStore(file: folder.appendingPathComponent("state.sqlite"))
-    let model = DeskModel(connection: CodexClient(transport: connection), store: store, summaryExecutable: executable, summaryHome: folder)
+    let model = DeskModel(connection: CodexIntegration(client: CodexClient(transport: connection)), store: store, summaryExecutable: executable, summaryHome: folder)
     model.state.defaultRoute = .direct
     let project = Project(path: folder.path)
     model.state.projects = [project]; model.projectID = project.id; model.chatID = "t"
@@ -52,16 +52,16 @@ import ContextCore
     requests = try await connection.request("test/requests").array
     #expect(requests.filter { $0["method"].string == "turn/interrupt" }.count == 1)
     #expect(requests.filter { $0["method"].string == "turn/start" }.count == 1)
-    model.finishActiveTurn(threadID: "other", turnID: "v1", status: "completed", hasError: false)
+    model.finishActiveTurn(threadID: "other", turnID: "v1", status: .completed, hasError: false)
     #expect(model.busy)
-    model.finishActiveTurn(threadID: "t", turnID: "v1", status: "interrupted", hasError: false)
+    model.finishActiveTurn(threadID: "t", turnID: "v1", status: .cancelled, hasError: false)
     for _ in 0..<100 {
         if model.busy && !model.sending { break }
         try await Task.sleep(for: .milliseconds(10))
     }
     #expect(model.items.map(\.text) == ["First", "Third"])
     #expect(model.visibleQueue.map(\.text) == ["Second"])
-    model.finishActiveTurn(threadID: "t", turnID: "v2", status: "completed", hasError: false)
+    model.finishActiveTurn(threadID: "t", turnID: "v2", status: .completed, hasError: false)
     for _ in 0..<100 {
         if model.busy && !model.sending { break }
         try await Task.sleep(for: .milliseconds(10))
@@ -71,13 +71,13 @@ import ContextCore
     model.draft = "Keep for later"
     await model.send()
     await model.interrupt()
-    model.finishActiveTurn(threadID: "t", turnID: "v3", status: "interrupted", hasError: false)
+    model.finishActiveTurn(threadID: "t", turnID: "v3", status: .cancelled, hasError: false)
     #expect(model.queuePaused)
     #expect(model.visibleQueue.map(\.text) == ["Keep for later"])
     try await store.save(model.state)
     let restored = try await store.load()
     #expect(restored.queuedMessages == model.state.queuedMessages)
-    #expect(DeskModel(connection: CodexClient(transport: connection), store: store, summaryExecutable: executable, summaryHome: folder).queuePaused)
+    #expect(DeskModel(connection: CodexIntegration(client: CodexClient(transport: connection)), store: store, summaryExecutable: executable, summaryHome: folder).queuePaused)
     await model.sendQueuedMessageNow(try #require(model.visibleQueue.first?.id))
     for _ in 0..<100 {
         if model.busy && !model.sending { break }
@@ -85,7 +85,7 @@ import ContextCore
     }
     model.draft = "Wait after failure"
     await model.send()
-    model.finishActiveTurn(threadID: "t", turnID: "v4", status: "failed", hasError: true)
+    model.finishActiveTurn(threadID: "t", turnID: "v4", status: .failed, hasError: true)
     #expect(model.queuePaused)
     #expect(model.visibleQueue.map(\.text) == ["Wait after failure"])
     await connection.stop()
@@ -107,7 +107,7 @@ private func parallelChatFixture() throws -> (URL, URL) {
         m = json.loads(line)
         if 'id' not in m: continue
         method = m['method']
-        result = {}
+        result = {'userAgent': 'codex/0.158.0-alpha.2.1 fixture'}
         if method == 'test/requests': result = list(requests)
         else: requests.append(m)
         if method == 'thread/start': result = {'thread': {'id': 'new-thread'}}
@@ -143,7 +143,7 @@ private func parallelChatFixture() throws -> (URL, URL) {
     defer { try? FileManager.default.removeItem(at: folder) }
     let connection = CodexConnection()
     try await connection.start(executable: executable, home: folder)
-    let model = DeskModel(connection: CodexClient(transport: connection), store: AppStore(file: folder.appendingPathComponent("state.sqlite")),
+    let model = DeskModel(connection: CodexIntegration(client: CodexClient(transport: connection)), store: AppStore(file: folder.appendingPathComponent("state.sqlite")),
                           summaryExecutable: executable, summaryHome: folder)
     let a = Project(path: folder.appendingPathComponent("a").path)
     let b = Project(path: folder.appendingPathComponent("b").path)
@@ -170,10 +170,10 @@ private func parallelChatFixture() throws -> (URL, URL) {
     model.draft = "A queued"; await model.send()
     await model.interrupt()
     model.selectProject(b.id); model.chatID = "b"
-    model.finishActiveTurn(threadID: "a", turnID: "a-1", status: "interrupted", hasError: false)
+    model.finishActiveTurn(threadID: "a", turnID: "a-1", status: .cancelled, hasError: false)
     #expect(model.busy)
     #expect(!model.queuePaused)
-    model.finishActiveTurn(threadID: "b", turnID: "b-1", status: "completed", hasError: false)
+    model.finishActiveTurn(threadID: "b", turnID: "b-1", status: .completed, hasError: false)
     for _ in 0..<100 {
         if model.busy && !model.sending { break }
         try await Task.sleep(for: .milliseconds(5))
@@ -211,7 +211,7 @@ private func parallelChatFixture() throws -> (URL, URL) {
     defer { try? FileManager.default.removeItem(at: folder) }
     let connection = CodexConnection()
     try await connection.start(executable: executable, home: folder)
-    let model = DeskModel(connection: CodexClient(transport: connection), store: AppStore(file: folder.appendingPathComponent("state.sqlite")),
+    let model = DeskModel(connection: CodexIntegration(client: CodexClient(transport: connection)), store: AppStore(file: folder.appendingPathComponent("state.sqlite")),
                           summaryExecutable: executable, summaryHome: folder)
     let project = Project(path: folder.path)
     model.state.projects = [project]; model.projectID = project.id
@@ -229,7 +229,7 @@ private func parallelChatFixture() throws -> (URL, URL) {
     await first.value
     let requests = try await connection.request("test/requests").array
     #expect(requests.filter { $0["method"].string == "turn/interrupt" }.map { $0["params"]["threadId"].string } == ["a"])
-    model.finishActiveTurn(threadID: "a", turnID: "a-1", status: "interrupted", hasError: false)
+    model.finishActiveTurn(threadID: "a", turnID: "a-1", status: .cancelled, hasError: false)
     #expect(model.busy)
     #expect(model.isBusy(threadID: "b"))
     await connection.stop()
@@ -241,7 +241,7 @@ private func parallelChatFixture() throws -> (URL, URL) {
     let connection = CodexConnection()
     try await connection.start(executable: executable, home: folder)
     let store = AppStore(file: folder.appendingPathComponent("state.sqlite"))
-    let model = DeskModel(connection: CodexClient(transport: connection), store: store, summaryExecutable: executable, summaryHome: folder)
+    let model = DeskModel(connection: CodexIntegration(client: CodexClient(transport: connection)), store: store, summaryExecutable: executable, summaryHome: folder)
     let project = Project(path: folder.path)
     model.state.projects = [project]; model.projectID = project.id
     model.state.defaultRoute = .direct; model.connected = true; model.authenticated = true
@@ -305,7 +305,7 @@ private func parallelChatFixture() throws -> (URL, URL) {
     let connection = CodexConnection()
     try await connection.start(executable: executable, home: folder)
     let store = AppStore(file: folder.appendingPathComponent("state.sqlite"))
-    let model = DeskModel(connection: CodexClient(transport: connection), store: store, summaryExecutable: executable, summaryHome: folder)
+    let model = DeskModel(connection: CodexIntegration(client: CodexClient(transport: connection)), store: store, summaryExecutable: executable, summaryHome: folder)
     let project = Project(path: folder.path)
     model.state.projects = [project]; model.projectID = project.id
     model.state.defaultRoute = .direct; model.connected = true; model.authenticated = true

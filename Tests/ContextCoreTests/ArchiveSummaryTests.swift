@@ -182,7 +182,7 @@ func summaryRunnerRoutesAndFailsClosed(mode: String) async throws {
     let connection = CodexConnection()
     try await connection.start(executable: executable, home: home)
     let store = AppStore(file: root.appendingPathComponent("metadata.sqlite"))
-    let model = DeskModel(connection: CodexClient(transport: connection), store: store, pluginDirectory: root.appendingPathComponent("plugins"),
+    let model = DeskModel(connection: CodexIntegration(client: CodexClient(transport: connection)), store: store, pluginDirectory: root.appendingPathComponent("plugins"),
                           summaryResources: skills, summaryExecutable: executable, summaryHome: home)
     let project = Project(path: root.path)
     model.state.projects = [project]
@@ -241,7 +241,7 @@ func summaryRunnerRoutesAndFailsClosed(mode: String) async throws {
     var state = SavedState(); state.projects = [project]; state.chats = [chat]
     var record = ArchiveSummaryRecord(threadID: chat.id, projectID: project.id); record.status = .generating
     try await store.saveArchivingChat(state, summary: record)
-    let model = DeskModel(connection: CodexClient(transport: connection), store: store, pluginDirectory: root.appendingPathComponent("plugins"),
+    let model = DeskModel(connection: CodexIntegration(client: CodexClient(transport: connection)), store: store, pluginDirectory: root.appendingPathComponent("plugins"),
                           summaryResources: skills, summaryExecutable: executable, summaryHome: home)
     model.state = try await store.load(); model.connected = true; model.authenticated = true
     await model.restoreSummaryQueue()
@@ -319,7 +319,7 @@ func chatTitleRunnerPreservesRouteAndIsolation(mode: String) async throws {
     let connection = CodexConnection()
     try await connection.start(executable: executable, home: root)
     let file = root.appendingPathComponent("state.sqlite"), store = AppStore(file: root.appendingPathComponent("state.sqlite"))
-    let model = DeskModel(connection: CodexClient(transport: connection), store: store, pluginDirectory: root.appendingPathComponent("plugins"),
+    let model = DeskModel(connection: CodexIntegration(client: CodexClient(transport: connection)), store: store, pluginDirectory: root.appendingPathComponent("plugins"),
                           summaryExecutable: executable, summaryHome: root)
     let project = Project(path: root.path)
     model.state.projects = [project]

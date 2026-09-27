@@ -80,19 +80,6 @@ public enum AgentExecutionOutcome: String, Codable, Sendable {
     public var permitsAutomaticReplay: Bool { false }
 }
 
-public enum AgentEvent: Sendable {
-    case connected(AgentDescriptor)
-    case disconnected(AgentFailure)
-    case accountChanged(AgentAccount)
-    case item(AgentExecutionHandle, AgentTranscriptItem)
-    case textDelta(AgentExecutionHandle, itemID: String, text: String)
-    case approval(AgentApproval)
-    case question(AgentQuestion)
-    case interactionResolved(AgentInteractionID)
-    case usage(AgentExecutionHandle, AgentAvailability<AgentUsage>)
-    case finished(AgentExecutionHandle, AgentExecutionOutcome)
-}
-
 /// Common conservative delivery semantics, independent of either native protocol.
 /// Adapters persist/notify dispatch before sending bytes; losing an acknowledgement is uncertain.
 public struct AgentDeliveryTracker: Sendable {

@@ -2,63 +2,23 @@ import Foundation
 import AgentContract
 import ContextCore
 
-/// Transitional typed events; native payloads never cross into application/UI code.
-public struct CodexEvent: Sendable {
-    public let session: AgentSessionReference?
-    public let payload: Payload
-    public enum Payload: Sendable {
-        case accountChanged(error: String?)
-        case limitsChanged, disconnected, interactionsReset
-        case diagnostic(String)
-        case interaction(CodexInteraction)
-        case resolved(UUID)
-        case usage(turn: String?, total: TokenCounters?, snapshot: UsageSnapshot)
-        case started(turn: String)
-        case completed(CodexTurnCompletion)
-        case item(TranscriptItem)
-        case delta(turn: String?, item: String, text: String)
-    }
-}
+public typealias CodexEvent = AgentEvent
+public typealias CodexInteraction = AgentInteraction
+public typealias CodexInteractionResponse = AgentInteractionResponse
+public typealias CodexTurnCompletion = AgentTurnCompletion
 
-public struct CodexTurnCompletion: Sendable {
-    public let id: String
-    public let status: String?
-    public let hasError: Bool
-    public let error: String?
-    private let history: CodexHistoryTurn
+extension AgentTurnCompletion {
     init(_ raw: JSONValue, id: String) {
-        self.id = id; status = raw["status"].string; hasError = raw["error"] != .null
-        error = raw["error"]["message"].string; history = CodexHistoryTurn(raw)
+        let status: AgentExecutionOutcome
+        switch raw["status"].string {
+        case "completed": status = raw["error"] == .null ? .completed : .failed
+        case "interrupted": status = .cancelled
+        case "failed": status = .failed
+        default: status = .uncertain
+        }
+        self.init(id: id, status: status, hasError: raw["error"] != .null,
+                  error: raw["error"]["message"].string, history: CodexHistoryTurn(raw))
     }
-    public func timing(fallback: ResponseTiming) -> ResponseTiming { history.timing(fallback: fallback) ?? fallback }
-}
-
-public struct CodexInteraction: Identifiable, Sendable {
-    public let id: UUID
-    public let session: AgentSessionReference
-    public let turn: String?
-    public let kind: Kind
-    public let reason: String?
-    /// Literal diagnostic evidence for presentation, never a response template.
-    public let details: String
-    public enum Kind: Sendable {
-        case approval(canAllow: Bool)
-        case questions([Field])
-        case form(message: String, fields: [Field])
-        case link(message: String, url: URL)
-        case unsupported(message: String)
-    }
-    public struct Field: Identifiable, Sendable {
-        public let id: String
-        public let text: String
-        public let options: [String]
-        public let secret: Bool
-        public let required: Bool
-    }
-}
-
-public enum CodexInteractionResponse: Sendable {
-    case allowOnce, deny, answers([String: String]), completed
 }
 
 // Kept solely in the adapter. UUIDs are single-use handles, never native request IDs.

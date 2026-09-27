@@ -2,7 +2,7 @@ import Foundation
 import AgentContract
 import ContextCore
 
-/// Typed command/event boundary. Full AgentIntegration adoption remains stage-3 work.
+/// Native typed driver used by CodexIntegration and protocol diagnostics.
 public actor CodexClient {
     let transport: CodexConnection
     public nonisolated let events: AsyncStream<CodexEvent>
@@ -53,8 +53,9 @@ public actor CodexClient {
     public func limits() async throws -> AccountLimits {
         CodexDecoding.accountLimits(response: try await transport.request("account/rateLimits/read"))
     }
-    public func registerWorkflows(at directory: URL) async throws {
-        _ = try await transport.request("skills/extraRoots/set", params: .object(["extraRoots": .array([.string(directory.path)])]))
+    public func registerWorkflows(at directory: URL) async throws { try await registerWorkflows(at: [directory]) }
+    func registerWorkflows(at directories: [URL]) async throws {
+        _ = try await transport.request("skills/extraRoots/set", params: .object(["extraRoots": .array(directories.map { .string($0.path) })]))
     }
 
     public func createSession(projectPath: String, access: AccessMode, model: String, route: RequestRoute) async throws -> AgentSessionReference {
@@ -134,22 +135,7 @@ public actor CodexClient {
 
 }
 
-public struct CodexAccount: Sendable {
-    public let authenticated: Bool
-    public let plan: String?
-}
-
-public struct CodexModel: Hashable, Sendable {
-    public let id: String
-    public let displayName: String
-    public let isDefault: Bool
-    public let defaultEffort: String
-    public let efforts: [String]
-
-    public init(id: String, displayName: String, isDefault: Bool = false, defaultEffort: String = "", efforts: [String] = []) {
-        self.id = id; self.displayName = displayName; self.isDefault = isDefault
-        self.defaultEffort = defaultEffort; self.efforts = efforts
-    }
+extension AgentModelInfo {
     init?(_ value: JSONValue) {
         guard let id = value["model"].string, !id.isEmpty else { return nil }
         self.init(id: id, displayName: value["displayName"].string ?? id,
@@ -158,24 +144,15 @@ public struct CodexModel: Hashable, Sendable {
                   efforts: value["supportedReasoningEfforts"].array.compactMap { $0["reasoningEffort"].string })
     }
 }
-
-public struct CodexHistoryTurn: Sendable {
-    public let id: String?
-    public let items: [TranscriptItem]
-    private let startedAt: Date?
-    private let completedAt: Date?
-    private let duration: Double?
-
+extension AgentHistoryTurn {
     init(_ turn: JSONValue) {
-        id = turn["id"].string
-        items = turn["items"].array.compactMap(CodexDecoding.transcriptItem)
-        startedAt = turn["startedAt"].int.map { Date(timeIntervalSince1970: Double($0)) }
-        completedAt = turn["completedAt"].int.map { Date(timeIntervalSince1970: Double($0)) }
-        duration = turn["durationMs"].int.flatMap { $0 >= 0 ? Double($0) / 1_000 : nil }
-    }
-    public func timing(fallback: ResponseTiming?) -> ResponseTiming? {
-        guard let completedAt = completedAt ?? fallback?.completedAt else { return nil }
-        return ResponseTiming(startedAt: startedAt ?? fallback?.startedAt, completedAt: completedAt,
-                              durationSeconds: duration ?? fallback?.durationSeconds, tokens: fallback?.tokens)
+        self.init(id: turn["id"].string, items: turn["items"].array.compactMap(CodexDecoding.transcriptItem),
+                  startedAt: turn["startedAt"].int.map { Date(timeIntervalSince1970: Double($0)) },
+                  completedAt: turn["completedAt"].int.map { Date(timeIntervalSince1970: Double($0)) },
+                  duration: turn["durationMs"].int.flatMap { $0 >= 0 ? Double($0) / 1_000 : nil })
     }
 }
+
+public typealias CodexAccount = AgentAccountInfo
+public typealias CodexModel = AgentModelInfo
+public typealias CodexHistoryTurn = AgentHistoryTurn

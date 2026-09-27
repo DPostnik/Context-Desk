@@ -20,7 +20,7 @@ private func fixture() throws -> (URL, URL) {
         m = json.loads(line)
         method = m.get("method")
         if method == "initialize":
-            emit({"id": m["id"], "result": {"userAgent": "fixture"}})
+            emit({"id": m["id"], "result": {"userAgent": "codex/0.158.0-alpha.2.1 fixture"}})
         elif method == "test/history":
             payload = (json.dumps({"id": m["id"], "result": {"text": "x" * (8 * 1024 * 1024)}}) + "\n").encode()
             for offset in range(0, len(payload), 1024):
@@ -50,9 +50,9 @@ private func fixture() throws -> (URL, URL) {
     let (folder, executable) = try fixture()
     defer { try? FileManager.default.removeItem(at: folder) }
     let client = CodexConnection()
-    let model = DeskModel(connection: CodexClient(transport: client), store: AppStore(file: folder.appendingPathComponent("state.sqlite")))
+    let model = DeskModel(connection: CodexIntegration(client: CodexClient(transport: client)), store: AppStore(file: folder.appendingPathComponent("state.sqlite")))
     await model.refreshAccount()
-    #expect(model.error == "Codex не подключён")
+    #expect(model.error == L10n.text("Движок недоступен. Подключись заново.", "The engine is unavailable. Reconnect."))
 
     try await client.start(executable: executable, home: folder)
     await model.refreshAccount()
@@ -64,7 +64,7 @@ private func fixture() throws -> (URL, URL) {
 
     await client.stop()
     await model.refreshAccount()
-    #expect(model.error == "Codex не подключён")
+    #expect(model.error == L10n.text("Движок недоступен. Подключись заново.", "The engine is unavailable. Reconnect."))
 }
 
 @Test func fragmentedRepliesAndExplicitApproval() async throws {

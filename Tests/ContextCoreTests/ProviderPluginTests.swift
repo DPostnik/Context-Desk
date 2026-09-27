@@ -95,7 +95,7 @@ func pluginRuntimeChecksProtocolAndIdentityAndStops(fault: String) async throws 
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let directory = try writePlugin(in: root, fault: fault)
-    let runtime = ProviderPluginRuntime(plugin: try ProviderPlugin(directory: directory), codexHome: root.appendingPathComponent("private-home"))
+    let runtime = ProviderPluginRuntime(plugin: try ProviderPlugin(directory: directory), environment: ["CODEX_HOME": root.appendingPathComponent("private-home").path])
     if fault.isEmpty {
         let endpoint = try await runtime.start()
         #expect(endpoint.host == "127.0.0.1")
@@ -140,8 +140,8 @@ func pluginRuntimeChecksProtocolAndIdentityAndStops(fault: String) async throws 
 @Test func twoProviderProcessesHaveIndependentLifetimes() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
-    let first = ProviderPluginRuntime(plugin: try ProviderPlugin(directory: writePlugin(in: root, id: "first")), codexHome: root.appendingPathComponent("home"))
-    let second = ProviderPluginRuntime(plugin: try ProviderPlugin(directory: writePlugin(in: root, id: "second")), codexHome: root.appendingPathComponent("home"))
+    let first = ProviderPluginRuntime(plugin: try ProviderPlugin(directory: writePlugin(in: root, id: "first")), environment: ["CODEX_HOME": root.appendingPathComponent("home").path])
+    let second = ProviderPluginRuntime(plugin: try ProviderPlugin(directory: writePlugin(in: root, id: "second")), environment: ["CODEX_HOME": root.appendingPathComponent("home").path])
     do {
         let firstURL = try await first.start()
         let secondURL = try await second.start()

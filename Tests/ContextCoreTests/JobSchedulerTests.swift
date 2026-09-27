@@ -111,7 +111,7 @@ private func jobFixture() -> ManagedJob {
         m=json.loads(line)
         if 'id' not in m: continue
         method=m['method']
-        result={}
+        result={'userAgent':'codex/0.158.0-alpha.2.1 fixture'}
         if method=='thread/start': result={'thread':{'id':'scheduled-thread'}}
         if method=='turn/start': result={'turn':{'id':'scheduled-turn'}}
         if method=='test/requests': result=requests
@@ -121,7 +121,7 @@ private func jobFixture() -> ManagedJob {
     try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
     let connection = CodexConnection(); try await connection.start(executable: executable, home: root)
     let store = JobStore(file: root.appendingPathComponent("jobs.json"))
-    let model = DeskModel(connection: CodexClient(transport: connection), store: AppStore(file: root.appendingPathComponent("state.sqlite")), jobStore: store)
+    let model = DeskModel(connection: CodexIntegration(client: CodexClient(transport: connection)), store: AppStore(file: root.appendingPathComponent("state.sqlite")), jobStore: store)
     let project = Project(path: root.path); model.state.projects = [project]; model.projectID = project.id
     model.chatID = "visible-chat"; model.draft = "Keep my draft"; model.connected = true; model.authenticated = true
     model.schedulerReady = true
@@ -142,7 +142,7 @@ private func jobFixture() -> ManagedJob {
     #expect(conversation.id != "scheduled-thread")
     await model.launchJob(job.id)
     #expect(model.jobLedger.runs.count == 1)
-    model.finishActiveTurn(threadID: conversation.id, turnID: "scheduled-turn", status: "completed", hasError: false)
+    model.finishActiveTurn(threadID: conversation.id, turnID: "scheduled-turn", status: .completed, hasError: false)
     for _ in 0..<100 { if model.jobLedger.runs.first?.status == .completed { break }; try await Task.sleep(for: .milliseconds(10)) }
     #expect(model.jobLedger.runs.first?.status == .completed)
     await model.stopScheduler(); await connection.stop()
@@ -198,19 +198,19 @@ private func jobFixture() -> ManagedJob {
     for line in sys.stdin:
         m=json.loads(line)
         if 'id' not in m: continue
-        method=m['method']; result={}
+        method=m['method']; result={'userAgent':'codex/0.158.0-alpha.2.1 fixture'}
         if method=='thread/start': result={'thread':{'id':'uncertain-thread'}}
         if method=='turn/start':
             starts+=1
             # A malformed acknowledgement leaves delivery unconfirmed.
-            result={}
+            result={'userAgent':'codex/0.158.0-alpha.2.1 fixture'}
         if method=='test/count': result={'starts':starts}
         print(json.dumps({'id':m['id'],'result':result}),flush=True)
     """#.utf8).write(to: executable)
     try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
     let connection = CodexConnection(); try await connection.start(executable: executable, home: root)
     let store = JobStore(file: root.appendingPathComponent("jobs.json"))
-    let model = DeskModel(connection: CodexClient(transport: connection), store: AppStore(file: root.appendingPathComponent("state.sqlite")), jobStore: store)
+    let model = DeskModel(connection: CodexIntegration(client: CodexClient(transport: connection)), store: AppStore(file: root.appendingPathComponent("state.sqlite")), jobStore: store)
     let project = Project(path: root.path); model.state.projects = [project]; model.connected = true; model.authenticated = true; model.schedulerReady = true
     var job = jobFixture(); job.projectID = project.id
     #expect(await model.saveJob(job))

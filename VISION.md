@@ -4,7 +4,7 @@ Date: 2026-09-25; revised 2026-09-27.
 
 Source: agreed product direction, audit of version 0.2.1 at `a6d5b2c`, and user request to update the plan.
 
-Status: accepted direction and revised implementation plan. Stages 1–2 provide the typed contract foundation, capability matrix, app conversation identities and persistence migration. Stage 3 is in progress: Codex transport, typed commands/events and approval encoding now live in a separate adapter target. Shared native decoders now live in the adapter; full contract adoption remains; stages 4–6 are planned. See [AGENT_CONTRACT.md](AGENT_CONTRACT.md) for boundaries and acceptance evidence.
+Status: accepted direction and revised implementation plan. Stages 1–3 are implemented: the typed contract, identity migration and complete in-process Codex extraction now serve production paths. Codex connection/version/account lifecycle, commands, events, permissions, configuration and isolated generation run through `AgentIntegration`. Stages 4–6 remain planned. See [AGENT_CONTRACT.md](AGENT_CONTRACT.md) for boundaries and acceptance evidence.
 
 ## Purpose
 
@@ -100,7 +100,7 @@ External schedule definitions are imported only on explicit selection. Imports r
 
 Currently shipped:
 
-- A native SwiftUI/AppKit client backed by Codex, with app-dedicated credentials and state.
+- A native SwiftUI/AppKit client backed by Codex through `AgentIntegration`, with app-dedicated credentials/state and a pinned runtime version. Native protocol, permission encoding and engine configuration live in `CodexAdapter`.
 - Projects, chat navigation, drafts, queues, archive, notifications and usage displays.
 - Stable app conversation IDs with explicit agent/connection/native-session mapping; legacy associations migrate atomically without renaming keys. Transcript snapshot storage has a versioned schema; collection/backfill remains planned.
 - Process-based provider plugins for compatible Responses request routes inside Codex, including the optional Headroom integration.
@@ -110,7 +110,6 @@ Currently shipped:
 
 Not yet implemented:
 
-- Complete Codex extraction and runtime adoption of the new engine-independent contract; commands, events and approval handling are extracted, while full contract conformance remains to migrate.
 - Interactive Claude Code sessions and agent selection for chats; the existing job-only adapter is not full interactive support.
 - App-owned portable transcripts and cross-agent handoffs.
 - Portable routine definitions and execution mappings.
@@ -120,11 +119,11 @@ Existing provider plugins are the starting point for the optimization layer. The
 
 ## Implementation plan
 
-Stages 1–2 are implemented. Stage 3 is in progress; stages 4–6 remain planned. Each stage should preserve current behavior and pass its acceptance checks before the next dependent stage enables new execution paths.
+Stages 1–3 are implemented; stages 4–6 remain planned. Each stage should preserve current behavior and pass its acceptance checks before the next dependent stage enables new execution paths.
 
 ### 1. Define the contract against both existing engines
 
-Status (2026-09-27): contract foundation implemented in the independent `AgentContract` Swift target. [Capability matrix and semantics](AGENT_CONTRACT.md) document both existing execution paths, unsupported operations, identity/route boundaries, cancellation and uncertain delivery. Production is not yet connected to this API; the transitional Codex command extraction is recorded under stage 3. No new execution path is enabled.
+Status (2026-09-27): contract foundation implemented in the independent `AgentContract` Swift target. [Capability matrix and semantics](AGENT_CONTRACT.md) document both existing execution paths, unsupported operations, identity/route boundaries, cancellation and uncertain delivery. Production Codex paths now use this API through the stage-3 adapter; the Claude job runner migrates in stage 4. No new execution path is enabled.
 
 Define typed identities, operations, events, outcomes and capabilities for interactive sessions, scheduled jobs, isolated generation, permissions, history, tools, model discovery and optional metrics. Use the existing Claude job path to challenge assumptions inherited from Codex before stabilizing the API. Keep connection/account selection separate from optimization routes.
 
@@ -140,7 +139,7 @@ Acceptance: legacy data loads with the original Codex association; identical nat
 
 ### 3. Extract the complete Codex integration
 
-Status (2026-09-27): in progress. The first extraction increment introduces `CodexAdapter` with the transport, JSONL buffering, isolated generation, browser launch settings and native permission/provider encodings. App account/model/history/session commands and scheduled interruption now use typed `CodexClient` methods with connection-scoped session references. Native transport access requires a diagnostic SPI; the dependency check rejects transport access and raw RPC dispatch in app/UI sources. This is a transitional API, not `AgentIntegration` conformance. The second increment removes event/approval JSON from app/UI: typed events preserve scoped session identity, and single-use interaction handles are validated in both client and transport before sending. Unknown/repeated requests fail closed; unsupported forms and permission scopes cannot be approved. The third increment moves shared native history, summary-source, limits and usage decoders into the adapter, retaining engine-independent values and bounded summary chunking in core. Connection/version/capability lifecycle and end-to-end contract adoption remain before this stage's acceptance is met. No new agent execution path is enabled.
+Status (2026-09-27): implemented. `CodexIntegration` conforms to `AgentIntegration`; app orchestration uses the engine-independent `AgentClient`, and only the composition root imports the adapter. Interactive chats, scheduled Codex submissions, history/archive operations, approvals and isolated title/summary generation use the common contract. The adapter owns native RPC/decoding, optimizer/browser configuration, executable discovery, workflow registration and account/version checks. Shared value types remain Foundation-only; localized presentation and persistence remain in core. Runtime capability/route declarations require Codex `0.158.0-alpha.2.1`; unsupported versions close the connection. Transport-time account revision checks reject stale dispatch, and prepared sessions retain their exact account/route binding. Duplicate request IDs cannot replay work. Account changes invalidate approvals/catalogs, pause queues and require review of pending summaries. Native diagnostics remain behind SPI. Stage 4 still owns the scheduler's multi-engine dispatch refactor; no new Claude execution path or portable transcript backfill is enabled here.
 
 Move RPC calls and event parsing, account/model discovery, permissions, history decoding, metrics, optimization-route configuration, browser/skill registration and isolated generation into the Codex adapter. Application code continues to own navigation, queues, scheduling policy and presentation. Enforce the boundary through separate Swift targets.
 

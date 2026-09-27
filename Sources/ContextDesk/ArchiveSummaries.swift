@@ -1,6 +1,5 @@
 import Foundation
 import ContextCore
-import CodexAdapter
 
 extension DeskModel {
     var summarySkillsDirectory: URL { summaryHome.deletingLastPathComponent().appendingPathComponent("workflows") }
@@ -113,10 +112,10 @@ extension DeskModel {
             for chunk in source.chunks.dropFirst(matching) {
                 try Task.checkCancellation()
                 let id = record.threadID, attempt = record.attempt
-                let part = try await summaryRunner.summarize(chunk: chunk, recipe: recipe, model: record.model,
-                    route: record.route, executable: try summaryExecutable ?? Locations.codexExecutable(),
-                    home: summaryHome, workspace: summarySkillsDirectory.appendingPathComponent(".summary-workspace"),
-                    providerArguments: summaryProviderArguments, language: L10n.language) { [weak self] in
+                let part = try await summaryRunner.summarize(source: sessionForChat(record.threadID), chunk: chunk, model: record.model,
+                    route: record.route, environment: .init(executable: summaryExecutable, home: summaryHome,
+                        workspace: summarySkillsDirectory.appendingPathComponent(".summary-workspace"),
+                        recipeDirectory: summarySkillsDirectory.appendingPathComponent("archive-summary")), language: L10n.language) { [weak self] in
                         guard let self else { throw CancellationError() }
                         try await self.markSummaryGenerating(id: id, attempt: attempt)
                     }
@@ -133,9 +132,9 @@ extension DeskModel {
             record.status = .ready; record.updatedAt = Date()
             try await saveSummaryProgress(record)
         } catch {
-            record.status = (error as? SummaryRunFailure)?.uncertain == true || archiveSummaries[record.threadID]?.status == .generating ? .uncertain : .failed
+            record.status = (error as? AgentOperationFailure)?.uncertain == true || archiveSummaries[record.threadID]?.status == .generating ? .uncertain : .failed
             // A completed, rejected result has a known outcome and can be explicitly regenerated.
-            if let failure = error as? SummaryRunFailure, !failure.uncertain { record.status = .failed }
+            if let failure = error as? AgentOperationFailure, !failure.uncertain { record.status = .failed }
             record.issue = error.localizedDescription; record.updatedAt = Date()
             do { try await saveSummaryProgress(record) }
             catch {

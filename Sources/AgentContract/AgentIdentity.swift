@@ -116,7 +116,8 @@ public struct AgentDescriptor: Sendable {
         guard permissions.accepts(request.permissions) else { return .unsupportedPermissions }
         if case .workspaceWrite(let root, _, _) = request.permissions,
            root != request.projectPath { return .unsupportedPermissions }
-        guard request.projectPath.hasPrefix("/"), !request.model.model.isEmpty else { return .invalidInput }
+        // An empty interactive model explicitly selects the engine default. Isolated generation requires a named model.
+        guard request.projectPath.hasPrefix("/") else { return .invalidInput }
         // Print-mode execution cannot continue a native session.
         if request.session != nil && !capabilities.contains(.interactiveSessions) { return .unsupported(.interactiveSessions) }
         return nil
