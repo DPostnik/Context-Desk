@@ -70,6 +70,9 @@ private func commandFixture() throws -> (URL, URL) {
     #expect(starts[1]["params"]["approvalPolicy"].string == "never")
     #expect(starts[1]["params"]["model"] == .null && starts[1]["params"]["effort"] == .null)
     #expect(calls.first { $0["method"].string == "thread/start" }?["params"]["modelProvider"].string == "openai")
+    for method in ["thread/start", "thread/resume"] {
+        #expect(calls.first { $0["method"].string == method }?["params"]["developerInstructions"].string == AgentAutonomy.instructions())
+    }
     #expect(calls.first { $0["method"].string == "turn/interrupt" }?["params"]["turnId"].string == "native-turn")
     #expect(calls.suffix(3).compactMap { $0["method"].string } == ["thread/archive", "thread/unarchive", "thread/delete"])
     await client.stop()

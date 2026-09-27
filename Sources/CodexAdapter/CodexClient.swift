@@ -62,6 +62,7 @@ public actor CodexClient {
         var params = access.threadParameters
         params["cwd"] = .string(projectPath)
         params["modelProvider"] = .string(route.providerID)
+        params["developerInstructions"] = .string(AgentAutonomy.instructions())
         if !model.isEmpty { params["model"] = .string(model) }
         let result = try await transport.request("thread/start", params: .object(params))
         guard let id = result["thread"]["id"].string, !id.isEmpty else {
@@ -76,6 +77,7 @@ public actor CodexClient {
         params["threadId"] = .string(try nativeID(session))
         params["cwd"] = .string(projectPath)
         params["modelProvider"] = .string(route.providerID)
+        params["developerInstructions"] = .string(AgentAutonomy.instructions())
         _ = try await transport.request("thread/resume", params: .object(params))
     }
     /// Acknowledges submission only. Never retries after any transport failure.

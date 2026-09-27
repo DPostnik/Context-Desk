@@ -162,6 +162,8 @@ private func jobFixture() -> ManagedJob {
     assert '--permission-mode' in sys.argv and sys.argv[sys.argv.index('--permission-mode')+1]=='dontAsk'
     assert '--dangerously-skip-permissions' not in sys.argv
     assert '--no-session-persistence' in sys.argv
+    assert '--append-system-prompt' in sys.argv
+    assert len(sys.argv[sys.argv.index('--append-system-prompt')+1]) > 100
     text=sys.stdin.read()
     print(json.dumps({'type':'result','is_error':False,'result':text,'permission_denials':[{'tool_name':'Bash'}]}))
     """#.utf8).write(to: executable)

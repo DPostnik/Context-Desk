@@ -49,6 +49,7 @@ public actor ClaudeJobRunner: AgentScheduledExecutor {
     }
     public static func arguments(model: String) -> [String] {
         ["--print", "--output-format", "json", "--permission-mode", "dontAsk", "--permission-prompts", "none", "--no-session-persistence"]
+            + ["--append-system-prompt", AgentAutonomy.instructions()]
             + (model.isEmpty ? [] : ["--model", model])
     }
     public func stop() {
