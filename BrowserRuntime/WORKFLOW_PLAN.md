@@ -48,13 +48,13 @@ including fully rendered static pages. These are the first implementation target
    fields and completeness; retain timestamped private evidence. Disable the fast
    contract on drift. Do not silently drop required queries or change freshness
    rules. The historical 20-card count alone is insufficient for rollout.
-5. **Earlier history matching — proposed workflow change.** Build one run-scoped
+5. **Earlier history matching — implemented 2026-09-27.** Build one run-scoped
    lookup from the authorized history sources before JD qualification. Exact
    canonical URL/requisition matches can reuse an existing decision; company/title
    matches are review hints. New/ambiguous roles still get full qualification.
    Keep history changes detectable; never suppress a whole company, stop at the
    first known listing, or call an aggregator date canonical freshness.
-6. **Adoption and end-to-end measurement — pending.** Provide the compact recipe to
+6. **Local skill adoption implemented; end-to-end measurement pending.** Provide the compact recipe to
    the sourcing workflow with its existing coverage and permission rules. Changing
    scheduled jobs is outside this repository's read-only scheduler contract.
    Measure actual available input/output/cached tokens separately from response
@@ -130,3 +130,49 @@ throwaway browser profile. It never reads employer JDs, submits applications or
 adopts the user's browser. The generic lane includes one snapshot for its single
 page transition; both lanes extract the same metadata. It is a traversal
 comparison, not a replay of the complete historical agent job.
+
+## Follow-up: early history lookup — 2026-09-27
+
+Source: user restarted the app and requested continuation. `WorkflowTools/history.py`
+adds a run-scoped read-only evidence index over bank, pipeline, company pages,
+board memory and earlier sourcing records. Source hashes are rechecked before and
+after matching. Exact source URL matches remain evidence; company/title matches
+are hints, never automatic exclusions. Requisition resolution remains explicit.
+
+The local canonical Super-Wiki job-board skill now routes to the helper before JD
+qualification and uses compact card/Next-token extraction when tools are available.
+Scheduled configuration and query registry are unchanged. The full scheduled
+traversal keeps stable-bottom checks; expectedCards is still experimental outside
+the verified two-page pilot. No full job, collection or application is started.
+
+Validation: the signed app build and package signature/source-digest/ZIP checks
+passed in an isolated checkout of the task changes. A prior shared-tree package
+check rejected a digest mismatch after unrelated concurrent Swift edits appeared;
+those edits were preserved and excluded from the isolated verification/commit.
+The helper's 14 tests passed on system Python 3.9, covering read-only
+behavior, exact versus ambiguous identity, legacy table shapes, conflicting bank
+rows, stale/added/removed history, URL identity parameters, bounded evidence and
+exclusive 0600 outputs. RU/EN CLI/README copy reviewed; the canonical skill validator
+passed using an isolated PyYAML 6.0.3 environment. Swift and browser runtime sources
+are unchanged in this follow-up, so their prior suites were not rerun.
+
+Replay: indexed 410 historical files (5,577,771 input bytes) in 0.62 seconds, then
+matched the 1520 enriched archived cards in 0.26 seconds. Results: 1039 company
+history hints, 21 possible company/title matches, 460 no-match results. There were
+no exact bank source-URL matches in this aggregator-card sample. All results remain
+review-required. 141 legacy bank rows lack source URLs; no source URL cells were
+unparsed. The local index is 8.46 MB and the final detailed result is 504,163 bytes;
+these stay off the model boundary unless deliberately inspected. CLI output is a
+small summary, not a dump of the history. This is neither an index-size reduction
+nor a measured token saving. No full JDs were fetched; the avoided-JD count is not measured.
+
+Manual spot checks retained the three previous shortlist priorities as unresolved:
+title variants, legal-suffix aliases and no-match cases did not cause automatic
+exclusion. Raw evidence is private under
+`.runtime/workflow-optimization/history-replay/`.
+
+Super-Wiki's skill/reference and sourcing/project documentation are updated locally.
+Its AGENTS.md prohibits committing/publishing without a separate request, so those
+local changes are not included in this repository's commit/push. Next new runs can
+read the local canonical skill; scheduled job configuration was not edited. Actual
+avoided-JD counts and model tokens still require observing a real authorized run.
