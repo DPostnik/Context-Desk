@@ -17,7 +17,7 @@ import UserNotifications
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         if model?.anyBusy == true {
             let alert = NSAlert(); alert.messageText = L10n.text("Задача ещё выполняется", "A task is still running")
-            alert.informativeText = L10n.text("Выход остановит подключение к Codex. Скрыть окно можно без остановки.", "Quitting will close the Codex connection. You can hide the window without stopping it.")
+            alert.informativeText = L10n.text("Выход остановит подключение к Codex и задания Claude Code. Скрыть окно можно без остановки.", "Quitting will close the Codex connection and stop Claude Code tasks. You can hide the window without stopping them.")
             alert.addButton(withTitle: L10n.text("Остаться", "Stay")); alert.addButton(withTitle: L10n.text("Выйти", "Quit"))
             if alert.runModal() == .alertFirstButtonReturn { return .terminateCancel }
         }

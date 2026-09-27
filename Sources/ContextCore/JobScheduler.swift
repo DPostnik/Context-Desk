@@ -1,0 +1,206 @@
+import Foundation
+import Darwin
+
+public enum JobEngine: String, Codable, CaseIterable, Sendable {
+    case codex, claude
+    public var title: String { self == .codex ? "Codex" : "Claude Code" }
+}
+
+/// Deliberately bounded RRULE support. Unsupported fields are rejected, never ignored.
+public struct JobSchedule: Codable, Equatable, Sendable {
+    public var rule: String
+    public var timeZone: String
+    public var once: Date?
+    public init(rule: String = "FREQ=DAILY;BYHOUR=9;BYMINUTE=0", timeZone: String = TimeZone.current.identifier, once: Date? = nil) {
+        self.rule = rule; self.timeZone = timeZone; self.once = once
+    }
+    public func next(after date: Date) throws -> Date? {
+        guard let zone = TimeZone(identifier: timeZone) else { throw Self.invalid }
+        if let once { return once > date ? once : nil }
+        if rule.isEmpty { return nil }
+        let raw = rule.hasPrefix("RRULE:") ? String(rule.dropFirst(6)) : rule
+        var fields: [String: String] = [:]
+        for part in raw.split(separator: ";", omittingEmptySubsequences: false) {
+            let pair = part.split(separator: "=", omittingEmptySubsequences: false)
+            guard pair.count == 2, fields[String(pair[0])] == nil else { throw Self.invalid }
+            fields[String(pair[0])] = String(pair[1])
+        }
+        let interval = Int(fields["INTERVAL"] ?? "1") ?? 0
+        guard (1...525600).contains(interval) else { throw Self.invalid }
+        if fields["FREQ"] == "MINUTELY" || fields["FREQ"] == "HOURLY" {
+            guard Set(fields.keys).isSubset(of: ["FREQ", "INTERVAL"]) else { throw Self.invalid }
+            return date.addingTimeInterval(Double(interval) * (fields["FREQ"] == "HOURLY" ? 3600 : 60))
+        }
+        guard ["DAILY", "WEEKLY"].contains(fields["FREQ"] ?? ""), interval == 1,
+              Set(fields.keys).isSubset(of: ["FREQ", "INTERVAL", "BYHOUR", "BYMINUTE", "BYSECOND", "BYDAY"]),
+              fields["BYSECOND"] == nil || fields["BYSECOND"] == "0" else { throw Self.invalid }
+        func numbers(_ key: String, range: ClosedRange<Int>) throws -> [Int] {
+            guard let value = fields[key] else { throw Self.invalid }
+            let parts = value.split(separator: ",", omittingEmptySubsequences: false)
+            let values = parts.compactMap { Int($0) }
+            guard !values.isEmpty, values.count == parts.count, values.allSatisfy(range.contains) else { throw Self.invalid }
+            return Array(Set(values)).sorted()
+        }
+        let hours = try numbers("BYHOUR", range: 0...23), minutes = try numbers("BYMINUTE", range: 0...59)
+        let weekdayMap = ["SU": 1, "MO": 2, "TU": 3, "WE": 4, "TH": 5, "FR": 6, "SA": 7]
+        let days = fields["BYDAY"]?.split(separator: ",", omittingEmptySubsequences: false).map(String.init) ?? []
+        guard days.allSatisfy({ weekdayMap[$0] != nil }), fields["FREQ"] != "WEEKLY" || !days.isEmpty else { throw Self.invalid }
+        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = zone
+        var candidates: [Date] = []
+        for hour in hours { for minute in minutes {
+            for day in days.isEmpty ? [nil] : days.map({ weekdayMap[$0] }) {
+                var components = DateComponents(); components.hour = hour; components.minute = minute; components.second = 0; components.weekday = day
+                if let next = calendar.nextDate(after: date, matching: components, matchingPolicy: .nextTime, repeatedTimePolicy: .first) { candidates.append(next) }
+            }
+        } }
+        return candidates.min()
+    }
+    public static var invalid: ClientFailure {
+        ClientFailure(L10n.text("Неподдерживаемое расписание или часовой пояс. Используй минуты/часы с INTERVAL либо DAILY/WEEKLY с BYHOUR, BYMINUTE и BYDAY.", "Unsupported schedule or time zone. Use minutes/hours with INTERVAL, or DAILY/WEEKLY with BYHOUR, BYMINUTE and BYDAY."))
+    }
+}
+
+public struct ManagedJob: Identifiable, Codable, Equatable, Sendable {
+    public var id = UUID()
+    public var name = ""
+    public var prompt = ""
+    public var engine = JobEngine.codex
+    public var projectID: UUID?
+    public var model = ""
+    public var effort = ""
+    public var route = RequestRoute.direct
+    public var schedule = JobSchedule()
+    public var enabled = false
+    public var nextRun: Date?
+    public var source: String?
+    public var sourceDisabled = false
+    public init() {}
+    public func validate() throws {
+        guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, projectID != nil else {
+            throw ClientFailure(L10n.text("Укажи название, задание и проект.", "Enter a name, instructions and project."))
+        }
+        _ = try schedule.next(after: Date())
+        guard !enabled || source == nil || sourceDisabled else {
+            throw ClientFailure(L10n.text("Сначала отключи исходное расписание и подтверди это в редакторе.", "Disable the original schedule first and confirm this in the editor."))
+        }
+    }
+}
+public enum JobRunStatus: String, Codable, Sendable {
+    case starting, running, completed, failed, interrupted, uncertain, blocked
+    public var active: Bool { self == .starting || self == .running }
+    public var title: String {
+        switch self {
+        case .starting: return L10n.text("Запускается", "Starting")
+        case .running: return L10n.text("Выполняется", "Running")
+        case .completed: return L10n.text("Завершено", "Completed")
+        case .failed: return L10n.text("Ошибка", "Failed")
+        case .interrupted: return L10n.text("Остановлено", "Stopped")
+        case .uncertain: return L10n.text("Результат не подтверждён", "Outcome unconfirmed")
+        case .blocked: return L10n.text("Нужны разрешения", "Permissions needed")
+        }
+    }
+}
+public struct JobRun: Identifiable, Codable, Sendable {
+    public var id = UUID()
+    public var jobID: UUID
+    public var engine: JobEngine
+    public var name: String
+    public var started: Date
+    public var finished: Date?
+    public var status: JobRunStatus = .starting
+    public var threadID: String?
+    public var turnID: String?
+    public var output = ""
+}
+public struct JobLedger: Codable, Sendable {
+    public var version = 1
+    public var jobs: [ManagedJob] = []
+    public var runs: [JobRun] = []
+    public init() {}
+}
+
+/// Single process owner plus write-before-dispatch ledger. A failed write never authorizes execution.
+public actor JobStore {
+    private let file: URL
+    private var lock: Int32 = -1
+    private var ledger: JobLedger?
+    public init(file: URL) { self.file = file }
+    deinit { if lock >= 0 { close(lock) } }
+    public func load() throws -> JobLedger {
+        if let ledger { return ledger }
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let fd = open(file.path + ".lock", O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
+        guard fd >= 0 else { throw ClientFailure(L10n.text("Не удалось открыть расписания", "Could not open schedules")) }
+        guard flock(fd, LOCK_EX | LOCK_NB) == 0 else {
+            close(fd); throw ClientFailure(L10n.text("Расписания уже обслуживает другое окно приложения.", "Another app instance already owns the schedules."))
+        }
+        lock = fd
+        do {
+            var value = FileManager.default.fileExists(atPath: file.path) ? try JSONDecoder().decode(JobLedger.self, from: Data(contentsOf: file)) : JobLedger()
+            guard value.version == 1 else { throw JobSchedule.invalid }
+            for index in value.runs.indices where value.runs[index].status.active {
+                value.runs[index].status = .uncertain; value.runs[index].finished = Date()
+                if let job = value.jobs.firstIndex(where: { $0.id == value.runs[index].jobID }) { value.jobs[job].enabled = false }
+            }
+            try commit(value)
+            return value
+        } catch { close(lock); lock = -1; throw error }
+    }
+    private func commit(_ value: JobLedger) throws {
+        let data = try JSONEncoder().encode(value)
+        try data.write(to: file, options: [.atomic, .completeFileProtectionUnlessOpen])
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+        ledger = value
+    }
+    public func save(_ job: ManagedJob, now: Date = Date()) throws -> JobLedger {
+        try job.validate()
+        var value = try load()
+        guard !value.runs.contains(where: { $0.jobID == job.id && $0.status.active }) else { throw Self.busy }
+        var job = job
+        job.nextRun = job.enabled ? try job.schedule.next(after: now) : nil
+        if job.enabled && job.nextRun == nil { job.enabled = false }
+        if let index = value.jobs.firstIndex(where: { $0.id == job.id }) { value.jobs[index] = job } else { value.jobs.append(job) }
+        try commit(value); return value
+    }
+    public func remove(_ id: UUID) throws -> JobLedger {
+        var value = try load()
+        guard !value.runs.contains(where: { $0.jobID == id && $0.status.active }) else { throw Self.busy }
+        value.jobs.removeAll { $0.id == id }; value.runs.removeAll { $0.jobID == id }
+        try commit(value); return value
+    }
+    public func claim(_ id: UUID, manual: Bool, now: Date = Date()) throws -> (ManagedJob, JobRun)? {
+        var value = try load()
+        guard let index = value.jobs.firstIndex(where: { $0.id == id }),
+              value.runs.filter({ $0.status.active }).count < 3,
+              !value.runs.contains(where: { $0.jobID == id && $0.status.active }) else { return nil }
+        let job = value.jobs[index]
+        guard manual || (job.enabled && job.nextRun.map { $0 <= now } == true) else { return nil }
+        try job.validate()
+        let run = JobRun(jobID: id, engine: job.engine, name: job.name, started: now)
+        value.runs.insert(run, at: 0)
+        // No backlog after sleep. Manual runs leave the scheduled occurrence intact.
+        if !manual {
+            value.jobs[index].nextRun = try job.schedule.next(after: now)
+            if value.jobs[index].nextRun == nil { value.jobs[index].enabled = false }
+        }
+        try commit(value); return (job, run)
+    }
+    public func attach(_ id: UUID, thread: String? = nil, turn: String? = nil) throws -> JobLedger {
+        var value = try load()
+        if let i = value.runs.firstIndex(where: { $0.id == id && $0.status.active }) {
+            value.runs[i].threadID = thread; value.runs[i].turnID = turn; value.runs[i].status = .running
+        }
+        try commit(value); return value
+    }
+    public func finish(_ id: UUID, status: JobRunStatus, output: String = "") throws -> JobLedger {
+        var value = try load()
+        if let i = value.runs.firstIndex(where: { $0.id == id && $0.status.active }) {
+            value.runs[i].status = status; value.runs[i].output = output; value.runs[i].finished = Date()
+            if status != .completed, let j = value.jobs.firstIndex(where: { $0.id == value.runs[i].jobID }) { value.jobs[j].enabled = false }
+        }
+        try commit(value); return value
+    }
+    public func release() { ledger = nil; if lock >= 0 { close(lock); lock = -1 } }
+    public static var busy: ClientFailure { ClientFailure(L10n.text("Дождись завершения задания или останови его.", "Wait for the task to finish or stop it.")) }
+}

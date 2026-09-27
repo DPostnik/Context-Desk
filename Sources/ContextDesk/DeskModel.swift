@@ -49,6 +49,13 @@ private struct ChatRunState {
     @Published var archiveViewingChat = false
     @Published var showingJobs = false
     @Published var jobs: [ScheduledJob] = []
+    @Published var jobLedger = JobLedger()
+    @Published var schedulerReady = false
+    let jobStore: JobStore
+    var schedulerTask: Task<Void, Never>?
+    var jobTasks: [UUID: Task<Void, Never>] = [:]
+    var claudeRunners: [UUID: ClaudeJobRunner] = [:]
+    var schedulerStopping = false
     @Published var archiveSummaries: [String: ArchiveSummaryRecord] = [:]
     @Published var summaryActiveThread: String?
     var summaryTask: Task<Void, Never>?
@@ -89,7 +96,7 @@ private struct ChatRunState {
     var busy: Bool { runs[currentRunKey]?.running == true }
     var queuePaused: Bool { runs[currentRunKey]?.queuePaused ?? true }
     var priorityMessageID: String? { runs[currentRunKey]?.priorityMessageID }
-    var anyBusy: Bool { summaryTask != nil || !deletingChatIDs.isEmpty || !archivingChatIDs.isEmpty || runs.values.contains { $0.running || $0.sending } }
+    var anyBusy: Bool { jobLedger.runs.contains { $0.status.active } || summaryTask != nil || !deletingChatIDs.isEmpty || !archivingChatIDs.isEmpty || runs.values.contains { $0.running || $0.sending } }
     func isBusy(threadID: String) -> Bool { runs[threadID]?.running == true }
     private var turnStarts: [String: Date] = [:]
     private var tokenTotals: [String: TokenCounters] = [:]
@@ -116,7 +123,9 @@ private struct ChatRunState {
     init(connection: CodexConnection = CodexConnection(), store: AppStore = AppStore(file: Locations.root.appendingPathComponent("metadata.sqlite")),
          pluginDirectory: URL = PluginCatalog.defaultDirectory,
          summaryResources: URL? = Bundle.main.resourceURL?.appendingPathComponent("Skills"),
-         summaryExecutable: URL? = nil, summaryHome: URL = Locations.codexHome) {
+         summaryExecutable: URL? = nil, summaryHome: URL = Locations.codexHome,
+         jobStore: JobStore = JobStore(file: Locations.root.appendingPathComponent("scheduled-jobs.json"))) {
+        self.jobStore = jobStore
         self.connection = connection
         self.store = store
         self.pluginDirectory = pluginDirectory
@@ -150,6 +159,7 @@ private struct ChatRunState {
             for await event in connection.events { await self?.receive(event) }
         }
         await connect()
+        await startScheduler()
         let settings = await UNUserNotificationCenter.current().notificationSettings()
         notificationStatus = settings.authorizationStatus == .authorized ? L10n.text("Уведомления включены", "Notifications are on") : L10n.text("Уведомления не включены", "Notifications are off")
     }
@@ -605,11 +615,11 @@ private struct ChatRunState {
                       selectedModel: state.model, selectedEffort: effort)
     }
     private func deliver(text: String, project: Project, threadID: String?, localID: String,
-                         selectedModel: String, selectedEffort: String) async {
+                         selectedModel: String, selectedEffort: String, scheduledRun: UUID? = nil, scheduledRoute: RequestRoute? = nil) async {
         let selection = selectionGeneration
-        let visible = threadID == chatID && project.id == projectID
+        let visible = scheduledRun == nil && threadID == chatID && project.id == projectID
         if visible { items.append(TranscriptItem(id: localID, kind: "user", text: text, phase: L10n.text("Отправляется…", "Sending…"))) }
-        let initialKey = threadID ?? currentRunKey
+        let initialKey = scheduledRun.map { "job:" + $0.uuidString } ?? threadID ?? currentRunKey
         var runKey = initialKey
         runs[runKey, default: ChatRunState()].running = true
         runs[runKey, default: ChatRunState()].sending = true
@@ -619,7 +629,7 @@ private struct ChatRunState {
             scheduleQueue(threadID: runKey)
         }
         let access = project.accessMode ?? .standard
-        let route = threadID == nil ? defaultRoute : (state.chats.first { $0.id == threadID }?.route ?? .direct)
+        let route = scheduledRoute ?? (threadID == nil ? defaultRoute : (state.chats.first { $0.id == threadID }?.route ?? .direct))
         do {
             if route != .direct {
                 guard let runtime = pluginRuntimes[route.rawValue], routeIsAvailable(route) else { throw ClientFailure(routeMessage(route)) }
@@ -646,7 +656,9 @@ private struct ChatRunState {
                 loadedThreads.insert(created)
                 var chat = Chat(id: created, projectID: project.id, title: String(text.prefix(60)), model: selectedModel)
                 chat.route = route
-                state.chats.append(chat); persist()
+                if let scheduledRun, let run = jobLedger.runs.first(where: { $0.id == scheduledRun }) { chat.title = run.name }
+                state.chats.append(chat)
+                if scheduledRun != nil { try await store.save(state) } else { persist() }
             }
             guard let id else { throw ClientFailure(L10n.text("Не выбран разговор", "No conversation selected")) }
             if !loadedThreads.contains(id) {
@@ -657,11 +669,23 @@ private struct ChatRunState {
                 _ = try await connection.request("thread/resume", params: .object(resumeParams))
                 loadedThreads.insert(id)
             }
+            if let scheduledRun {
+                jobLedger = try await jobStore.attach(scheduledRun, thread: id)
+                try Task.checkCancellation()
+                guard !schedulerStopping else { throw CancellationError() }
+            }
             var params: [String: JSONValue] = ["threadId": .string(id), "input": .array([.object(["type": .string("text"), "text": .string(text), "text_elements": .array([])])])]
             params.merge(access.turnParameters(projectPath: project.path)) { _, new in new }
             if !selectedModel.isEmpty { params["model"] = .string(selectedModel) }
             if !selectedEffort.isEmpty { params["effort"] = .string(selectedEffort) }
             let result = try await connection.request("turn/start", params: .object(params), timeout: 60)
+            if let scheduledRun {
+                guard let turn = result["turn"]["id"].string else { throw ClientFailure(L10n.text("Не получен ID запуска", "No turn ID received")) }
+                jobLedger = try await jobStore.attach(scheduledRun, thread: id, turn: turn)
+                if Task.isCancelled || schedulerStopping {
+                    _ = try await connection.request("turn/interrupt", params: .object(["threadId": .string(id), "turnId": .string(turn)]))
+                }
+            }
             clearConnectionError()
             setDelivery(localID, phase: L10n.text("Отправлено", "Sent"))
             if let turn = result["turn"]["id"].string, runs[id]?.running == true {
@@ -674,6 +698,7 @@ private struct ChatRunState {
             }
             if let i = state.chats.firstIndex(where: { $0.id == id }) { state.chats[i].updated = Date(); persist() }
         } catch {
+            if let scheduledRun { await finishJob(scheduledRun, status: .uncertain, output: error.localizedDescription) }
             setDelivery(localID, phase: L10n.text("Доставка не подтверждена", "Delivery unconfirmed"))
             self.error = error.localizedDescription + L10n.text(" Сообщение не отправлено повторно.", " The message was not sent again.")
             runs[runKey, default: ChatRunState()].queuePaused = true
@@ -682,9 +707,17 @@ private struct ChatRunState {
             if visible && selectionGeneration == selection && draft.isEmpty { draft = text }
         }
     }
+    func deliverScheduled(_ job: ManagedJob, run: JobRun, project: Project) async {
+        await deliver(text: job.prompt, project: project, threadID: nil, localID: "local-user:" + run.id.uuidString,
+                      selectedModel: job.model, selectedEffort: job.effort, scheduledRun: run.id, scheduledRoute: job.route)
+    }
     func finishActiveTurn(threadID: String?, turnID: String?, status: String?, hasError: Bool) {
         guard let threadID, let turnID else { return }
         completedTurns[threadID + ":" + turnID] = (status, hasError)
+        if let run = jobLedger.runs.first(where: { $0.threadID == threadID && $0.status.active && ($0.turnID == nil || $0.turnID == turnID) }) {
+            let outcome: JobRunStatus = status == "completed" && !hasError ? .completed : status == "interrupted" ? .interrupted : .failed
+            Task { await finishJob(run.id, status: outcome) }
+        }
         guard runs[threadID]?.turnID == turnID else { return }
         runs[threadID, default: ChatRunState()].running = false
         runs[threadID, default: ChatRunState()].turnID = nil
@@ -712,7 +745,9 @@ private struct ChatRunState {
         catch { self.error = error.localizedDescription }
     }
     func refreshJobs() async {
-        jobs = await Task.detached { ScheduledJobs.read(directory: Locations.automations) }.value
+        jobs = await Task.detached {
+            ScheduledJobs.read(directory: Locations.automations) + ScheduledJobs.readClaude(directory: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/scheduled-tasks"))
+        }.value
     }
     func enableNotifications() async {
         do {
@@ -785,6 +820,7 @@ private struct ChatRunState {
         } catch { self.error = error.localizedDescription }
     }
     func shutdown() async {
+        await stopScheduler()
         summaryTask?.cancel()
         await summaryRunner.stop()
         await summaryTask?.value
@@ -812,6 +848,10 @@ private struct ChatRunState {
             await refreshAccount()
         case "account/rateLimits/updated": await refreshLimits()
         case "client/disconnected":
+            connected = false
+            for run in jobLedger.runs where run.engine == .codex && run.status.active {
+                await finishJob(run.id, status: .uncertain, output: L10n.text("Соединение потеряно; повторной отправки не было.", "Connection lost; the task was not sent again."))
+            }
             resetRuns()
             connected = false
             loadedThreads.removeAll(); pending.removeAll(); deltas.removeAll()

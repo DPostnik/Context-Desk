@@ -1,0 +1,26 @@
+# Scheduled jobs
+
+Context Desk owns a local scheduler under the user's authorization of 2026-09-27. Open **Scheduled jobs** to create a task, or select an external definition and import it. Definitions and run history live in `Application Support/Context Desk/scheduled-jobs.json`; original Codex and Claude schedules are never edited.
+
+## Execution
+
+- The app must remain open and the Mac awake. Closing the window keeps it running; Cmd+Q stops scheduling. There is no launchd job or second background service.
+- The scheduler polls every 15 seconds, admits up to three tasks concurrently, and never overlaps runs of the same task. After downtime, each overdue task runs once; missed occurrences are collapsed. Interval schedules restart their interval from dispatch time. Daily/weekly schedules use the stored IANA time zone, including DST.
+- Supported schedules: manual, one-time, `MINUTELY`/`HOURLY` with positive `INTERVAL`, and `DAILY`/`WEEKLY` with `BYHOUR`, `BYMINUTE`, optional zero `BYSECOND` and `BYDAY`. Multiple hours/minutes are supported. Daily/weekly intervals other than one, monthly rules, COUNT/UNTIL and other unimplemented fields are rejected rather than silently simplified.
+- A manual run leaves the next scheduled occurrence intact. Enable/resume computes the next future occurrence; it does not replay the pause interval. Editing/deletion waits for the current run to stop.
+- Every dispatch is recorded atomically before contacting an engine. An exclusive process lock prevents multiple app instances from dispatching the same ledger. Unknown versions/corrupt storage fail closed. Persistence failure stops scheduling.
+- Recovered unfinished runs, ambiguous transport failures and unrecognized engine results are never automatically resent. Their tasks are paused for review. Explicit manual restart remains available. Failed, stopped and permission-blocked runs also pause their schedule.
+
+## Engines and permissions
+
+**Codex:** creates a fresh normal app chat per run, using the task's saved model, effort and route, and the project's current permissions. Existing chat selection and draft remain intact. Approval and user-input requests use the normal chat UI. History links to the resulting chat; deleting that chat removes access to its transcript, not the task's run metadata. The app's dedicated Codex home remains authoritative; external threads, credentials and settings are not imported.
+
+**Claude Code:** uses the installed CLI, pinned to the verified `2.1.260` print JSON protocol. It uses existing Claude authentication and project/user permission rules in place; it does not copy credentials. `dontAsk` and `--permission-prompts none` deny actions requiring new approvals. There is no bypass/auto-approval flag. Permission denials are reported as blocked, and the schedule pauses. Results are retained in the task history, not as resumable Codex chats (`--no-session-persistence`). The runner passes prompts through stdin without a shell, limits each run to one hour and 8 MiB of output, and supports stopping. Full Claude interactive conversation support and further provider isolation are separate work.
+
+## Import
+
+- Codex: reads `~/.codex/automations/*/automation.toml`, including prompt, RRULE, model, effort and candidate project paths. Unsupported schedules must be edited explicitly. An external target thread's history and worktree configuration cannot be carried into the app's dedicated home.
+- Claude: reads the Markdown body of `~/.claude/scheduled-tasks/*/SKILL.md`. The documented file has no schedule, folder or model; the editor requires selecting a project and reviewing these fields. Until a schedule is selected, it is manual-only. The directory name supplies the display name; YAML is not executed or treated as scheduling policy.
+- Imports are paused by default and never enable the external scheduler. Enabling an imported schedule requires the user to confirm they disabled its original schedule in the source app. This confirmation prevents an accidental double schedule; Context Desk cannot verify remote/cloud scheduler state. A manual run is always an explicit action.
+
+Source contracts: [Claude Desktop scheduled tasks](https://code.claude.com/docs/en/desktop-scheduled-tasks), [CLI reference](https://code.claude.com/docs/en/cli-reference), [permission modes](https://code.claude.com/docs/en/permissions). Checked 2026-09-27 against the installed CLI version and help. Real user jobs were not executed as part of development validation.

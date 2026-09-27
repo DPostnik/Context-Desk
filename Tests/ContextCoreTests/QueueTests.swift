@@ -324,6 +324,8 @@ private func parallelChatFixture() throws -> (URL, URL) {
     #expect(!model.canDeleteChat("a"))
     await model.deleteChat("a")
     await archive.value
+    // Restore is intentionally unavailable while the archive summary owns the thread.
+    await model.summaryTask?.value
     #expect(model.selectedChatIsArchived)
     #expect(model.showingArchive && !model.archiveViewingChat)
     #expect(!model.chats.contains { $0.id == "a" })

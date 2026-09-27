@@ -6,7 +6,6 @@ import ContextTranscript
 struct DeskView: View {
     @ObservedObject var model: DeskModel
     @State private var search = ""
-    @State private var selectedJobID: String?
     @State private var renaming: Chat?
     @State private var deleting: Chat?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -154,11 +153,7 @@ struct DeskView: View {
                 if model.showingArchive {
                     ArchiveView(model: model)
                 } else if model.showingJobs {
-                    HSplitView {
-                        List(model.jobs, selection: $selectedJobID) { job in Text(job.name).tag(job.id) }.frame(minWidth: 180, idealWidth: 220, maxWidth: 300)
-                        if let job = model.jobs.first(where: { $0.id == selectedJobID }) { JobDetail(job: job) }
-                        else { EmptyState(icon: "calendar", title: L10n.text("Задачи по расписанию", "Scheduled jobs"), text: L10n.text("Выбери задание слева.", "Select a job on the left.")) }
-                    }
+                    JobsView(model: model)
                 } else if !model.authenticated {
                     EmptyState(icon: "person.crop.circle", title: model.connected ? L10n.text("Войди в аккаунт", "Sign in") : L10n.text("Не удалось подключиться", "Could not connect"),
                                text: model.connected ? model.accountLabel + L10n.text(". Войди через ChatGPT, чтобы начать работу.", ". Sign in with ChatGPT to get started.") : L10n.text("Повтори подключение к Codex, чтобы начать работу.", "Reconnect to Codex to get started."))
@@ -723,7 +718,7 @@ struct JobDetail: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 Text(job.name).font(.title2.bold())
-                Label(L10n.text("Только просмотр · запускает штатный Codex", "Read only · run by the standard Codex scheduler"), systemImage: "eye").foregroundStyle(.secondary)
+                Label(L10n.text("Исходное задание · ещё не управляется Context Desk", "Source task · not yet managed by Context Desk"), systemImage: "eye").foregroundStyle(.secondary)
                 LabeledContent(L10n.text("Состояние", "Status"), value: job.status == "ACTIVE" ? L10n.text("Включено", "Enabled") : job.status == "PAUSED" ? L10n.text("Приостановлено", "Paused") : L10n.text("Неизвестно", "Unknown"))
                 LabeledContent(L10n.text("Тип", "Type"), value: job.kind)
                 VStack(alignment: .leading, spacing: 8) { Text(L10n.text("Расписание", "Schedule")).font(.headline); Text(job.schedule).textSelection(.enabled) }
