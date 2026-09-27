@@ -121,6 +121,8 @@ import ContextTranscript
     var items = (0..<30).map { TranscriptItem(id: "\($0)", kind: "assistant", text: String(repeating: "Строка текста и `код`.\n", count: 100)) }
     items.append(TranscriptItem(id: "code", kind: "assistant", text: "```swift\n" + String(repeating: "x", count: 40_000) + "\n```"))
     view.update(items: items, conversationID: "first", followOutput: true)
+    // AppKit applies the document width during layout, not synchronously in update.
+    view.layoutSubtreeIfNeeded()
     let edits = view.editCount
     for _ in 0..<100 { view.update(items: items, conversationID: "first", followOutput: true) }
     #expect(view.editCount == edits)

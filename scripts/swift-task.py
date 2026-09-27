@@ -118,20 +118,22 @@ def main():
             work = Path(tmp)
             base = [compiler, '-sdk', sdk, '-swift-version', '6', '-target', target, '-parse-as-library', '-I', work, '-I', ROOT / 'Sources/CSQLite', '-L', work]
             base += ['-Onone', '-enable-testing'] if args.task == 'test' else ['-O']
-            modules = [('TOMLDecoder', '.build/checkouts/TOMLDecoder/Sources/TOMLDecoder'), ('ContextCore', 'Sources/ContextCore'), ('ContextTranscript', 'Sources/ContextTranscript')]
+            modules = [('AgentContract', 'Sources/AgentContract'), ('TOMLDecoder', '.build/checkouts/TOMLDecoder/Sources/TOMLDecoder'), ('ContextCore', 'Sources/ContextCore'), ('ContextTranscript', 'Sources/ContextTranscript')]
             if args.task == 'test':
                 modules.append(('ContextDesk', 'Sources/ContextDesk'))
             for name, folder in modules:
                 print(f'Compiling {name}', flush=True)
                 flags = ['-Xfrontend', '-entry-point-function-name', '-Xfrontend', 'ContextDesk_main'] if name == 'ContextDesk' else []
                 run(base + flags + ['-emit-library', '-static', '-emit-module', '-module-name', name, '-emit-module-path', work / (name + '.swiftmodule'), '-o', work / ('lib' + name + '.a')] + sources(folder))
-            libraries = ['-lContextTranscript', '-lContextCore', '-lTOMLDecoder']
+            libraries = ['-lContextTranscript', '-lContextCore', '-lTOMLDecoder', '-lAgentContract']
             if args.task == 'build':
                 run(base + ['-module-name', 'ContextDesk'] + sources('Sources/ContextDesk') + libraries + ['-o', work / 'ContextDesk'])
                 shutil.copy2(work / 'ContextDesk', OUT / 'ContextDesk')
             else:
                 runner = work / 'Runner.swift'
-                runner.write_text('import Testing\n@main struct Runner { static func main() async { await Testing.__swiftPMEntryPoint() } }\n')
+                # New Testing releases also expose a CInt-returning overload. Keep
+                # the process-exiting entry point, including its failing exit status.
+                runner.write_text('import Testing\n@main struct Runner { static func main() async { let _: Never = await Testing.__swiftPMEntryPoint() } }\n')
                 run(base + test_flags + ['-module-name', 'ContextCoreTests'] + sources('Tests/ContextCoreTests') + [runner, '-lContextDesk'] + libraries + ['-o', work / 'Tests'])
                 run([work / 'Tests'])
     if args.task == 'build':

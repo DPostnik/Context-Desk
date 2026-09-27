@@ -4,7 +4,7 @@ Date: 2026-09-25; revised 2026-09-27.
 
 Source: agreed product direction, audit of version 0.2.1 at `a6d5b2c`, and user request to update the plan.
 
-Status: accepted direction and revised implementation plan. The current-state section records shipped behavior; all implementation stages below remain planned.
+Status: accepted direction and revised implementation plan. Stage 1 has a typed contract foundation and a source-audited capability matrix; execution still uses the existing paths. Stages 2–6 remain planned. See [AGENT_CONTRACT.md](AGENT_CONTRACT.md) for boundaries and acceptance evidence.
 
 ## Purpose
 
@@ -109,7 +109,7 @@ Currently shipped:
 
 Not yet implemented:
 
-- An engine-independent agent contract and extracted Codex module.
+- Extracted Codex module and runtime adoption of the new engine-independent contract.
 - Interactive Claude Code sessions and agent selection for chats; the existing job-only adapter is not full interactive support.
 - App-owned portable transcripts and cross-agent handoffs.
 - Portable routine definitions and execution mappings.
@@ -119,9 +119,11 @@ Existing provider plugins are the starting point for the optimization layer. The
 
 ## Implementation plan
 
-All stages are planned. Each stage should preserve current behavior and pass its acceptance checks before the next dependent stage enables new execution paths.
+Stage 1's contract foundation is implemented; subsequent stages remain planned. Each stage should preserve current behavior and pass its acceptance checks before the next dependent stage enables new execution paths.
 
 ### 1. Define the contract against both existing engines
+
+Status (2026-09-27): contract foundation implemented in the independent `AgentContract` Swift target. [Capability matrix and semantics](AGENT_CONTRACT.md) document both existing execution paths, unsupported operations, identity/route boundaries, cancellation and uncertain delivery. Production adapters are not yet extracted or connected to this API. No new execution path is enabled.
 
 Define typed identities, operations, events, outcomes and capabilities for interactive sessions, scheduled jobs, isolated generation, permissions, history, tools, model discovery and optional metrics. Use the existing Claude job path to challenge assumptions inherited from Codex before stabilizing the API. Keep connection/account selection separate from optimization routes.
 

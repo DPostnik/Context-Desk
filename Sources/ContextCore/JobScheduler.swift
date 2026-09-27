@@ -126,7 +126,14 @@ public actor JobStore {
     private var lock: Int32 = -1
     private var ledger: JobLedger?
     public init(file: URL) { self.file = file }
-    deinit { if lock >= 0 { close(lock) } }
+    deinit { Self.unlock(lock) }
+    private static func unlock(_ descriptor: Int32) {
+        guard descriptor >= 0 else { return }
+        // A child/duplicate may still hold the open file description. close alone
+        // does not release flock until every copy closes (including pre-exec children).
+        _ = flock(descriptor, LOCK_UN)
+        close(descriptor)
+    }
     public func load() throws -> JobLedger {
         if let ledger { return ledger }
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -145,7 +152,7 @@ public actor JobStore {
             }
             try commit(value)
             return value
-        } catch { close(lock); lock = -1; throw error }
+        } catch { Self.unlock(lock); lock = -1; throw error }
     }
     private func commit(_ value: JobLedger) throws {
         let data = try JSONEncoder().encode(value)
@@ -201,6 +208,6 @@ public actor JobStore {
         }
         try commit(value); return value
     }
-    public func release() { ledger = nil; if lock >= 0 { close(lock); lock = -1 } }
+    public func release() { ledger = nil; Self.unlock(lock); lock = -1 }
     public static var busy: ClientFailure { ClientFailure(L10n.text("Дождись завершения задания или останови его.", "Wait for the task to finish or stop it.")) }
 }

@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import AppKit
 import SwiftUI
 import Testing
@@ -263,4 +264,28 @@ private func jobFixture() -> ManagedJob {
         try await ClaudeJobRunner().run(prompt: "Do not send", model: "", cwd: root, executable: executable)
     }
     #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("unexpected-send").path))
+}
+
+@Test func schedulerReleaseUnlocksEvenWithDuplicatedDescriptor() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let file = root.appendingPathComponent("jobs.json")
+    let store = JobStore(file: file)
+    _ = try await store.load()
+    // dup models the shared open file description retained briefly by a forked child.
+    let suffix = "/" + root.lastPathComponent + "/jobs.json.lock"
+    var duplicate: Int32 = -1
+    for fd: Int32 in 0..<1024 {
+        var path = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+        let result = path.withUnsafeMutableBytes { fcntl(fd, F_GETPATH, $0.baseAddress!) }
+        if result == 0 && String(cString: path).hasSuffix(suffix) {
+            duplicate = dup(fd); break
+        }
+    }
+    defer { if duplicate >= 0 { close(duplicate) } }
+    #expect(duplicate >= 0)
+    await store.release()
+    let replacement = JobStore(file: file)
+    _ = try await replacement.load()
+    await replacement.release()
 }
