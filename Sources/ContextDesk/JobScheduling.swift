@@ -22,8 +22,17 @@ import ContextCore
         }
     }
     func saveJob(_ job: ManagedJob) async -> Bool {
+        if job.enabled, let issue = routineIssue(job) { error = issue; return false }
         do { jobLedger = try await jobStore.save(job); return true }
         catch { self.error = error.localizedDescription; return false }
+    }
+    func routineIssue(_ job: ManagedJob) -> String? {
+        guard let invocation = job.routine else { return nil }
+        let capabilities: Set<AgentCapability>
+        if job.engine == .claude { capabilities = [.scheduledExecution, .interruption] }
+        else if let descriptor = agentDescriptor { capabilities = descriptor.capabilities }
+        else { return L10n.text("Подключи агента для проверки возможностей рутины.", "Connect the agent to check routine capabilities.") }
+        return invocation.definition.mappingIssue(capabilities: capabilities, agent: job.engine.agentID)
     }
     func deleteJob(_ id: UUID) async {
         do { jobLedger = try await jobStore.remove(id) } catch { self.error = error.localizedDescription }
@@ -56,6 +65,14 @@ import ContextCore
                 }
                 do {
                     let descriptor = try await executor.descriptor().value()
+                    if let routine = job.routine {
+                        do {
+                            try routine.validate(descriptor: descriptor)
+                            guard try routine.prompt() == job.prompt else { throw ConversationIdentity.invalidStorage }
+                        } catch {
+                            await finishJob(run.id, status: .blocked, output: error.localizedDescription); return
+                        }
+                    }
                     let request = job.executionRequest(runID: run.id, project: project, descriptor: descriptor)
                     let result = try await executor.execute(request) { [weak self] in
                         guard let self else { throw CancellationError() }

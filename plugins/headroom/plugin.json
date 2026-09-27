@@ -14,5 +14,11 @@
   "descriptionTranslations": {
     "ru": "Сокращает объём контекста, отправляемого модели. Счётчики показывают работу плагина за текущий запуск.",
     "en": "Reduces the context sent to the model. Counters show plugin activity for the current session."
+  },
+  "optimizerRequirements": {
+    "protocolName": "openai-responses",
+    "authentication": "app-codex-openai",
+    "streaming": true,
+    "toolCalls": true
   }
 }

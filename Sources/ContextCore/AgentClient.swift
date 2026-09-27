@@ -71,8 +71,9 @@ public actor AgentClient {
             permissions: access == .fullAccess ? .unrestricted(approval: .never) : .workspaceWrite(root: projectPath, network: false, approval: .ask),
             model: .init(context: context, model: model, effort: effort), route: route.agentRoute)
     }
-    public func createSession(projectPath: String, access: AccessMode, model: String, route: RequestRoute) async throws -> AgentSessionReference {
-        let request = try await request(prompt: "", session: nil, projectPath: projectPath, access: access, model: model, route: route)
+    public func createSession(projectPath: String, access: AccessMode, model: String, route: RequestRoute,
+                              context: AgentContext? = nil) async throws -> AgentSessionReference {
+        let request = try await request(prompt: "", session: nil, projectPath: projectPath, access: access, model: model, route: route, context: context)
         let session = try await integration.prepare(request).value(); sessionRoutes[session] = route; sessionContexts[session] = request.model.context; return session
     }
     public func resume(_ session: AgentSessionReference, projectPath: String, access: AccessMode, route: RequestRoute) async throws {

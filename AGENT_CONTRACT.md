@@ -8,7 +8,7 @@ native method names, arbitrary JSON or permission-answer payloads.
 Execution paths use explicit app/native identity mapping (stage 2). Stage 3 is
 implemented: `CodexIntegration` conforms to this contract, and production uses
 `AgentClient` for interactive work, scheduled Codex submissions, history,
-interactions and background generation. Stage 4 now routes the scheduler through typed executors; stage 5 local history is in progress and stage 6 remains planned. Interactive
+interactions and background generation. Stage 4 now routes the scheduler through typed executors; stage 5 local history is in progress; stage 6 supports current execution paths (see `PORTABLE_WORK.md`). Interactive
 Claude, portable transcript collection/backfill, general optimizer compatibility
 and externally installable agent modules are not delivered by extraction.
 
@@ -455,3 +455,23 @@ and distinguish missing local data from an empty conversation.
 This delivers the first local-history slice of stage 5, not interactive Claude or
 full two-engine acceptance. Live-provider/UI verification remains separate from the
 synthetic adapter and model regression tests.
+
+## Portable work and optimizer compatibility (stage 6)
+
+See [PORTABLE_WORK.md](PORTABLE_WORK.md) for definitions and scope. Handoff prepares
+a new session under a captured account context, stores provenance, and leaves the
+prompt unsent. Source references appear only as historical evidence, never as the
+destination session argument. No source queue entry or approval is transferred.
+
+`RoutineInvocation` freezes a portable definition, input and language. The scheduler
+checks capability IDs and agent-specific extension ownership against the executor's
+actual descriptor before `execute`; unsupported mappings produce a blocked run.
+The existing descriptor/adapter still enforces route, model and permission policy.
+The run ledger retains the exact definition revision independently of future edits.
+
+Optimizer requirements are an optional additive field in process-plugin manifests.
+Legacy v1 means the fixed Responses/app-Codex-auth/streaming/tools profile, not a
+claim of multi-agent compatibility. Both application setup and the plugin runtime
+reject incompatible profiles before process launch. Runtime route availability and
+pinned adapter-version checks remain independent requirements. No new provider
+combination or savings guarantee is inferred from a manifest.

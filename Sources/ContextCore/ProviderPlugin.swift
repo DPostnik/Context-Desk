@@ -18,6 +18,9 @@ public struct PluginManifest: Codable, Sendable, Equatable {
     public let arguments: [String]
     public let titleTranslations: PluginTranslations?
     public let descriptionTranslations: PluginTranslations?
+    /// Absent on legacy manifests: protocol v1 already declares this fixed profile.
+    public var optimizerRequirements: OptimizerRequirements? = nil
+    public var requirements: OptimizerRequirements { optimizerRequirements ?? .processV1 }
     public func localizedTitle(language: AppLanguage = L10n.language) -> String {
         titleTranslations?.text(language: language) ?? title
     }
@@ -118,6 +121,9 @@ public actor ProviderPluginRuntime {
         session = URLSession(configuration: config, delegate: PluginHTTPDelegate(), delegateQueue: nil)
     }
     public func start() async throws -> URL {
+        if let issue = OptimizerCompatibility.issue(agent: .codex, requirements: plugin.manifest.requirements) {
+            throw ClientFailure(issue)
+        }
         if let endpoint, process?.isRunning == true { _ = try await status(); return endpoint }
         stop()
         let executable = plugin.directory.appendingPathComponent(plugin.manifest.executable)

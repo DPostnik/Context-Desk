@@ -485,6 +485,7 @@ struct ChatView: View {
     @State private var followOutput = true
     @State private var showingUsage = false
     @State private var composerFocused = false
+    @State private var handoff: ContextHandoff?
     var body: some View {
         VStack(spacing: 0) {
             HStack {
@@ -494,6 +495,11 @@ struct ChatView: View {
                     Text(model.selectedProject?.path ?? "").font(.caption2).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
                 }
                 Spacer()
+                if let chat = model.selectedChat {
+                    Button(L10n.text("Передать контекст…", "Hand off context…")) {
+                        Task { handoff = await model.prepareHandoff(chat) }
+                    }.disabled(model.loadingChat || model.creatingHandoff)
+                }
             }.padding(.horizontal, 24).padding(.vertical, 12)
                 .overlay(alignment: .bottom) { DeskPalette.border.frame(height: 0.5) }
             if !model.authenticated {
@@ -507,6 +513,13 @@ struct ChatView: View {
             if let notice = model.localHistoryNotice {
                 Text(notice).font(.caption).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 24).padding(.vertical, 8)
+            }
+            if let origin = model.selectedChat?.handoffOrigin {
+                HStack {
+                    Text(L10n.text("Контекст из чата", "Context from chat") + ": " + origin.conversation.value)
+                        .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                    Button(L10n.text("Вернуть исходный контекст в черновик", "Restore initial context to draft")) { Task { await model.restoreHandoffDraft() } }.disabled(!model.draft.isEmpty)
+                }.padding(.horizontal, 24)
             }
             if model.loadingChat {
                 ChatLoadingIndicator()
@@ -636,6 +649,9 @@ struct ChatView: View {
             }.font(.caption2).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.horizontal, 24).padding(.vertical, 12)
         }
         .background(DeskPalette.canvas)
+        .sheet(item: $handoff) { value in
+            HandoffEditor(model: model, handoff: value, projectID: model.projectID, route: model.defaultRoute)
+        }
     }
     private func suggestion(_ title: String, prompt: String) -> some View {
         Button(title) { model.draft = prompt }.buttonStyle(DeskButtonStyle())
@@ -803,7 +819,9 @@ struct SettingsView: View {
                 Text(L10n.text("Плагины дополнительно обрабатывают запросы Codex. Они необязательны: выбери «Без плагина», чтобы работать напрямую.", "Plugins add processing to Codex requests. They are optional: choose No plugin to work directly."))
                     .font(.callout).foregroundStyle(.secondary)
                 Picker(L10n.text("Для новых чатов", "For new chats"), selection: Binding(get: { model.defaultRoute }, set: { model.selectDefaultRoute($0) })) {
-                    ForEach(model.availableRoutes, id: \.self) { Text(model.routeTitle($0)).tag($0) }
+                    ForEach(model.availableRoutes, id: \.self) { route in
+                        Text(model.routeTitle(route)).tag(route).disabled(model.routeCompatibilityIssue(route) != nil)
+                    }
                 }.pointingHandCursor()
                 Text(model.routeMessage(model.defaultRoute)).font(.callout).foregroundStyle(.secondary)
                 Button(model.connecting ? L10n.text("Подключение…", "Connecting…") : L10n.text("Применить выбор", "Apply selection")) {
@@ -822,6 +840,8 @@ struct SettingsView: View {
                             Text(description.text()).font(.callout).foregroundStyle(.secondary)
                         }
                         Text(model.routeMessage(plugin.route)).font(.caption).foregroundStyle(.secondary)
+                        Text("Codex: " + OptimizerCompatibility.summary(agent: .codex, requirements: plugin.manifest.requirements)).font(.caption)
+                        Text("Claude Code: " + OptimizerCompatibility.summary(agent: .claudeCode, requirements: plugin.manifest.requirements)).font(.caption).foregroundStyle(.secondary)
                         if let status = model.pluginStatuses[plugin.id] {
                             ForEach(status.metrics) { metric in
                                 LabeledContent(metric.localizedTitle(), value: String(metric.value))

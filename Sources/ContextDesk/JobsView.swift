@@ -6,11 +6,13 @@ struct JobsView: View {
     @State private var selection: String?
     @State private var editing: ManagedJob?
     @State private var deleting: ManagedJob?
+    @State private var showingRoutines = false
     var body: some View {
         VStack(spacing: 0) {
             HStack {
                 Text(L10n.text("Задания по расписанию", "Scheduled tasks")).font(.headline)
                 Spacer()
+                Button(L10n.text("Рутины…", "Routines…")) { showingRoutines = true }
                 Button(L10n.text("Обновить", "Refresh")) { Task { await model.refreshJobs() } }
                 Button(L10n.text("Создать", "New task"), systemImage: "plus") {
                     var job = ManagedJob(); job.projectID = model.projectID; job.model = model.state.model; job.route = model.defaultRoute; editing = job
@@ -54,6 +56,7 @@ struct JobsView: View {
             }
         }
         .sheet(item: $editing) { job in JobEditor(model: model, job: job) }
+        .sheet(isPresented: $showingRoutines) { RoutineLibrary(model: model) }
         .confirmationDialog(L10n.text("Удалить задание и историю его запусков?", "Delete this task and its run history?"), isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
             Button(L10n.text("Удалить", "Delete"), role: .destructive) { if let job = deleting { Task { await model.deleteJob(job.id) } }; deleting = nil }
         }
@@ -69,12 +72,16 @@ struct JobsView: View {
             VStack(alignment: .leading, spacing: 18) {
                 Text(job.name).font(.title2.bold())
                 HStack {
-                    Button(L10n.text("Запустить сейчас", "Run now")) { Task { await model.launchJob(job.id) } }.disabled(active != nil || !model.schedulerReady || model.jobLedger.runs.filter { $0.status.active }.count >= 3)
+                    Button(L10n.text("Запустить сейчас", "Run now")) { Task { await model.launchJob(job.id) } }.disabled(active != nil || !model.schedulerReady || model.routineIssue(job) != nil || model.jobLedger.runs.filter { $0.status.active }.count >= 3)
                     Button(job.enabled ? L10n.text("Пауза", "Pause") : L10n.text("Включить", "Enable")) { Task { await model.toggleJob(job) } }.disabled(active != nil || !model.schedulerReady || (job.schedule.rule.isEmpty && job.schedule.once == nil))
                     Button(L10n.text("Изменить", "Edit")) { editing = job }.disabled(active != nil || !model.schedulerReady)
                     Button(role: .destructive) { deleting = job } label: { Image(systemName: "trash") }.disabled(active != nil || !model.schedulerReady)
                 }
                 LabeledContent(L10n.text("Исполнитель", "Agent"), value: job.engine.title)
+                if let routine = job.routine {
+                    Text(L10n.text("Рутина", "Routine") + ": \(routine.definition.name) · \(routine.definition.revision.uuidString)").font(.caption).textSelection(.enabled)
+                    if let issue = model.routineIssue(job) { Text(issue).font(.caption).foregroundStyle(.orange) }
+                }
                 LabeledContent(L10n.text("Проект", "Project"), value: model.state.projects.first { $0.id == job.projectID }?.path ?? L10n.text("Недоступен", "Unavailable"))
                 LabeledContent(L10n.text("Часовой пояс", "Time zone"), value: job.schedule.timeZone)
                 if let next = job.nextRun, job.enabled { LabeledContent(L10n.text("Следующий запуск", "Next run")) { Text(jobDate(next, zone: job.schedule.timeZone)).textSelection(.enabled) } }
@@ -99,6 +106,11 @@ struct JobsView: View {
                             }
                         }
                         if !run.output.isEmpty { Text(run.output).textSelection(.enabled) }
+                        if let routine = run.routine {
+                            DisclosureGroup(L10n.text("Рутина этого запуска", "Routine used for this run")) {
+                                Text((try? routine.prompt()) ?? L10n.text("Сохранённая рутина недоступна", "Saved routine unavailable")).font(.caption).textSelection(.enabled)
+                            }
+                        }
                         if run.status == .uncertain { Text(L10n.text("Проверь результат перед новым запуском. Автоматического повтора не было; расписание приостановлено.", "Check the outcome before running again. No automatic retry was made; the schedule is paused.")).font(.caption).foregroundStyle(.orange) }
                     }.padding().background(.gray.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
                 }
@@ -131,11 +143,37 @@ struct JobEditor: View {
                     ForEach(model.state.projects) { Text($0.name).tag(Optional($0.id)) }
                 }
                 TextField(L10n.text("Модель", "Model"), text: $job.model, prompt: Text(L10n.text("По умолчанию", "Default")))
+                Menu(L10n.text("Использовать рутину", "Use routine")) {
+                    ForEach(model.routines) { routine in
+                        Button(routine.name) {
+                            do {
+                                let invocation = RoutineInvocation(definition: routine)
+                                job.prompt = try invocation.prompt(); job.routine = invocation
+                            } catch { validation = error.localizedDescription }
+                        }
+                    }
+                }
+                if let routine = job.routine {
+                    Text(L10n.text("Сохранённая версия рутины", "Frozen routine revision") + ": \(routine.definition.name) · \(routine.definition.revision.uuidString)").font(.caption).textSelection(.enabled)
+                    TextField(L10n.text("Входные данные этого задания", "Input for this task"), text: Binding(get: { job.routine?.input ?? "" }, set: { value in
+                        job.routine?.input = value
+                        do { job.prompt = try job.routine?.prompt() ?? ""; validation = nil }
+                        catch { job.prompt = ""; validation = error.localizedDescription }
+                    }), axis: .vertical)
+                    if let issue = model.routineIssue(job) { Text(issue).foregroundStyle(.orange).font(.caption) }
+                    Button(L10n.text("Преобразовать в обычные инструкции", "Convert to plain instructions")) { job.routine = nil }
+                }
                 if job.engine == .codex {
-                    Picker(L10n.text("Маршрут", "Route"), selection: $job.route) { ForEach(model.availableRoutes, id: \.self) { Text(model.routeTitle($0)).tag($0) } }
+                    Picker(L10n.text("Маршрут", "Route"), selection: $job.route) { ForEach(model.availableRoutes, id: \.self) { route in
+                        Text(model.routeTitle(route)).tag(route).disabled(model.routeCompatibilityIssue(route) != nil)
+                    } }
                     TextField(L10n.text("Рассуждение", "Reasoning effort"), text: $job.effort, prompt: Text(L10n.text("По умолчанию", "Default")))
                 }
                 if job.engine == .claude {
+                    if job.route != .direct {
+                        Text(model.routeCompatibilityIssue(job.route, agent: .claudeCode) ?? "").foregroundStyle(.orange).font(.caption)
+                        Button(L10n.text("Выбрать внешний маршрут CLI без оптимизатора приложения", "Use external CLI routing without an app optimizer")) { job.route = .direct }
+                    }
                     Text(L10n.text("Claude использует аккаунт, маршрут и правила установленного CLI. Новые запросы разрешений отклоняются. Интерактивные чаты, выбор усилия, статистика и оптимизаторы приложения недоступны.", "Claude uses the installed CLI account, route and rules. New permission prompts are denied. Interactive chats, effort selection, metrics and app optimizers are unavailable.")).font(.caption).frame(maxWidth: 460, alignment: .leading).fixedSize(horizontal: false, vertical: true)
                     Toggle(L10n.text("Принимаю внешние правила Claude для этого задания", "Use external Claude policy for this task"), isOn: Binding(get: { job.acceptsExternalPolicy == true }, set: { job.acceptsExternalPolicy = $0 }))
                     Text(L10n.text("Требуется проект с полным доступом. Ограничения стандартного режима Claude не поддерживает; запуск будет заблокирован.", "Requires a full-access project. Claude cannot enforce standard project restrictions; execution will be blocked.")).font(.caption).foregroundStyle(.secondary).frame(maxWidth: 460, alignment: .leading).fixedSize(horizontal: false, vertical: true)
@@ -182,7 +220,7 @@ struct JobEditor: View {
                 Toggle(L10n.text("Включить расписание", "Enable schedule"), isOn: $job.enabled).disabled(mode == "manual")
             }
             Text(L10n.text("Инструкции", "Instructions")).font(.headline)
-            TextEditor(text: $job.prompt).font(.body).frame(minHeight: 120).border(.gray.opacity(0.3))
+            TextEditor(text: $job.prompt).font(.body).frame(minHeight: 120).border(.gray.opacity(0.3)).disabled(job.routine != nil)
             if let validation { Text(validation).foregroundStyle(.red).font(.caption) }
             }
             HStack {
@@ -197,7 +235,7 @@ struct JobEditor: View {
                     } catch { validation = error.localizedDescription }
                 }.keyboardShortcut(.defaultAction).disabled(saving)
             }
-        }.padding(24).frame(width: 640, height: 700)
+        }.padding(24).frame(width: 640, height: 700).task { await model.loadRoutines() }
 
     }
     private var ruleFields: [String: String] {

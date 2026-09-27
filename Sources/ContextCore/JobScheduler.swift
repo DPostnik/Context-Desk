@@ -77,8 +77,13 @@ public struct ManagedJob: Identifiable, Codable, Equatable, Sendable {
     public var sourceDisabled = false
     /// Missing on legacy jobs: never infer consent from a project access mode.
     public var acceptsExternalPolicy: Bool?
+    /// A frozen revision: editing the library never silently changes scheduled work.
+    public var routine: RoutineInvocation?
     public init() {}
     public func validate() throws {
+        if let routine, try routine.prompt() != prompt {
+            throw ClientFailure(L10n.text("Инструкции не соответствуют сохранённой версии рутины. Выбери рутину заново.", "Instructions do not match the saved routine revision. Select the routine again."))
+        }
         guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, projectID != nil else {
             throw ClientFailure(L10n.text("Укажи название, задание и проект.", "Enter a name, instructions and project."))
@@ -117,6 +122,7 @@ public struct JobRun: Identifiable, Codable, Sendable {
     public var threadID: String?
     public var turnID: String?
     public var output = ""
+    public var routine: RoutineInvocation?
 }
 public struct JobLedger: Codable, Sendable {
     public var version = 1
@@ -189,7 +195,8 @@ public actor JobStore {
         let job = value.jobs[index]
         guard manual || (job.enabled && job.nextRun.map { $0 <= now } == true) else { return nil }
         try job.validate()
-        let run = JobRun(jobID: id, engine: job.engine, name: job.name, started: now)
+        var run = JobRun(jobID: id, engine: job.engine, name: job.name, started: now)
+        run.routine = job.routine
         value.runs.insert(run, at: 0)
         // No backlog after sleep. Manual runs leave the scheduled occurrence intact.
         if !manual {

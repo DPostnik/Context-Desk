@@ -2,10 +2,44 @@ import Foundation
 import CSQLite
 import AgentContract
 
-/// SQLite metadata only. The official engine owns chat transcripts and credentials.
+/// App-owned metadata, readable snapshots and portable work. Engines retain native execution state and credentials.
 public actor AppStore {
     private let file: URL
     public init(file: URL) { self.file = file }
+    public func loadRoutines() throws -> [PortableRoutine] {
+        try withDatabase { db in
+            guard let data = try bytes(db: db, key: "portableRoutines:v1") else { return [] }
+            let routines = try JSONDecoder().decode([PortableRoutine].self, from: data)
+            guard Set(routines.map(\.id)).count == routines.count else { throw ConversationIdentity.invalidStorage }
+            for routine in routines { try routine.validate() }
+            return routines
+        }
+    }
+    public func saveRoutine(_ routine: PortableRoutine) throws -> [PortableRoutine] {
+        try routine.validate()
+        var routines = try loadRoutines()
+        routines.removeAll { $0.id == routine.id }; routines.append(routine)
+        try put(key: "portableRoutines:v1", bytes: JSONEncoder().encode(routines))
+        return routines
+    }
+    public func removeRoutine(_ id: UUID) throws -> [PortableRoutine] {
+        let routines = try loadRoutines().filter { $0.id != id }
+        try put(key: "portableRoutines:v1", bytes: JSONEncoder().encode(routines))
+        return routines
+    }
+    public func saveHandoff(_ handoff: ContextHandoff) throws {
+        _ = try handoff.prompt()
+        try put(key: "handoff:" + handoff.id.uuidString, bytes: JSONEncoder().encode(handoff))
+    }
+    public func loadHandoff(_ id: UUID) throws -> ContextHandoff? {
+        try withDatabase { db in
+            guard let data = try bytes(db: db, key: "handoff:" + id.uuidString) else { return nil }
+            let handoff = try JSONDecoder().decode(ContextHandoff.self, from: data)
+            guard handoff.id == id else { throw ConversationIdentity.invalidStorage }
+            _ = try handoff.prompt()
+            return handoff
+        }
+    }
     private func withDatabase<T>(_ operation: (OpaquePointer) throws -> T) throws -> T {
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true,
                                                attributes: [.posixPermissions: 0o700])

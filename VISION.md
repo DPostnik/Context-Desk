@@ -4,7 +4,7 @@ Date: 2026-09-25; revised 2026-09-27.
 
 Source: agreed product direction, audit of version 0.2.1 at `a6d5b2c`, and user request to update the plan.
 
-Status: accepted direction and revised implementation plan. Stages 1–4 are implemented: the typed contract, identity migration and complete in-process Codex extraction now serve production paths. Codex connection/version/account lifecycle, commands, events, permissions, configuration and isolated generation run through `AgentIntegration`. Stage 5 is in progress (readable local history); interactive Claude and stage 6 remain planned. See [AGENT_CONTRACT.md](AGENT_CONTRACT.md) for boundaries and acceptance evidence.
+Status: accepted direction and revised implementation plan. Stages 1–4 are implemented: the typed contract, identity migration and complete in-process Codex extraction now serve production paths. Codex connection/version/account lifecycle, commands, events, permissions, configuration and isolated generation run through `AgentIntegration`. Stage 5 is in progress (readable local history); stage 6 is implemented for currently supported execution paths. Interactive Claude remains outstanding. See [AGENT_CONTRACT.md](AGENT_CONTRACT.md) for boundaries and acceptance evidence.
 
 ## Purpose
 
@@ -94,7 +94,7 @@ For example: inspect the changes, run the project's checks, resolve failures, an
 
 Portable routine definitions and a scheduler are separate concerns. The app already owns schedules and run history and executes Codex and Claude Code jobs while running, under the user's standing authorization of 2026-09-27. Reuse this scheduler when extracting adapters. Preserve durable claims before dispatch, single-owner locking, concurrency limits, missed-run handling, cancellation and uncertain-run pauses without automatic retry.
 
-External schedule definitions are imported only on explicit selection. Imports remain paused until review and confirmation that the original schedule is disabled. Never mutate external Codex automations or Claude schedules. Executing a scheduled prompt does not yet provide a general portable multi-step routine format. Execution while the app is closed remains future work.
+External schedule definitions are imported only on explicit selection. Imports remain paused until review and confirmation that the original schedule is disabled. Never mutate external Codex automations or Claude schedules. Portable routines now compile ordered steps, constraints and completion checks into a frozen scheduled prompt. Step checks are performed and reported by the agent; the app does not independently certify their success or retry steps. Execution while the app is closed remains future work.
 
 ## Current implementation versus target
 
@@ -107,19 +107,21 @@ Currently shipped:
 - App-owned schedules and persistent run history: Codex jobs create app chats; Claude Code print-mode jobs record their result in run history.
 - Semantic chat titles and archive summaries generated through isolated Codex requests.
 - Browser MCP launch configuration and app-owned workflow skills registered with Codex.
+- Explicit handoff into a fresh Codex session with a reviewable draft, durable source provenance and historical evidence separated from new instructions.
+- App-owned portable routine definitions with ordered steps, checks, constraints and capability requirements; frozen revisions map to existing Codex/Claude scheduled executors.
+- Explicit optimizer wire/auth/streaming/tool compatibility checks, with unsupported combinations retained visibly and blocked before plugin launch.
 
 Not yet implemented:
 
 - Interactive Claude Code sessions and agent selection for chats; the existing job-only adapter is not full interactive support.
-- Cross-agent handoffs; normalized local snapshots are implemented with explicit completeness limits.
-- Portable routine definitions and execution mappings.
-- A validated compatibility model spanning multiple agents and optimization modules.
+- Interactive handoff destinations other than Codex; saved snapshots from any retained source can be explicitly handed into a new Codex session.
+- Additional verified optimizer profiles beyond Codex Responses process-plugin v1; Claude app optimizer routes remain unavailable.
 
 Existing provider plugins are the starting point for the optimization layer. They are not currently interchangeable agent engines.
 
 ## Implementation plan
 
-Stages 1–4 are implemented; stage 5 is in progress and stage 6 remains planned. Each stage should preserve current behavior and pass its acceptance checks before the next dependent stage enables new execution paths.
+Stages 1–4 are implemented; stage 5 is in progress. Stage 6 is implemented for current execution paths, with interactive Claude destinations still gated by stage 5. Each stage should preserve current behavior and pass its acceptance checks before the next dependent stage enables new execution paths.
 
 ### 1. Define the contract against both existing engines
 
@@ -162,6 +164,8 @@ Establish the supported Claude authentication/configuration boundary and pinned 
 Acceptance: perform an end-to-end workflow on each supported engine without losing readable history or weakening permissions. Saved history is readable when its engine is unavailable, with incomplete backfills clearly identified. Disconnects do not replay turns; switching does not transfer pending approvals, queue entries or native session IDs to another engine. Verify all changed app-owned UI in Russian and English.
 
 ### 6. Extend handoffs, routines and validated compatibility
+
+Status (2026-09-27): implemented for current execution paths. Handoff creates a fresh Codex chat and an unsent draft with durable provenance; it does not move queues, approvals or native IDs. Routines persist independently of schedules and freeze their revision/input/language in both jobs and run history. Unsupported capability requirements and agent-specific extensions block execution. Optimizer requirements are checked against the existing Codex Responses v1 profile before process launch; no Claude optimizer compatibility is claimed. Agent modules remain in-process; external packaging is a separate future decision. Interactive Claude destinations remain dependent on stage 5. See [portable-work semantics and limits](PORTABLE_WORK.md).
 
 Add explicit context handoff into a new session, portable multi-step routine definitions and independently verified optimizer combinations. Decide separately whether agent modules need external packaging and installation. Neither general plugin packaging nor universal optimizer compatibility is a prerequisite for the first two-engine workflow.
 

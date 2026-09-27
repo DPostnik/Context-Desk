@@ -21,6 +21,7 @@ public struct Chat: Identifiable, Codable, Hashable, Sendable {
     /// App identity; never pass this value directly to an engine.
     public var conversationID: ConversationID { ConversationID(id) }
     public var nativeSession: AgentSessionReference?
+    public var handoffOrigin: HandoffProvenance?
     /// The latest completion remains unread until its transcript end is visible.
     public var unreadCompletionID: String?
     public var hasUnreadResponse: Bool { unreadCompletionID != nil }

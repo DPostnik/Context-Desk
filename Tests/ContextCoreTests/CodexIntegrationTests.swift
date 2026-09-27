@@ -55,6 +55,9 @@ private func contractFixture(version: String = "0.158.0-alpha.2.1", disconnect: 
     let changed = try await app.descriptor()
     #expect(changed.context != descriptor.context)
     await #expect(throws: AgentOperationFailure.self) {
+        _ = try await app.createSession(projectPath: root.path, access: .standard, model: "fixture", route: .direct, context: descriptor.context)
+    }
+    await #expect(throws: AgentOperationFailure.self) {
         try await app.send("Do not send stale work", to: session, projectPath: root.path, access: .standard, model: "fixture", effort: "")
     }
     await #expect(throws: CodexDispatchRejection.self) {

@@ -71,6 +71,8 @@ private struct ChatRunState {
     let summaryHome: URL
     @Published var items: [TranscriptItem] = []
     @Published var localHistoryNotice: String?
+    @Published var routines: [PortableRoutine] = []
+    @Published var creatingHandoff = false
     private var historyBackfillTask: Task<Void, Never>?
     private var historyRefreshTasks: [String: Task<Void, Never>] = [:]
     private var historyEventRevisions: [String: Int] = [:]
@@ -106,7 +108,7 @@ private struct ChatRunState {
     var busy: Bool { runs[currentRunKey]?.running == true }
     var queuePaused: Bool { runs[currentRunKey]?.queuePaused ?? true }
     var priorityMessageID: String? { runs[currentRunKey]?.priorityMessageID }
-    var anyBusy: Bool { jobLedger.runs.contains { $0.status.active } || summaryTask != nil || !deletingChatIDs.isEmpty || !archivingChatIDs.isEmpty || runs.values.contains { $0.running || $0.sending } }
+    var anyBusy: Bool { creatingHandoff || jobLedger.runs.contains { $0.status.active } || summaryTask != nil || !deletingChatIDs.isEmpty || !archivingChatIDs.isEmpty || runs.values.contains { $0.running || $0.sending } }
     func isBusy(threadID: String) -> Bool { runs[threadID]?.running == true }
     private var turnStarts: [String: Date] = [:]
     private var tokenTotals: [String: TokenCounters] = [:]
@@ -189,9 +191,20 @@ private struct ChatRunState {
         return plugins.first(where: { $0.id == route.rawValue })?.manifest.localizedTitle(language: language)
             ?? L10n.text("\(route.rawValue) (не установлен)", "\(route.rawValue) (not installed)", language: language)
     }
-    func routeIsAvailable(_ route: RequestRoute) -> Bool { route == .direct || pluginStatuses[route.rawValue] != nil }
+    func routeCompatibilityIssue(_ route: RequestRoute, agent: AgentID = .codex) -> String? {
+        if route == .direct { return nil }
+        guard let plugin = plugins.first(where: { $0.id == route.rawValue }) else {
+            return L10n.text("Плагин не установлен. Сохранённый маршрут не заменён.", "Plugin is not installed. The saved route has not been replaced.")
+        }
+        return OptimizerCompatibility.issue(agent: agent, requirements: plugin.manifest.requirements)
+    }
+    func routeIsAvailable(_ route: RequestRoute) -> Bool {
+        route == .direct || (routeCompatibilityIssue(route) == nil && pluginStatuses[route.rawValue] != nil)
+    }
     func routeMessage(_ route: RequestRoute, language: AppLanguage = L10n.language) -> String {
         if route == .direct { return L10n.text("Codex работает напрямую, без обработки запросов плагином.", "Codex works directly, without a plugin processing requests.", language: language) }
+        if let plugin = plugins.first(where: { $0.id == route.rawValue }),
+           let issue = OptimizerCompatibility.issue(agent: .codex, requirements: plugin.manifest.requirements, language: language) { return issue }
         if connecting && neededPluginIDs.contains(route.rawValue) {
             return L10n.text("Подключение…", "Connecting…", language: language)
         }
@@ -235,6 +248,9 @@ private struct ChatRunState {
                 continue
             }
             let runtime = ProviderPluginRuntime(plugin: plugin, environment: optimizerEnvironment)
+            if let issue = OptimizerCompatibility.issue(agent: .codex, requirements: plugin.manifest.requirements) {
+                pluginMessages[id] = issue; continue
+            }
             do {
                 let endpoint = try await runtime.start()
                 let status = try await runtime.status()
@@ -493,6 +509,61 @@ private struct ChatRunState {
         historyBackfillTask?.cancel()
         let chats = state.chats
         historyBackfillTask = Task { [weak self] in await self?.backfillHistory(chats) }
+    }
+    func prepareHandoff(_ chat: Chat) async -> ContextHandoff? {
+        do {
+            guard let source = chat.nativeSession else { throw ConversationIdentity.unavailable }
+            let saved = try await store.loadTranscript(conversationID: chat.id)
+            let snapshot = try saved ?? LocalHistory.snapshot(conversation: chat.conversationID, source: source,
+                items: chatID == chat.id ? items : [], completeness: .partial)
+            return ContextHandoff(snapshot: snapshot)
+        } catch { self.error = error.localizedDescription; return nil }
+    }
+    func createHandoffChat(_ handoff: ContextHandoff, project: Project, route: RequestRoute) async -> Bool {
+        guard !creatingHandoff else { return false }
+        creatingHandoff = true; defer { creatingHandoff = false }
+        do {
+            guard connected, authenticated, state.defaultConnection == .originalCodex,
+                  state.projects.contains(where: { $0 == project }), routeIsAvailable(route) else {
+                throw ConversationIdentity.unavailable
+            }
+            let descriptor = try await connection.descriptor()
+            guard descriptor.context.connection == .originalCodex, descriptor.capabilities.contains(.interactiveSessions),
+                  descriptor.routes.contains(route.agentRoute) else { throw ConversationIdentity.unavailable }
+            let prompt = try handoff.prompt()
+            let selectedModel = state.model
+            try await store.saveHandoff(handoff)
+            let session = try await connection.createSession(projectPath: project.path, access: project.accessMode ?? .standard,
+                                                             model: selectedModel, route: route, context: descriptor.context)
+            var chat = Chat(session: session, projectID: project.id, title: String(handoff.goal.prefix(100)), model: selectedModel)
+            chat.route = route; chat.handoffOrigin = handoff.origin
+            guard !state.chats.contains(where: { $0.nativeSession == session }) else { throw ConversationIdentity.invalidStorage }
+            state.chats.append(chat)
+            do { try await store.save(state) }
+            catch { state.chats.removeAll { $0.id == chat.id }; throw error }
+            chatDrafts[chat.id] = prompt
+            await openChat(chat)
+            return true
+        } catch { self.error = error.localizedDescription; return false }
+    }
+    func loadRoutines() async {
+        do { routines = try await store.loadRoutines() } catch { self.error = error.localizedDescription }
+    }
+    func restoreHandoffDraft() async {
+        guard let chat = selectedChat, let origin = chat.handoffOrigin, draft.isEmpty else { return }
+        do {
+            guard let saved = try await store.loadHandoff(origin.id), saved.origin == origin else { throw ConversationIdentity.invalidStorage }
+            let prompt = try saved.prompt()
+            guard chatID == chat.id, draft.isEmpty else { return }
+            draft = prompt
+        } catch { self.error = error.localizedDescription }
+    }
+    func saveRoutine(_ routine: PortableRoutine) async -> Bool {
+        do { routines = try await store.saveRoutine(routine); return true }
+        catch { self.error = error.localizedDescription; return false }
+    }
+    func removeRoutine(_ id: UUID) async {
+        do { routines = try await store.removeRoutine(id) } catch { self.error = error.localizedDescription }
     }
     private func refreshHistoryAfterTurn(_ id: String) {
         guard let chat = state.chats.first(where: { $0.id == id }) else { return }
