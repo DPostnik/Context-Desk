@@ -380,7 +380,7 @@ public struct NativeTranscript: NSViewRepresentable {
                 repeat { index += 1 } while index < lines.count && Self.quoteBody(lines[index]) == nil
                 var text = lines[start..<index].joined(separator: "\n")
                 if index < lines.count { text += "\n" }
-                result.append(TranscriptLinks.render(text, attributes: attributes))
+                result.append(TranscriptTables.render(text, attributes: attributes))
                 continue
             }
             var quoted: [String] = []
@@ -460,6 +460,7 @@ public struct NativeTranscript: NSViewRepresentable {
             control.paragraphSpacingBefore = 12; control.paragraphSpacing = 12
             text.addAttribute(.paragraphStyle, value: control, range: controlRange)
         }
+        TranscriptTables.restoreStyles(in: text, range: range)
         // Leave the final empty paragraph outside the bubble as inter-message spacing.
         text.addAttribute(.messageBubble, value: item.id, range: NSRange(location: range.location, length: range.length - 1))
         text.addAttribute(.outgoingBubble, value: outgoing, range: NSRange(location: range.location, length: range.length - 1))
