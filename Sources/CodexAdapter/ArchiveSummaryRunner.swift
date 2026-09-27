@@ -1,4 +1,5 @@
 import Foundation
+import ContextCore
 
 public struct SummaryRunFailure: LocalizedError, Sendable {
     public let uncertain: Bool

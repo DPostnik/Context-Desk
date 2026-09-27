@@ -1,4 +1,5 @@
 import Foundation
+import ContextCore
 
 /// App-owned MCP launch settings. Never edits either Codex home or project policy.
 public enum BrowserConfiguration {

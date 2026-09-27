@@ -1,7 +1,8 @@
 import Foundation
+import ContextCore
 
 /// One process and one ordered JSONL stream. Never retries model turns.
-public actor CodexConnection {
+@_spi(NativeProtocol) public actor CodexConnection {
     public nonisolated let events: AsyncStream<JSONValue>
     private let eventSink: AsyncStream<JSONValue>.Continuation
     private var process: Process?

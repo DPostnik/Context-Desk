@@ -3,6 +3,7 @@ import Foundation
 import SwiftUI
 import UserNotifications
 import ContextCore
+import CodexAdapter
 import AgentContract
 
 struct PendingAction: Identifiable {
@@ -71,7 +72,7 @@ private struct ChatRunState {
     @Published var items: [TranscriptItem] = []
     @Published var pending: [PendingAction] = []
     @Published var usage: [String: UsageSnapshot] = [:]
-    @Published var models: [JSONValue] = []
+    @Published var models: [CodexModel] = []
     @Published var effort = ""
     private var newChatDrafts: [UUID: String] = [:]
     private var chatDrafts: [String: String] = [:]
@@ -122,9 +123,9 @@ private struct ChatRunState {
     private var deltas: [String: String] = [:]
     private var selectionGeneration = UUID()
     private var booted = false
-    let connection: CodexConnection
+    let connection: CodexClient
     let store: AppStore
-    init(connection: CodexConnection = CodexConnection(), store: AppStore = AppStore(file: Locations.root.appendingPathComponent("metadata.sqlite")),
+    init(connection: CodexClient = CodexClient(), store: AppStore = AppStore(file: Locations.root.appendingPathComponent("metadata.sqlite")),
          pluginDirectory: URL = PluginCatalog.defaultDirectory,
          summaryResources: URL? = Bundle.main.resourceURL?.appendingPathComponent("Skills"),
          summaryExecutable: URL? = nil, summaryHome: URL = Locations.codexHome,
@@ -144,7 +145,7 @@ private struct ChatRunState {
     var currentUsage: UsageSnapshot? { chatID.flatMap { usage[$0] } }
     var canSend: Bool { (chatID.map { chatIsAvailable($0) } ?? (state.defaultConnection == .originalCodex)) && !selectedChatIsArchived && !isChangingChat(currentRunKey) && routeIsAvailable(currentRoute) && connected && authenticated && selectedProject != nil && !sending && !loadingChat && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     var supportedEfforts: [String] {
-        models.first { $0["model"].string == state.model }?["supportedReasoningEfforts"].array.compactMap { $0["reasoningEffort"].string } ?? []
+        models.first { $0.id == state.model }?.efforts ?? []
     }
 
     func boot() async {
@@ -243,7 +244,7 @@ private struct ChatRunState {
             if summaryResources != nil {
                 do {
                     try prepareSummarySkills()
-                    _ = try await connection.request("skills/extraRoots/set", params: .object(["extraRoots": .array([.string(summarySkillsDirectory.path)])]))
+                    try await connection.registerWorkflows(at: summarySkillsDirectory)
                 } catch { self.error = L10n.text("Не удалось подключить навыки рутин: ", "Could not load routine skills: ") + error.localizedDescription }
             }
             clearConnectionError()
@@ -286,10 +287,10 @@ private struct ChatRunState {
     }
     func refreshAccount() async {
         do {
-            let result = try await connection.request("account/read", params: .object(["refreshToken": .bool(false)]))
+            let result = try await connection.account()
             clearConnectionError()
-            authenticated = result["account"] != .null
-            accountLabel = authenticated ? L10n.text("ChatGPT · \(result["account"]["planType"].string ?? "подключён")", "ChatGPT · \(result["account"]["planType"].string ?? "connected")") : L10n.text("Вход не выполнен", "Not signed in")
+            authenticated = result.authenticated
+            accountLabel = authenticated ? L10n.text("ChatGPT · \(result.plan ?? "подключён")", "ChatGPT · \(result.plan ?? "connected")") : L10n.text("Вход не выполнен", "Not signed in")
             if authenticated { await refreshModels(); await refreshLimits(); startSummaryQueue() }
             else { clearLimits() }
         } catch { self.error = error.localizedDescription }
@@ -308,34 +309,28 @@ private struct ChatRunState {
     }
     func login() async {
         do {
-            let result = try await connection.request("account/login/start", params: .object(["type": .string("chatgpt")]))
-            guard let text = result["authUrl"].string, let url = URL(string: text),
-                  url.scheme == "https", let host = url.host,
-                  host == "chatgpt.com" || host == "auth.openai.com" || host.hasSuffix(".openai.com") else {
-                throw ClientFailure(L10n.text("Движок не вернул допустимую ссылку входа", "The engine did not return a valid sign-in link"))
-            }
+            let url = try await connection.signInURL()
             NSWorkspace.shared.open(url)
             accountLabel = L10n.text("Заверши вход в браузере", "Finish signing in in your browser")
         } catch { self.error = error.localizedDescription }
     }
     func logout() async {
         guard !anyBusy else { return }
-        do { _ = try await connection.request("account/logout"); authenticated = false; clearLimits(); await refreshAccount() }
+        do { try await connection.signOut(); authenticated = false; clearLimits(); await refreshAccount() }
         catch { self.error = error.localizedDescription }
     }
     func refreshModels() async {
         do {
-            let result = try await connection.request("model/list", params: .object(["limit": .number(100), "includeHidden": .bool(false)]))
-            models = result["data"].array
-            if !models.contains(where: { $0["model"].string == state.model }) {
-                state.model = (models.first { $0["isDefault"].bool == true } ?? models.first)?["model"].string ?? ""
+            models = try await connection.models()
+            if !models.contains(where: { $0.id == state.model }) {
+                state.model = (models.first { $0.isDefault } ?? models.first)?.id ?? ""
             }
             selectModel(state.model)
         } catch { self.error = error.localizedDescription }
     }
     func selectModel(_ model: String) {
         state.model = model
-        effort = models.first { $0["model"].string == model }?["defaultReasoningEffort"].string ?? ""
+        effort = models.first { $0.id == model }?.defaultEffort ?? ""
         persist()
     }
     func refreshLimits() async {
@@ -348,9 +343,9 @@ private struct ChatRunState {
             if limitsRequestID == requestID { refreshingLimits = false; limitsRequestID = nil }
         }
         do {
-            let result = try await connection.request("account/rateLimits/read")
+            let result = try await connection.limits()
             guard limitsRequestID == requestID, authenticated, connected else { return }
-            accountLimits = AccountLimits(response: result)
+            accountLimits = result
         } catch {
             guard limitsRequestID == requestID else { return }
             limitsError = accountLimits == nil
@@ -426,20 +421,19 @@ private struct ChatRunState {
         let generation = UUID(); selectionGeneration = generation
         loadingChat = true; items = []
         do {
-            let result = try await connection.request("thread/read", params: .object(["threadId": .string(try nativeThread(chat.id)), "includeTurns": .bool(true)]))
+            let turns = try await connection.history(sessionForChat(chat.id))
             guard selectionGeneration == generation else { return }
-            let turns = result["thread"]["turns"].array
             let timings = try await store.loadTimings(threadID: chat.id)
             guard selectionGeneration == generation else { return }
             items = turns.flatMap { turn in
-                var entries = turn["items"].array.compactMap(TranscriptItem.parse)
-                for index in entries.indices { entries[index].turnID = turn["id"].string }
-                ResponseTiming.apply(ResponseTiming.parse(turn, fallback: timings[turn["id"].string ?? ""]), to: &entries)
+                var entries = turn.items
+                for index in entries.indices { entries[index].turnID = turn.id }
+                ResponseTiming.apply(turn.timing(fallback: timings[turn.id ?? ""]), to: &entries)
                 return entries
             }
             if let completion = state.chats.first(where: { $0.id == chat.id })?.unreadCompletionID,
-               let turn = turns.first(where: { "turn:" + chat.id + ":" + ($0["id"].string ?? "") == completion }) {
-                unreadResponseItems[chat.id] = turn["items"].array.compactMap(TranscriptItem.parse).last(where: { $0.kind == "assistant" })?.id
+               let turn = turns.first(where: { "turn:" + chat.id + ":" + ($0.id ?? "") == completion }) {
+                unreadResponseItems[chat.id] = turn.items.last(where: { $0.kind == "assistant" })?.id
             }
         } catch { if selectionGeneration == generation { self.error = error.localizedDescription } }
         if selectionGeneration == generation { loadingChat = false }
@@ -451,7 +445,7 @@ private struct ChatRunState {
         manuallyNamedChatIDs.insert(id)
         await cancelChatTitle(id)
         do {
-            _ = try await connection.request("thread/name/set", params: .object(["threadId": .string(try nativeThread(id)), "name": .string(title)]))
+            try await connection.rename(sessionForChat(id), title: title)
             if let i = state.chats.firstIndex(where: { $0.id == id }) { state.chats[i].title = title; persist() }
         } catch { self.error = error.localizedDescription }
     }
@@ -466,8 +460,7 @@ private struct ChatRunState {
         runs[id, default: ChatRunState()].queuePaused = true
         defer { archivingChatIDs.remove(id) }
         do {
-            _ = try await connection.request(archived ? "thread/archive" : "thread/unarchive",
-                                             params: .object(["threadId": .string(try nativeThread(id))]))
+            try await connection.setArchived(archived, session: sessionForChat(id))
         } catch {
             self.error = (archived ? L10n.text("Не удалось подтвердить архивирование: ", "Could not confirm archiving: ") : L10n.text("Не удалось подтвердить восстановление: ", "Could not confirm restoring: ")) + error.localizedDescription
             return
@@ -502,7 +495,7 @@ private struct ChatRunState {
         runs[id, default: ChatRunState()].queuePaused = true
         defer { deletingChatIDs.remove(id) }
         do {
-            _ = try await connection.request("thread/delete", params: .object(["threadId": .string(try nativeThread(id))]))
+            try await connection.delete(sessionForChat(id))
         } catch {
             // Keep the chat and queue on any unconfirmed server result. Never retry deletion.
             runs[id, default: ChatRunState()].queuePaused = true
@@ -559,7 +552,7 @@ private struct ChatRunState {
         runs[thread, default: ChatRunState()].priorityMessageID = id
         runs[thread, default: ChatRunState()].queuePaused = true
         do {
-            _ = try await connection.request("turn/interrupt", params: .object(["threadId": .string(try nativeThread(thread)), "turnId": .string(turn)]))
+            try await connection.interrupt(sessionForChat(thread), turn: turn)
             // Only matching turn/completed releases this chat's next message.
         } catch {
             if runs[thread]?.priorityMessageID == id {
@@ -646,13 +639,9 @@ private struct ChatRunState {
             }
             var id = threadID
             if id == nil {
-                var params = access.threadParameters
-                params["cwd"] = .string(project.path)
-                params["modelProvider"] = .string(route.providerID)
-                if !selectedModel.isEmpty { params["model"] = .string(selectedModel) }
-                let result = try await connection.request("thread/start", params: .object(params))
-                guard let nativeCreated = result["thread"]["id"].string, !nativeCreated.isEmpty else { throw ClientFailure(L10n.text("Не получен ID разговора", "No conversation ID received")) }
-                let session = AgentSessionReference(connection: .originalCodex, nativeID: nativeCreated)
+                let session = try await connection.createSession(projectPath: project.path, access: access,
+                                                                 model: selectedModel, route: route)
+                let nativeCreated = session.nativeID
                 guard ConversationIdentity.appID(for: nativeCreated, in: state) == nil else { throw ConversationIdentity.invalidStorage }
                 var chat = Chat(session: session, projectID: project.id, title: ChatTitle.placeholder(), model: selectedModel)
                 let created = chat.id
@@ -674,11 +663,7 @@ private struct ChatRunState {
             }
             guard let id else { throw ClientFailure(L10n.text("Не выбран разговор", "No conversation selected")) }
             if !loadedThreads.contains(id) {
-                var resumeParams = access.threadParameters
-                resumeParams["threadId"] = .string(try nativeThread(id))
-                resumeParams["cwd"] = .string(project.path)
-                resumeParams["modelProvider"] = .string(route.providerID)
-                _ = try await connection.request("thread/resume", params: .object(resumeParams))
+                try await connection.resume(sessionForChat(id), projectPath: project.path, access: access, route: route)
                 loadedThreads.insert(id)
             }
             if let scheduledRun {
@@ -686,24 +671,21 @@ private struct ChatRunState {
                 try Task.checkCancellation()
                 guard !schedulerStopping else { throw CancellationError() }
             }
-            var params: [String: JSONValue] = ["threadId": .string(try nativeThread(id)), "input": .array([.object(["type": .string("text"), "text": .string(text), "text_elements": .array([])])])]
-            params.merge(access.turnParameters(projectPath: project.path)) { _, new in new }
-            if !selectedModel.isEmpty { params["model"] = .string(selectedModel) }
-            if !selectedEffort.isEmpty { params["effort"] = .string(selectedEffort) }
-            let result = try await connection.request("turn/start", params: .object(params), timeout: 60)
+            let submittedTurn = try await connection.send(text, to: sessionForChat(id), projectPath: project.path,
+                                                          access: access, model: selectedModel, effort: selectedEffort)
             if threadID == nil && scheduledRun == nil {
                 generateChatTitle(id, firstMessage: text, model: selectedModel, route: route)
             }
             if let scheduledRun {
-                guard let turn = result["turn"]["id"].string else { throw ClientFailure(L10n.text("Не получен ID запуска", "No turn ID received")) }
+                guard let turn = submittedTurn else { throw ClientFailure(L10n.text("Не получен ID запуска", "No turn ID received")) }
                 jobLedger = try await jobStore.attach(scheduledRun, thread: id, turn: turn)
                 if Task.isCancelled || schedulerStopping {
-                    _ = try await connection.request("turn/interrupt", params: .object(["threadId": .string(try nativeThread(id)), "turnId": .string(turn)]))
+                    try await connection.interrupt(sessionForChat(id), turn: turn)
                 }
             }
             clearConnectionError()
             setDelivery(localID, phase: L10n.text("Отправлено", "Sent"))
-            if let turn = result["turn"]["id"].string, runs[id]?.running == true {
+            if let turn = submittedTurn, runs[id]?.running == true {
                 runs[id, default: ChatRunState()].turnID = turn
                 if let completion = completedTurns[id + ":" + turn] {
                     finishActiveTurn(threadID: id, turnID: turn, status: completion.status, hasError: completion.hasError)
@@ -756,7 +738,7 @@ private struct ChatRunState {
         runs[thread, default: ChatRunState()].queuePaused = true
         runs[thread, default: ChatRunState()].stopRequested = true
         guard let turn = runs[thread]?.turnID else { return }
-        do { _ = try await connection.request("turn/interrupt", params: .object(["threadId": .string(try nativeThread(thread)), "turnId": .string(turn)])) }
+        do { try await connection.interrupt(sessionForChat(thread), turn: turn) }
         catch { self.error = error.localizedDescription }
     }
     func refreshJobs() async {

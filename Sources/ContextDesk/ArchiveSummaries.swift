@@ -1,5 +1,6 @@
 import Foundation
 import ContextCore
+import CodexAdapter
 
 extension DeskModel {
     var summarySkillsDirectory: URL { summaryHome.deletingLastPathComponent().appendingPathComponent("workflows") }
@@ -146,13 +147,6 @@ extension DeskModel {
     }
 
     private func readSummarySource(_ id: String) async throws -> SummarySource {
-        let native = try nativeThread(id)
-        let result = try await connection.request("thread/read", params: .object([
-            "threadId": .string(native), "includeTurns": .bool(true)
-        ]))
-        guard result["thread"]["id"].string == native else {
-            throw ClientFailure(L10n.text("Получена история другого чата", "Received history for a different chat"))
-        }
-        return try SummarySource(thread: result["thread"])
+        try await connection.summarySource(sessionForChat(id))
     }
 }

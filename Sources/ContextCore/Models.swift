@@ -15,16 +15,7 @@ public enum AccessMode: String, Codable, CaseIterable, Sendable {
     case standard, fullAccess
 
     public var title: String { self == .fullAccess ? L10n.text("Полный доступ", "Full access") : L10n.text("С подтверждениями", "Ask for approval") }
-    public var threadParameters: [String: JSONValue] {
-        ["approvalPolicy": .string(self == .fullAccess ? "never" : "on-request"),
-         "sandbox": .string(self == .fullAccess ? "danger-full-access" : "workspace-write")]
-    }
-    public func turnParameters(projectPath: String) -> [String: JSONValue] {
-        ["approvalPolicy": threadParameters["approvalPolicy"]!,
-         "sandboxPolicy": self == .fullAccess
-            ? .object(["type": .string("dangerFullAccess")])
-            : .object(["type": .string("workspaceWrite"), "writableRoots": .array([.string(projectPath)]), "networkAccess": .bool(false)])]
-    }
+
 }
 public struct Chat: Identifiable, Codable, Hashable, Sendable {
     /// App identity; never pass this value directly to an engine.

@@ -5,9 +5,9 @@ contains a Foundation-only Swift target, typed operations and events, preflight
 validation and conservative delivery tracking. It has no engine transport imports,
 native method names, arbitrary JSON or permission-answer payloads.
 
-This is a contract foundation, not an extracted adapter. Execution paths now use
-explicit app/native identity mapping (stage 2), but do not yet conform to
-`AgentIntegration`. Stages 3–6 remain planned. In particular, no new interactive Claude support, portable persisted
+Execution paths use explicit app/native identity mapping (stage 2). Stage 3 is
+in progress: the transport and typed command boundary now live in `CodexAdapter`,
+but production does not yet conform to `AgentIntegration`. Stages 4–6 remain planned. In particular, no new interactive Claude support, portable persisted
 history, optimizer compatibility or general plugin installation is delivered.
 
 ## Evidence and current capability matrix
@@ -36,7 +36,7 @@ capability switch.
 
 Evidence: `Sources/ContextDesk/DeskModel.swift`, `JobScheduling.swift`,
 `Sources/ContextCore/Models.swift`, `ClaudeJobRunner.swift`,
-`ArchiveSummaryRunner.swift`, `BrowserConfiguration.swift`, `ProviderPlugin.swift`
+`Sources/CodexAdapter/ArchiveSummaryRunner.swift`, `BrowserConfiguration.swift`, `Sources/ContextCore/ProviderPlugin.swift`
 and `RequestRoute.swift`. Claude runner pins `2.1.260`; isolated Codex generation
 pins `0.158.0-alpha.2.1`. The ordinary Codex connection currently has no equivalent
 runtime version gate. Extraction must establish its compatibility check rather
@@ -133,9 +133,10 @@ migrate private app data. Existing regression tests still exercise current paths
 `python3 scripts/check-agent-boundary.py` ensures this target remains independent;
 SwiftPM and the direct compiler fallback both include it.
 
-Stage 3 must extend the dependency check to prohibit native Codex imports and RPC
-calls in application/UI targets once extraction is complete. Enforcing that ban now
-would fail on intentionally unmigrated production code. New app-owned UI copy must
+The stage-3 command increment extends the dependency check to prohibit native
+transport access and raw RPC dispatch in application/UI targets. Legacy event and
+approval JSON remains permitted until normalization is extracted; the check does
+not claim to enforce the final JSON-free application boundary. New app-owned UI copy must
 be paired Russian/English when these types are connected to presentation; this
 stage adds no product copy.
 
@@ -210,3 +211,46 @@ Stage-2 verification: final signed app build passed with SwiftPM/macOS 26.5 SDK 
 boundary, signature/source-digest and diff checks. New unavailable/storage errors
 were reviewed in Russian and English. No live-provider turn, private-state migration
 or installed-app click-through was performed.
+
+
+## Codex extraction: command boundary (stage 3, first increment)
+
+`CodexAdapter` depends on `AgentContract` and `ContextCore`; shared core and
+transcript targets do not depend on it. Both SwiftPM and the direct compiler recipe
+include the new target. `CodexConnection` and its JSONL buffer move out of shared
+core. Native transport access is exported only through `NativeProtocol` SPI for
+the diagnostic probe and protocol fixtures. Normal application imports use
+`CodexClient`, which has no arbitrary request method.
+
+The client owns account/login/logout and model discovery RPCs, limit fetching,
+workflow registration, session creation/resume/send/interrupt, naming,
+archive/restore/delete, history reading and summary-source retrieval. Session
+operations accept `AgentSessionReference` and reject an empty reference or a
+foreign agent/connection before dispatch. History verifies the returned native
+session ID and requires a turns array before exposing typed history turns. The
+application retains persistence-before-send, queue state, scheduler policy and
+ledger updates. Model selectors consume typed catalog entries; entries without a
+model identifier are not offered. History timings retain stored token details.
+
+The existing isolated runner moves unchanged, retaining its independent version,
+configuration and tools-disabled checks. Browser launch settings and native
+permission/provider encodings move into the same target. App-owned home selection,
+route availability checks, plugin process lifecycle and workflow recipe ownership
+remain with existing orchestration. No credentials or installed engine state move.
+
+This increment deliberately does **not** advertise full stage-3 acceptance:
+`CodexClient.events` and approval answers retain the legacy JSON bridge, several
+native parsers remain in shared core, and interactive version gating, account
+revision lifecycle, capability reporting and `AgentIntegration` conformance still
+need implementation. The command DTOs are transitional, not a second portable
+integration contract. No interactive Claude path or offline history is enabled.
+
+Stage-3 command-increment verification (2026-09-27): signed SwiftPM/macOS 26.5
+app build passed, followed by 126 tests through both SwiftPM and a fresh direct
+compiler build (optional scheduler renderer skipped). The added fixtures verify
+wire permissions/native routing, rejection of foreign references before dispatch,
+model decoding, sign-in URL validation and mismatched/incomplete history rejection.
+Signature, current source digest, dependency boundary and diff checks passed.
+Existing Russian/English copy was preserved and reviewed; localization fixtures
+passed. These are local synthetic-provider checks, not live-provider or installed-UI
+acceptance of the complete integration.

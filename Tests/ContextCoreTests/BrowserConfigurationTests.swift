@@ -1,3 +1,4 @@
+import CodexAdapter
 import Foundation
 import Testing
 import TOMLDecoder

@@ -1,3 +1,4 @@
+@_spi(NativeProtocol) import CodexAdapter
 import Foundation
 import Testing
 @testable import ContextCore
@@ -49,7 +50,7 @@ private func fixture() throws -> (URL, URL) {
     let (folder, executable) = try fixture()
     defer { try? FileManager.default.removeItem(at: folder) }
     let client = CodexConnection()
-    let model = DeskModel(connection: client, store: AppStore(file: folder.appendingPathComponent("state.sqlite")))
+    let model = DeskModel(connection: CodexClient(transport: client), store: AppStore(file: folder.appendingPathComponent("state.sqlite")))
     await model.refreshAccount()
     #expect(model.error == "Codex не подключён")
 

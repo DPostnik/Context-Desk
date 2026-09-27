@@ -592,7 +592,7 @@ struct ChatView: View {
                     Spacer()
                     if !model.models.isEmpty {
                         Picker(L10n.text("Модель", "Model"), selection: Binding(get: { model.state.model }, set: { model.selectModel($0) })) {
-                            ForEach(model.models, id: \.self) { entry in Text(entry["displayName"].string ?? L10n.text("Модель", "Model")).tag(entry["model"].string ?? "") }
+                            ForEach(model.models, id: \.self) { entry in Text(entry.displayName).tag(entry.id) }
                         }.pointingHandCursor().labelsHidden().frame(maxWidth: 200, alignment: .trailing).disabled(model.busy)
                         if !model.supportedEfforts.isEmpty {
                             Picker(L10n.text("Рассуждение", "Reasoning"), selection: $model.effort) { ForEach(model.supportedEfforts, id: \.self) { Text($0).tag($0) } }

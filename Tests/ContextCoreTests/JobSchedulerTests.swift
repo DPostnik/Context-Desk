@@ -1,3 +1,4 @@
+@_spi(NativeProtocol) import CodexAdapter
 import Foundation
 import Darwin
 import AppKit
@@ -120,7 +121,7 @@ private func jobFixture() -> ManagedJob {
     try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
     let connection = CodexConnection(); try await connection.start(executable: executable, home: root)
     let store = JobStore(file: root.appendingPathComponent("jobs.json"))
-    let model = DeskModel(connection: connection, store: AppStore(file: root.appendingPathComponent("state.sqlite")), jobStore: store)
+    let model = DeskModel(connection: CodexClient(transport: connection), store: AppStore(file: root.appendingPathComponent("state.sqlite")), jobStore: store)
     let project = Project(path: root.path); model.state.projects = [project]; model.projectID = project.id
     model.chatID = "visible-chat"; model.draft = "Keep my draft"; model.connected = true; model.authenticated = true
     model.schedulerReady = true
@@ -209,7 +210,7 @@ private func jobFixture() -> ManagedJob {
     try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
     let connection = CodexConnection(); try await connection.start(executable: executable, home: root)
     let store = JobStore(file: root.appendingPathComponent("jobs.json"))
-    let model = DeskModel(connection: connection, store: AppStore(file: root.appendingPathComponent("state.sqlite")), jobStore: store)
+    let model = DeskModel(connection: CodexClient(transport: connection), store: AppStore(file: root.appendingPathComponent("state.sqlite")), jobStore: store)
     let project = Project(path: root.path); model.state.projects = [project]; model.connected = true; model.authenticated = true; model.schedulerReady = true
     var job = jobFixture(); job.projectID = project.id
     #expect(await model.saveJob(job))

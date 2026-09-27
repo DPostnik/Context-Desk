@@ -1,3 +1,4 @@
+@_spi(NativeProtocol) import CodexAdapter
 import AppKit
 import Foundation
 import Testing
@@ -127,7 +128,7 @@ import ContextTranscript
     for line in sys.stdin:
         message = json.loads(line)
         if 'id' not in message: continue
-        result = {'thread': {'turns': [{'id': 'turn', 'status': 'completed',
+        result = {'thread': {'id': 'thread', 'turns': [{'id': 'turn', 'status': 'completed',
             'startedAt': 100, 'completedAt': 168, 'durationMs': 67500,
             'items': [{'id': 'comment', 'type': 'agentMessage', 'text': 'Checking'},
                       {'id': 'answer', 'type': 'agentMessage', 'text': 'Done', 'phase': 'final_answer'}]}]}}
@@ -141,7 +142,7 @@ import ContextTranscript
     tracker.observe(TokenCounters(input: 500, cached: 200, output: 50))
     try await store.saveTiming(threadID: "thread", turnID: "turn", timing:
         ResponseTiming(startedAt: Date(timeIntervalSince1970: 1), completedAt: Date(timeIntervalSince1970: 2), tokens: tracker.result))
-    let model = DeskModel(connection: connection, store: store, pluginDirectory: folder.appendingPathComponent("plugins"))
+    let model = DeskModel(connection: CodexClient(transport: connection), store: store, pluginDirectory: folder.appendingPathComponent("plugins"))
     let project = Project(path: folder.path)
     let chat = Chat(id: "thread", projectID: project.id, title: "History", model: "")
     model.state.projects = [project]; model.state.chats = [chat]

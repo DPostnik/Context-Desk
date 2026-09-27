@@ -1,5 +1,6 @@
 import Foundation
 import ContextCore
+@_spi(NativeProtocol) import CodexAdapter
 
 @main struct Probe {
     static func main() async {

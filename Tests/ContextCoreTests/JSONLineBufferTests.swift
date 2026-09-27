@@ -1,3 +1,4 @@
+@testable import CodexAdapter
 import Foundation
 import Testing
 @testable import ContextCore

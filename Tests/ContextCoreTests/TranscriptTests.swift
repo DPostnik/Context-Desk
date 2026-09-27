@@ -1,3 +1,4 @@
+import CodexAdapter
 import AppKit
 import Testing
 import SwiftUI
@@ -9,7 +10,7 @@ import ContextTranscript
     let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let model = DeskModel(store: AppStore(file: folder.appendingPathComponent("state.sqlite")))
     model.authenticated = true
-    model.models = [.object(["model": .string("gpt-5.4"), "displayName": .string("GPT-5.4")])]
+    model.models = [CodexModel(id: "gpt-5.4", displayName: "GPT-5.4")]
     model.state.model = "gpt-5.4"
     model.draft = String(repeating: "Текст сообщения ", count: 100)
     model.items = [TranscriptItem(id: "u", kind: "user", text: model.draft)]
