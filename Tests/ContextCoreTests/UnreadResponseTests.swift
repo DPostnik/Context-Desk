@@ -1,3 +1,5 @@
+@testable import CodexAdapter
+import AgentContract
 import AppKit
 import Foundation
 import Testing
@@ -97,9 +99,9 @@ import ContextTranscript
 
 @Test @MainActor func readingActionClearsOnlyItsNoticeWithoutApproving() {
     let model = DeskModel()
-    let action = PendingAction(id: "request", rpcID: .string("request"),
-                               method: "item/commandExecution/requestApproval",
-                               params: .object(["threadId": .string("thread")]))
+    let request = CodexInteraction(id: UUID(), session: .init(connection: .originalCodex, nativeID: "thread"),
+                                   turn: "turn", kind: .approval(canAllow: true), reason: nil, details: "")
+    let action = PendingAction(interaction: request, threadID: "thread")
     model.pending = [action]
     model.notices = [
         DeskNotice(threadID: "thread", title: "Действие", detail: "", actionID: action.id),

@@ -3,23 +3,38 @@ import ContextCore
 
 /// One process and one ordered JSONL stream. Never retries model turns.
 @_spi(NativeProtocol) public actor CodexConnection {
-    public nonisolated let events: AsyncStream<JSONValue>
-    private let eventSink: AsyncStream<JSONValue>.Continuation
+    /// Diagnostic/isolated-runner view. A connection has exactly one event consumer.
+    public nonisolated var events: AsyncStream<JSONValue> {
+        AsyncStream { continuation in
+            let task = Task { [scopedEvents] in
+                for await event in scopedEvents { continuation.yield(event.message) }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+    nonisolated let scopedEvents: AsyncStream<CodexWireEvent>
+    private let scopedSink: AsyncStream<CodexWireEvent>.Continuation
     private var process: Process?
     private var input: FileHandle?
     private var outputPipe: Pipe?
     private var errorPipe: Pipe?
-    private var buffer = JSONLineBuffer()
+    private var buffer: JSONLineBuffer
+    private let maximumLineBytes: Int
     private var sequence = 0
     private var generation = UUID()
+    private struct PendingRequest { let token: UUID; let thread: String?; let turn: String? }
+    private var approvalRequests: [JSONValue: PendingRequest] = [:]
+    private var seenApprovalIDs = Set<JSONValue>()
     private var pending: [String: CheckedContinuation<JSONValue, any Error>] = [:]
     private var timeouts: [String: Task<Void, Never>] = [:]
     private var reader: Task<Void, Never>?
     public private(set) var serverUserAgent: String?
 
-    public init() {
-        let pair = AsyncStream<JSONValue>.makeStream()
-        events = pair.stream; eventSink = pair.continuation
+    public init(maximumLineBytes: Int = 32 * 1024 * 1024) {
+        self.maximumLineBytes = maximumLineBytes; buffer = JSONLineBuffer(maximumLineBytes: maximumLineBytes)
+        let scoped = AsyncStream<CodexWireEvent>.makeStream()
+        scopedEvents = scoped.stream; scopedSink = scoped.continuation
     }
 
     public func start(executable: URL, home: URL, extraArguments: [String] = []) async throws {
@@ -85,10 +100,43 @@ import ContextCore
         }
     }
 
+    func isCurrent(_ token: UUID) -> Bool { token == generation }
+    func answer(id: JSONValue, result: JSONValue, generation token: UUID, requestToken: UUID) throws {
+        guard token == generation, approvalRequests[id]?.token == requestToken else { throw CodexPendingInteraction.invalidResponse }
+        approvalRequests[id] = nil
+        try answer(id: id, result: result)
+    }
+    func rejectUnknown(id: JSONValue, generation token: UUID) throws {
+        guard token == generation else { return }
+        try rejectUnknown(id: id)
+    }
+    private func emit(_ value: JSONValue) {
+        let method = value["method"].string ?? "", p = value["params"]
+        var requestToken: UUID?
+        if value["id"] != .null {
+            let id = value["id"]
+            if seenApprovalIDs.insert(id).inserted {
+                let token = UUID(); requestToken = token
+                approvalRequests[id] = PendingRequest(token: token, thread: p["threadId"].string, turn: p["turnId"].string)
+            } else { approvalRequests[id] = nil }
+        } else if ["account/updated", "account/login/completed", "client/disconnected"].contains(method) {
+            approvalRequests.removeAll()
+        } else if method == "serverRequest/resolved" {
+            let id = p["requestId"]
+            if approvalRequests[id]?.thread == p["threadId"].string { approvalRequests[id] = nil }
+        } else if method == "turn/completed", p["turn"]["id"].string != nil {
+            approvalRequests = approvalRequests.filter { _, request in
+                request.thread != p["threadId"].string || request.turn != p["turn"]["id"].string
+            }
+        }
+        scopedSink.yield(CodexWireEvent(generation: generation, message: value, requestToken: requestToken))
+    }
     public func answer(id: JSONValue, result: JSONValue) throws {
+        approvalRequests[id] = nil
         try send(.object(["id": id, "result": result]))
     }
     public func rejectUnknown(id: JSONValue) throws {
+        approvalRequests[id] = nil
         try send(.object(["id": id, "error": .object(["code": .number(-32601), "message": .string("Unsupported client request")])]))
     }
     private func send(_ value: JSONValue) throws {
@@ -100,13 +148,15 @@ import ContextCore
         guard token == generation else { return }
         let lines: [Data]
         do { lines = try buffer.append(data) } catch {
-            eventSink.yield(.object(["method": .string("client/error"), "params": .object(["message": .string(L10n.text("Ответ движка превышает допустимый размер", "The engine response exceeds the size limit"))])]))
-            stop(); return
+            stop()
+            emit(.object(["method": .string("client/error"), "params": .object(["message": .string(L10n.text("Ответ движка превышает допустимый размер", "The engine response exceeds the size limit"))])]))
+            emit(.object(["method": .string("client/disconnected"), "params": .object([:])]))
+            return
         }
         for line in lines {
             guard !line.isEmpty else { continue }
             guard let message = try? JSONDecoder().decode(JSONValue.self, from: Data(line)) else { continue }
-            if message["method"].string != nil { eventSink.yield(message); continue }
+            if message["method"].string != nil { emit(message); continue }
             guard let id = message["id"].string, let c = pending.removeValue(forKey: id) else { continue }
             timeouts.removeValue(forKey: id)?.cancel()
             if message["error"] != .null {
@@ -119,13 +169,13 @@ import ContextCore
         pending.removeValue(forKey: id)?.resume(throwing: ClientFailure(L10n.text("Истекло время ожидания \(method). Запрос не повторён автоматически.", "\(method) timed out. The request was not retried automatically.")))
         if method == "turn/start" || method == "turn/steer" {
             stop()
-            eventSink.yield(.object(["method": .string("client/disconnected"), "params": .object([:])]))
+            emit(.object(["method": .string("client/disconnected"), "params": .object([:])]))
         }
     }
     private func terminated(token: UUID, status: Int32) {
         guard generation == token else { return }
         cleanUp()
-        eventSink.yield(.object(["method": .string("client/disconnected"), "params": .object(["status": .number(Double(status))])]))
+        emit(.object(["method": .string("client/disconnected"), "params": .object(["status": .number(Double(status))])]))
     }
     public func stop() {
         let child = process
@@ -134,13 +184,16 @@ import ContextCore
         if child?.isRunning == true { child?.terminate() }
     }
     private func cleanUp() {
+        approvalRequests.removeAll(); seenApprovalIDs.removeAll()
         outputPipe?.fileHandleForReading.readabilityHandler = nil
         errorPipe?.fileHandleForReading.readabilityHandler = nil
         try? input?.close(); input = nil
-        reader?.cancel(); reader = nil; buffer = JSONLineBuffer()
+        reader?.cancel(); reader = nil; buffer = JSONLineBuffer(maximumLineBytes: maximumLineBytes)
         for task in timeouts.values { task.cancel() }; timeouts.removeAll()
         let waiting = pending.values; pending.removeAll()
         for c in waiting { c.resume(throwing: ClientFailure(L10n.text("Соединение с Codex закрыто", "The connection to Codex is closed"))) }
         process = nil; outputPipe = nil; errorPipe = nil
     }
 }
+
+struct CodexWireEvent: Sendable { let generation: UUID; let message: JSONValue; var requestToken: UUID? = nil }

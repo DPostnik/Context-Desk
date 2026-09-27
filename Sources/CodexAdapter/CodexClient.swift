@@ -2,26 +2,35 @@ import Foundation
 import AgentContract
 import ContextCore
 
-/// Transitional command boundary for the existing application. Event/approval
-/// normalization and AgentIntegration adoption are separate stage-3 work.
+/// Typed command/event boundary. Full AgentIntegration adoption remains stage-3 work.
 public actor CodexClient {
-    private let transport: CodexConnection
-    public nonisolated let events: AsyncStream<JSONValue>
+    let transport: CodexConnection
+    public nonisolated let events: AsyncStream<CodexEvent>
+    let eventSink: AsyncStream<CodexEvent>.Continuation
+    var eventTask: Task<Void, Never>?
+    var interactionEpoch = UUID()
+    var requestGeneration: UUID?
+    var seenRequestIDs = Set<JSONValue>()
+    var knownSessions = Set<AgentSessionReference>()
+    var interactions: [UUID: (pending: CodexPendingInteraction, generation: UUID, token: UUID)] = [:]
 
     public init() {
         let transport = CodexConnection()
-        self.transport = transport; events = transport.events
+        self.transport = transport
+        let pair = AsyncStream<CodexEvent>.makeStream(); events = pair.stream; eventSink = pair.continuation
     }
 
     @_spi(NativeProtocol) public init(transport: CodexConnection) {
         self.transport = transport
-        events = transport.events
+        let pair = AsyncStream<CodexEvent>.makeStream(); events = pair.stream; eventSink = pair.continuation
     }
 
     public func start(executable: URL, home: URL, extraArguments: [String] = []) async throws {
+        observeEvents()
         try await transport.start(executable: executable, home: home, extraArguments: extraArguments)
     }
-    public func stop() async { await transport.stop() }
+    public func stop() async { resetInteractions(); await transport.stop() }
+    deinit { eventTask?.cancel(); eventSink.finish() }
 
     public func account() async throws -> CodexAccount {
         let result = try await transport.request("account/read", params: .object(["refreshToken": .bool(false)]))
@@ -36,7 +45,7 @@ public actor CodexClient {
         }
         return url
     }
-    public func signOut() async throws { _ = try await transport.request("account/logout") }
+    public func signOut() async throws { resetInteractions(); _ = try await transport.request("account/logout") }
     public func models() async throws -> [CodexModel] {
         let result = try await transport.request("model/list", params: .object(["limit": .number(100), "includeHidden": .bool(false)]))
         return result["data"].array.compactMap(CodexModel.init)
@@ -57,7 +66,9 @@ public actor CodexClient {
         guard let id = result["thread"]["id"].string, !id.isEmpty else {
             throw ClientFailure(L10n.text("Не получен ID разговора", "No conversation ID received"))
         }
-        return AgentSessionReference(connection: .originalCodex, nativeID: id)
+        let session = AgentSessionReference(connection: .originalCodex, nativeID: id)
+        knownSessions.insert(session)
+        return session
     }
     public func resume(_ session: AgentSessionReference, projectPath: String, access: AccessMode, route: RequestRoute) async throws {
         var params = access.threadParameters
@@ -116,12 +127,11 @@ public actor CodexClient {
     }
     private func nativeID(_ session: AgentSessionReference) throws -> String {
         guard session.connection == .originalCodex, !session.nativeID.isEmpty else { throw ConversationIdentity.unavailable }
+        knownSessions.insert(session); observeEvents()
         return session.nativeID
     }
 
-    // Temporary bridge: remove when event and approval normalization is migrated.
-    public func answer(id: JSONValue, result: JSONValue) async throws { try await transport.answer(id: id, result: result) }
-    public func rejectUnknown(id: JSONValue) async throws { try await transport.rejectUnknown(id: id) }
+
 }
 
 public struct CodexAccount: Sendable {

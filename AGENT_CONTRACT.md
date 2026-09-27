@@ -6,7 +6,7 @@ validation and conservative delivery tracking. It has no engine transport import
 native method names, arbitrary JSON or permission-answer payloads.
 
 Execution paths use explicit app/native identity mapping (stage 2). Stage 3 is
-in progress: the transport and typed command boundary now live in `CodexAdapter`,
+in progress: the transport, typed commands/events and approval boundary now live in `CodexAdapter`,
 but production does not yet conform to `AgentIntegration`. Stages 4–6 remain planned. In particular, no new interactive Claude support, portable persisted
 history, optimizer compatibility or general plugin installation is delivered.
 
@@ -134,9 +134,9 @@ migrate private app data. Existing regression tests still exercise current paths
 SwiftPM and the direct compiler fallback both include it.
 
 The stage-3 command increment extends the dependency check to prohibit native
-transport access and raw RPC dispatch in application/UI targets. Legacy event and
-approval JSON remains permitted until normalization is extracted; the check does
-not claim to enforce the final JSON-free application boundary. New app-owned UI copy must
+transport access and raw RPC dispatch in application/UI targets. The event increment additionally prohibits `JSONValue` and native method literals
+in app/UI sources. Shared-core native decoder helpers and full runtime contract
+adoption remain separate work. New app-owned UI copy must
 be paired Russian/English when these types are connected to presentation; this
 stage adds no product copy.
 
@@ -239,8 +239,8 @@ route availability checks, plugin process lifecycle and workflow recipe ownershi
 remain with existing orchestration. No credentials or installed engine state move.
 
 This increment deliberately does **not** advertise full stage-3 acceptance:
-`CodexClient.events` and approval answers retain the legacy JSON bridge, several
-native parsers remain in shared core, and interactive version gating, account
+the initial event/approval JSON bridge has now been removed by the increment below.
+Several native parsers remain in shared core, and interactive version gating, account
 revision lifecycle, capability reporting and `AgentIntegration` conformance still
 need implementation. The command DTOs are transitional, not a second portable
 integration contract. No interactive Claude path or offline history is enabled.
@@ -254,3 +254,55 @@ Signature, current source digest, dependency boundary and diff checks passed.
 Existing Russian/English copy was preserved and reviewed; localization fixtures
 passed. These are local synthetic-provider checks, not live-provider or installed-UI
 acceptance of the complete integration.
+
+
+## Codex extraction: typed events and interactions (stage 3, second increment)
+
+`CodexClient.events` now streams `CodexEvent`, with connection-scoped session
+references and typed message/delta, usage, turn timing/completion, account,
+diagnostic and interaction payloads. App orchestration maps sessions back to app
+conversation IDs, persists usage/timing, updates notifications and owns queue and
+scheduler policy. Application/UI code neither inspects native method names nor
+constructs native JSON. Literal request details are display-only evidence.
+
+Native request IDs stay in the adapter. The UI receives a fresh UUID handle and
+can submit only a typed response. The adapter checks identity, allowed response
+kind and required fields; it consumes the handle before awaiting the write, so
+ambiguous delivery never invites a repeated answer. The transport independently
+checks a process generation and request nonce immediately before writing. It
+invalidates nonces as soon as it reads account changes, request resolution or turn
+completion, closing the race while those events are still queued for presentation.
+Disconnect and explicit stop invalidate all outstanding interactions. Duplicate
+native request IDs cannot regain approval within the same connection lifetime.
+Unknown or malformed requests and requests for unowned sessions fail closed.
+
+Supported presentations preserve existing ordinary one-time command/file approvals,
+plain text questions (including secret input), HTTPS tool links, plain string MCP
+forms and simple legacy path/network permission requests. Command decisions are
+restricted to those offered by the engine. `grantRoot` file requests, richer
+entry/glob permissions and unsupported form constraints are shown without an
+approval/submit control; explicit decline remains available. A constrained form
+is never flattened into unrestricted strings. Native user content remains data.
+These conservative limits are visible compatibility restrictions, not universal
+support for every request type in the provider protocol.
+
+Native schema evidence: generated locally from Codex CLI `0.158.0-alpha.2.1` with
+`app-server generate-json-schema --experimental`, using a temporary `CODEX_HOME`.
+This inspected the schema only; it neither authenticated nor executed provider
+work. It does not establish interactive runtime version gating. The general
+`AgentIntegration` account-revision/capability lifecycle is still pending.
+
+The transport has one scoped event stream. Its SPI JSON view is reserved for
+isolated runners and diagnostics, avoiding a second unconsumed copy in production.
+An oversized wire record closes the connection, invalidates approvals and emits
+both an error and a disconnect on the current generation; filtering obsolete
+process events must not hide that failure from scheduler/queue recovery.
+
+Stage-3 event-increment verification (2026-09-27): final signed app build passed
+with SwiftPM/macOS 26.5 SDK, followed by all 132 tests (optional scheduler renderer
+skipped). Six new synthetic-provider tests cover decision/schema restrictions,
+scoped single-use answers, transport-time invalidation, unknown/repeated requests,
+old generations, turn resolution, timing/missing usage and oversized-input recovery.
+Existing routing, notice, queue, scheduler, isolation and persistence fixtures passed.
+Russian/English copy was reviewed; boundary, signature/source digest and diff checks
+passed. No live-provider approval or installed-app click-through was performed.

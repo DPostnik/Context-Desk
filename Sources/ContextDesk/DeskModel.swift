@@ -7,12 +7,13 @@ import CodexAdapter
 import AgentContract
 
 struct PendingAction: Identifiable {
-    let id: String
-    let rpcID: JSONValue
-    let method: String
-    let params: JSONValue
-    var threadID: String { params["threadId"].string ?? "" }
-    var title: String { method.contains("requestUserInput") ? L10n.text("Нужен твой ответ", "Your input is needed") : L10n.text("Требуется действие", "Action required") }
+    let interaction: CodexInteraction
+    let threadID: String
+    var id: String { interaction.id.uuidString }
+    var title: String {
+        if case .questions = interaction.kind { return L10n.text("Нужен твой ответ", "Your input is needed") }
+        return L10n.text("Требуется действие", "Action required")
+    }
 }
 
 struct DeskNotice: Identifiable {
@@ -160,6 +161,7 @@ private struct ChatRunState {
                                       completionID: chat.unreadCompletionID))
         }
         await refreshJobs()
+        await connection.observeEvents(sessions: state.chats.compactMap(\.nativeSession))
         eventTask = Task { [weak self, connection] in
             for await event in connection.events { await self?.receive(event) }
         }
@@ -807,10 +809,10 @@ private struct ChatRunState {
         guard let chat = state.chats.first(where: { $0.id == threadID }) else { return }
         await openChat(chat)
     }
-    func answer(_ action: PendingAction, result: JSONValue) async {
+    func answer(_ action: PendingAction, result: CodexInteractionResponse) async {
         guard pending.contains(where: { $0.id == action.id }), chatIsAvailable(action.threadID), connected else { return }
         do {
-            try await connection.answer(id: action.rpcID, result: result)
+            try await connection.answer(action.interaction.id, session: action.interaction.session, response: result)
             pending.removeAll { $0.id == action.id }
             removeActionNotices([action])
             NSApplication.shared.dockTile.badgeLabel = pending.isEmpty ? nil : String(pending.count)
@@ -858,36 +860,26 @@ private struct ChatRunState {
     }
     private func persist() { let snapshot = state; Task { do { try await store.save(snapshot) } catch { self.error = error.localizedDescription } } }
 
-    func receive(_ event: JSONValue) async {
-        let method = event["method"].string ?? ""
-        var p = event["params"]
-        if let native = p["threadId"].string {
-            guard let appID = ConversationIdentity.appID(for: native, in: state) else {
-                if event["id"] != .null { try? await connection.rejectUnknown(id: event["id"]) }
-                return
-            }
-            var fields = p.object; fields["threadId"] = .string(appID); p = .object(fields)
-        } else if event["id"] != .null {
-            try? await connection.rejectUnknown(id: event["id"])
+    func receive(_ event: CodexEvent) async {
+        let thread = event.session.flatMap { ConversationIdentity.appID(for: $0.nativeID, in: state, connection: $0.connection) }
+        if event.session != nil && thread == nil {
+            if case .interaction(let request) = event.payload { await connection.rejectInteraction(request.id) }
             return
         }
-        if event["id"] != .null {
-            let supported = ["item/commandExecution/requestApproval", "item/fileChange/requestApproval", "item/tool/requestUserInput", "item/permissions/requestApproval", "mcpServer/elicitation/request"]
-            guard supported.contains(method) else {
-                try? await connection.rejectUnknown(id: event["id"])
-                error = L10n.text("Движок запросил пока неподдерживаемое действие: \(method)", "The engine requested an unsupported action: \(method)"); return
-            }
-            let action = PendingAction(id: event["id"].display, rpcID: event["id"], method: method, params: p)
+        switch event.payload {
+        case .interaction(let request):
+            guard let thread else { await connection.rejectInteraction(request.id); return }
+            let action = PendingAction(interaction: request, threadID: thread)
             if !pending.contains(where: { $0.id == action.id }) { pending.append(action); notify(action) }
-            return
-        }
-        switch method {
-        case "account/login/completed", "account/updated":
+        case .interactionsReset:
+            removeActionNotices(pending); pending.removeAll()
+            NSApplication.shared.dockTile.badgeLabel = nil
+        case .accountChanged(let issue):
             clearLimits()
-            if p["success"].bool == false { error = p["error"].string ?? L10n.text("Вход не выполнен", "Not signed in") }
+            if let issue { error = issue }
             await refreshAccount()
-        case "account/rateLimits/updated": await refreshLimits()
-        case "client/disconnected":
+        case .limitsChanged: await refreshLimits()
+        case .disconnected:
             connected = false
             for run in jobLedger.runs where run.engine == .codex && run.status.active {
                 await finishJob(run.id, status: .uncertain, output: L10n.text("Соединение потеряно; повторной отправки не было.", "Connection lost; the task was not sent again."))
@@ -897,15 +889,15 @@ private struct ChatRunState {
             loadedThreads.removeAll(); pending.removeAll(); deltas.removeAll()
             NSApplication.shared.dockTile.badgeLabel = nil
             error = L10n.text("Codex отключился. Подключись заново; отправка не будет повторена автоматически.", "Codex disconnected. Reconnect; the message will not be sent again automatically.")
-        case "client/error": error = p["message"].string
-        case "serverRequest/resolved":
-            let resolved = pending.filter { $0.rpcID == p["requestId"] && $0.threadID == p["threadId"].string }
+        case .diagnostic(let message): error = message
+        case .resolved(let requestID):
+            let resolved = pending.filter { $0.interaction.id == requestID && $0.threadID == thread }
             pending.removeAll { action in resolved.contains { $0.id == action.id } }
             removeActionNotices(resolved)
             NSApplication.shared.dockTile.badgeLabel = pending.isEmpty ? nil : String(pending.count)
-        case "thread/tokenUsage/updated":
-            if let id = p["threadId"].string {
-                if let turn = p["turnId"].string, let total = TokenCounters(p["tokenUsage"]["total"]) {
+        case .usage(let turn, let total, let snapshot):
+            if let id = thread {
+                if let turn, let total {
                     let key = id + ":" + turn
                     // No baseline is assumed when attaching to a running turn.
                     if turnTokens[key] == nil { turnTokens[key] = ResponseTokenTracker(baseline: nil) }
@@ -921,12 +913,11 @@ private struct ChatRunState {
                         try? await store.saveTiming(threadID: id, turnID: turn, timing: timing)
                     }
                 }
-                let snapshot = UsageSnapshot(event: p)
                 usage[id] = snapshot
                 try? await store.saveUsage(threadID: id, snapshot: snapshot)
             }
-        case "turn/started":
-            if let thread = p["threadId"].string, let turn = p["turn"]["id"].string,
+        case .started(let turn):
+            if let thread,
                completedTurns[thread + ":" + turn] == nil {
                 turnStarts[thread + ":" + turn] = turnStarts[thread + ":" + turn] ?? Date()
                 if turnTokens[thread + ":" + turn] == nil {
@@ -935,45 +926,43 @@ private struct ChatRunState {
                 runs[thread, default: ChatRunState()].running = true
                 runs[thread, default: ChatRunState()].turnID = turn
             }
-        case "turn/completed":
+        case .completed(let completion):
             flushDeltas()
-            if let threadID = p["threadId"].string, let turnID = p["turn"]["id"].string,
+            let turnID = completion.id
+            if let threadID = thread,
                notifiedTurns.insert(threadID + ":" + turnID).inserted {
                 let observed = ResponseTiming(startedAt: turnStarts.removeValue(forKey: threadID + ":" + turnID), completedAt: Date(),
                                               tokens: turnTokens[threadID + ":" + turnID]?.result)
-                let timing = ResponseTiming.parse(p["turn"], fallback: observed) ?? observed
+                let timing = completion.timing(fallback: observed)
                 if threadID == chatID, let index = items.lastIndex(where: { $0.kind == "assistant" && $0.turnID == turnID }) { items[index].timing = timing }
                 try? await store.saveTiming(threadID: threadID, turnID: turnID, timing: timing)
-                let status = p["turn"]["status"].string
-                let title = p["turn"]["error"] != .null || status == "failed" ? L10n.text("Ошибка в разговоре", "Conversation error") : status == "interrupted" ? L10n.text("Ответ остановлен", "Response stopped") : L10n.text("Ответ готов", "Response ready")
+                let status = completion.status
+                let title = completion.hasError || status == "failed" ? L10n.text("Ошибка в разговоре", "Conversation error") : status == "interrupted" ? L10n.text("Ответ остановлен", "Response stopped") : L10n.text("Ответ готов", "Response ready")
                 let completionID = "turn:" + threadID + ":" + turnID
                 recordUnreadCompletion(threadID: threadID, completionID: completionID)
                 postNotice(threadID: threadID, title: title, identifier: completionID, completionID: completionID)
             }
-            finishActiveTurn(threadID: p["threadId"].string, turnID: p["turn"]["id"].string,
-                             status: p["turn"]["status"].string, hasError: p["turn"]["error"] != .null)
-            let resolved = pending.filter { $0.threadID == p["threadId"].string && $0.params["turnId"] == p["turn"]["id"] }
+            finishActiveTurn(threadID: thread, turnID: turnID,
+                             status: completion.status, hasError: completion.hasError)
+            let resolved = pending.filter { $0.threadID == thread && $0.interaction.turn == turnID }
             pending.removeAll { action in resolved.contains { $0.id == action.id } }
             removeActionNotices(resolved)
             NSApplication.shared.dockTile.badgeLabel = pending.isEmpty ? nil : String(pending.count)
-            if p["turn"]["error"] != .null { error = p["turn"]["error"]["message"].string ?? L10n.text("Задача завершилась с ошибкой", "The task failed") }
-        case "item/started", "item/completed":
-            guard p["threadId"].string == chatID, var item = TranscriptItem.parse(p["item"]) else { return }
+            if completion.hasError { error = completion.error ?? L10n.text("Задача завершилась с ошибкой", "The task failed") }
+        case .item(let item):
+            guard thread == chatID else { return }
             flushDeltas()
-            item.turnID = p["turnId"].string
             TranscriptItem.merge(item, into: &items)
-        case "item/agentMessage/delta":
-            guard p["threadId"].string == chatID, let id = p["itemId"].string else { return }
+        case .delta(let turn, let id, let text):
+            guard thread == chatID else { return }
             if !items.contains(where: { $0.id == id }) { items.append(TranscriptItem(id: id, kind: "assistant", text: "")) }
-            if let index = items.firstIndex(where: { $0.id == id }) { items[index].turnID = p["turnId"].string }
-            deltas[id, default: ""] += p["delta"].string ?? ""
+            if let index = items.firstIndex(where: { $0.id == id }) { items[index].turnID = turn }
+            deltas[id, default: ""] += text
             if deltaTask == nil {
                 deltaTask = Task { [weak self] in
                     try? await Task.sleep(for: .milliseconds(50)); self?.flushDeltas(); self?.deltaTask = nil
                 }
             }
-        case "error": error = p["error"]["message"].string ?? p["message"].string ?? L10n.text("Ошибка Codex", "Codex error")
-        default: break
         }
     }
     private func flushDeltas() {

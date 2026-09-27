@@ -1,3 +1,4 @@
+@testable import CodexAdapter
 import Foundation
 import Testing
 import CSQLite
@@ -190,21 +191,21 @@ private func legacyState() -> SavedState {
     model.state.projects = [project]; model.state.chats = [original, foreign]
     try await store.save(model.state)
     model.chatID = original.id
-    await model.receive(.object(["method": .string("item/completed"), "params": .object([
+    await model.receiveNativeFixture(.object(["method": .string("item/completed"), "params": .object([
         "threadId": .string("same"), "turnId": .string("v"),
         "item": .object(["id": .string("i"), "type": .string("agentMessage"), "text": .string("Scoped reply")])])]))
     #expect(model.items.map(\.text) == ["Scoped reply"])
-    await model.receive(.object(["method": .string("thread/tokenUsage/updated"), "params": .object([
+    await model.receiveNativeFixture(.object(["method": .string("thread/tokenUsage/updated"), "params": .object([
         "threadId": .string("same"), "tokenUsage": .object(["last": .object(["totalTokens": .number(17)])])])]))
     #expect(model.usage[original.id]?.last == 17)
     #expect(model.usage[foreign.id] == nil)
     #expect(try await store.loadUsage()[original.id]?.last == 17)
     #expect(try await store.loadUsage()["same"] == nil)
     model.chatID = foreign.id; model.items = []
-    await model.receive(.object(["method": .string("item/completed"), "params": .object([
+    await model.receiveNativeFixture(.object(["method": .string("item/completed"), "params": .object([
         "threadId": .string("same"), "item": .object(["id": .string("i"), "type": .string("agentMessage"), "text": .string("Must stay out")])])]))
     #expect(model.items.isEmpty)
-    await model.receive(.object(["method": .string("thread/tokenUsage/updated"), "params": .object(["threadId": .string("unknown")])]))
+    await model.receiveNativeFixture(.object(["method": .string("thread/tokenUsage/updated"), "params": .object(["threadId": .string("unknown")])]))
     #expect(model.usage.count == 1)
 }
 
@@ -229,4 +230,10 @@ private func legacyState() -> SavedState {
         try rawPut(db, "transcript:legacy", JSONEncoder().encode(JSONValue.object(raw)))
     }
     await #expect(throws: ClientFailure.self) { try await AppStore(file: file).loadTranscript(conversationID: "legacy") }
+}
+
+@MainActor private extension DeskModel {
+    func receiveNativeFixture(_ raw: JSONValue) async {
+        if let event = CodexEventDecoder.notification(raw) { await receive(event) }
+    }
 }

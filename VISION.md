@@ -4,7 +4,7 @@ Date: 2026-09-25; revised 2026-09-27.
 
 Source: agreed product direction, audit of version 0.2.1 at `a6d5b2c`, and user request to update the plan.
 
-Status: accepted direction and revised implementation plan. Stages 1–2 provide the typed contract foundation, capability matrix, app conversation identities and persistence migration. Stage 3 is in progress: Codex transport and typed command operations now live in a separate adapter target. Legacy event/approval handling and full contract adoption remain; stages 4–6 are planned. See [AGENT_CONTRACT.md](AGENT_CONTRACT.md) for boundaries and acceptance evidence.
+Status: accepted direction and revised implementation plan. Stages 1–2 provide the typed contract foundation, capability matrix, app conversation identities and persistence migration. Stage 3 is in progress: Codex transport, typed commands/events and approval encoding now live in a separate adapter target. Shared native decoders and full contract adoption remain; stages 4–6 are planned. See [AGENT_CONTRACT.md](AGENT_CONTRACT.md) for boundaries and acceptance evidence.
 
 ## Purpose
 
@@ -110,7 +110,7 @@ Currently shipped:
 
 Not yet implemented:
 
-- Complete Codex extraction and runtime adoption of the new engine-independent contract; the transport/command target is extracted, while events, approvals and shared native decoders remain to migrate.
+- Complete Codex extraction and runtime adoption of the new engine-independent contract; commands, events and approval handling are extracted, while shared native decoders and full contract conformance remain to migrate.
 - Interactive Claude Code sessions and agent selection for chats; the existing job-only adapter is not full interactive support.
 - App-owned portable transcripts and cross-agent handoffs.
 - Portable routine definitions and execution mappings.
@@ -140,7 +140,7 @@ Acceptance: legacy data loads with the original Codex association; identical nat
 
 ### 3. Extract the complete Codex integration
 
-Status (2026-09-27): in progress. The first extraction increment introduces `CodexAdapter` with the transport, JSONL buffering, isolated generation, browser launch settings and native permission/provider encodings. App account/model/history/session commands and scheduled interruption now use typed `CodexClient` methods with connection-scoped session references. Native transport access requires a diagnostic SPI; the dependency check rejects transport access and raw RPC dispatch in app/UI sources. This is a transitional API, not `AgentIntegration` conformance. Legacy events/approval JSON, native decoders in shared core, connection/version/capability lifecycle and end-to-end contract adoption remain before this stage's acceptance is met. No new agent execution path is enabled.
+Status (2026-09-27): in progress. The first extraction increment introduces `CodexAdapter` with the transport, JSONL buffering, isolated generation, browser launch settings and native permission/provider encodings. App account/model/history/session commands and scheduled interruption now use typed `CodexClient` methods with connection-scoped session references. Native transport access requires a diagnostic SPI; the dependency check rejects transport access and raw RPC dispatch in app/UI sources. This is a transitional API, not `AgentIntegration` conformance. The second increment removes event/approval JSON from app/UI: typed events preserve scoped session identity, and single-use interaction handles are validated in both client and transport before sending. Unknown/repeated requests fail closed; unsupported forms and permission scopes cannot be approved. Native decoders in shared core, connection/version/capability lifecycle and end-to-end contract adoption remain before this stage's acceptance is met. No new agent execution path is enabled.
 
 Move RPC calls and event parsing, account/model discovery, permissions, history decoding, metrics, optimization-route configuration, browser/skill registration and isolated generation into the Codex adapter. Application code continues to own navigation, queues, scheduling policy and presentation. Enforce the boundary through separate Swift targets.
 

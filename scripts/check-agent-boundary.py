@@ -18,8 +18,7 @@ for path in sorted((root / 'Sources/AgentContract').glob('*.swift')):
 package = (root / 'Package.swift').read_text()
 if '.target(name: "AgentContract"),' not in package:
     failures.append('AgentContract must remain a target with no package dependencies')
-# Stage 3a isolates commands and transport. Legacy event/approval JSON is still
-# permitted until its separately tested normalization is implemented.
+# Commands, notifications and approval encoding belong to the adapter.
 for folder in ['ContextCore', 'ContextDesk', 'ContextTranscript']:
     for path in sorted((root / 'Sources' / folder).glob('*.swift')):
         source = path.read_text()
@@ -27,6 +26,9 @@ for folder in ['ContextCore', 'ContextDesk', 'ContextTranscript']:
             failures.append(f'{path}: native transport bypasses CodexClient')
         if folder in ['ContextDesk', 'ContextTranscript'] and re.search(r'\.request\s*\(', source):
             failures.append(f'{path}: raw RPC dispatch in application/UI')
+        if folder in ['ContextDesk', 'ContextTranscript']:
+            if re.search(r'\bJSONValue\b|"(?:thread|turn|account|item|model|mcpServer|serverRequest)/[^"\n]+"', source):
+                failures.append(f'{path}: native payload/method in application/UI')
         if folder != 'ContextDesk' and re.search(r'import\s+CodexAdapter', source):
             failures.append(f'{path}: adapter dependency in shared core/transcript')
 if '.target(name: "CodexAdapter", dependencies: ["AgentContract", "ContextCore"]),' not in package:
@@ -35,4 +37,4 @@ if (root / 'Sources/ContextCore/CodexConnection.swift').exists():
     failures.append('Native transport must live in CodexAdapter')
 if failures:
     sys.exit('\n'.join(failures))
-print('AgentContract and Codex command boundaries passed (stage 3a; legacy event bridge remains).')
+print('AgentContract and Codex command/event boundaries passed (stage 3b).')

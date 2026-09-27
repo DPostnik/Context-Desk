@@ -10,7 +10,7 @@ extension DeskModel {
         }
         return session
     }
-    /// Legacy event routing remains until event normalization moves into the adapter.
+    /// Application identity ownership remains independent of the native event decoder.
     func nativeThread(_ appID: String) throws -> String {
         try ConversationIdentity.nativeID(for: appID, in: state)
     }
