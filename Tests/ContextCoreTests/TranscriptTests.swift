@@ -358,3 +358,56 @@ import ContextTranscript
     #expect(!view.transcript.string.contains(copied))
     #expect(pasteboard.string(forType: .string) == "Ответ")
 }
+
+@Test @MainActor func quotedReplyCardsCopyOnlyTheirVisibleText() throws {
+    let pasteboard = NSPasteboard.withUniqueName()
+    defer { pasteboard.releaseGlobally() }
+    let view = TranscriptScrollView(pasteboard: pasteboard)
+    view.frame = NSRect(x: 0, y: 0, width: 620, height: 700)
+    let source = "Можно ответить так:\n\n> Hi Elina,\n>\n> Спасибо за разговор 👋.\n> Could you please confirm the details before we proceed with the submission?\n>\n> Best regards,\n> Daniil\n\nВторой вариант:\n\n> Короткий ответ.\n\n```text\n> literal code\n```"
+    var items = [TranscriptItem(id: "reply", kind: "assistant", text: source)]
+    view.update(items: items, conversationID: "quotes", followOutput: false)
+    let storage = try #require(view.transcript.textStorage)
+    func controls() -> [(Int, String)] {
+        var result: [(Int, String)] = []
+        storage.enumerateAttribute(NSAttributedString.Key("ContextDeskQuoteCopy"), in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+            if let body = value as? String { result.append((range.location, body)) }
+        }
+        return result
+    }
+    #expect(controls().count == 2)
+    #expect(storage.string.contains("> literal code"))
+    #expect(!storage.string.contains("> Hi Elina"))
+    #expect(!view.transcript.isEditable && view.transcript.isSelectable)
+    let first = try #require(controls().first)
+    _ = view.textView(view.transcript, clickedOnLink: "contextdesk-quote-copy", at: first.0)
+    #expect(pasteboard.string(forType: .string) == "Hi Elina,\n\nСпасибо за разговор 👋.\nCould you please confirm the details before we proceed with the submission?\n\nBest regards,\nDaniil")
+    #expect(storage.string.contains(L10n.text("Скопировано", "Copied")))
+    let second = try #require(controls().last)
+    _ = view.textView(view.transcript, clickedOnLink: "contextdesk-quote-copy", at: second.0)
+    #expect(pasteboard.string(forType: .string) == "Короткий ответ.")
+    let changeCount = pasteboard.changeCount
+    _ = view.textView(view.transcript, clickedOnLink: "contextdesk-quote-copy", at: 0)
+    #expect(pasteboard.changeCount == changeCount)
+    for width in [620.0, 340.0] {
+        view.frame.size.width = width
+        view.layoutSubtreeIfNeeded()
+        let manager = try #require(view.transcript.layoutManager)
+        let container = try #require(view.transcript.textContainer)
+        manager.ensureLayout(for: container)
+        #expect(manager.usedRect(for: container).maxX <= container.containerSize.width + 1)
+        if let path = ProcessInfo.processInfo.environment["CONTEXTDESK_RENDER_PATH"] {
+            view.drawsBackground = true; view.backgroundColor = .windowBackgroundColor
+            let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+            view.cacheDisplay(in: view.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path + ".quote-\(Int(width)).png"))
+        }
+    }
+    items[0].text = "> Updated reply"
+    view.update(items: items, conversationID: "quotes", followOutput: false)
+    #expect(controls().count == 1)
+    _ = view.textView(view.transcript, clickedOnLink: "contextdesk-quote-copy", at: try #require(controls().first).0)
+    #expect(pasteboard.string(forType: .string) == "Updated reply")
+    view.update(items: [TranscriptItem(id: "u", kind: "user", text: "> user content")], conversationID: "other", followOutput: false)
+    #expect(controls().isEmpty)
+}

@@ -40,7 +40,7 @@ public struct NativeTranscript: NSViewRepresentable {
     private var wasWorking = false
     private var expandedActions: Set<String> = []
     private var expandedMetrics: Set<String> = []
-    private var copyFeedback: (id: String, succeeded: Bool)?
+    private var copyFeedback: (id: String, succeeded: Bool, block: Int?)?
     private var copyFeedbackTask: Task<Void, Never>?
     private var needsEndScroll = false
     private var unreadCompletionID: String?
@@ -319,6 +319,7 @@ public struct NativeTranscript: NSViewRepresentable {
                 }
             }
         }
+        var quoteIndex = 0
         for (index, block) in item.text.components(separatedBy: "```").enumerated() {
             let isCode = index % 2 == 1 || item.kind == "activity"
             let font = isCode ? NSFont.monospacedSystemFont(ofSize: 12, weight: .regular) : NSFont.systemFont(ofSize: 14)
@@ -327,12 +328,16 @@ public struct NativeTranscript: NSViewRepresentable {
                 .paragraphStyle: paragraph
             ]
             // Code and tool output stay literal, including link-like text.
-            result.append(isCode ? NSAttributedString(string: block, attributes: attributes)
-                          : TranscriptLinks.render(block, attributes: attributes))
+            if !isCode && item.kind == "assistant" {
+                appendQuotedText(block, item: item, quoteIndex: &quoteIndex, to: result, attributes: attributes)
+            } else {
+                result.append(isCode ? NSAttributedString(string: block, attributes: attributes)
+                              : TranscriptLinks.render(block, attributes: attributes))
+            }
         }
         if (item.kind == "user" || item.kind == "assistant"), item.showsCopyControl, !item.text.isEmpty {
             if !result.string.hasSuffix("\n") { result.append(NSAttributedString(string: "\n")) }
-            let feedback = copyFeedback.flatMap { $0.id == item.id ? $0.succeeded : nil }
+            let feedback = copyFeedback.flatMap { $0.id == item.id && $0.block == nil ? $0.succeeded : nil }
             let feedbackText = feedback.map { $0 ? L10n.text("Скопировано", "Copied") : L10n.text("Не удалось скопировать", "Could not copy") }
             let description = feedbackText ?? L10n.text("Скопировать полный текст сообщения", "Copy the full message text")
             let color: NSColor = feedback.map { $0 ? .systemGreen : .systemRed } ?? .secondaryLabelColor
@@ -357,6 +362,54 @@ public struct NativeTranscript: NSViewRepresentable {
         result.append(NSAttributedString(string: "\n\n", attributes: [.font: NSFont.systemFont(ofSize: 14)]))
         applyMessageStyle(item, to: result, range: NSRange(location: 0, length: result.length))
         return result
+    }
+
+    /// Only explicit Markdown quotes become cards. Prose and tool output are never guessed to be drafts.
+    private func appendQuotedText(_ source: String, item: TranscriptItem, quoteIndex: inout Int,
+                                  to result: NSMutableAttributedString, attributes: [NSAttributedString.Key: Any]) {
+        let lines = source.components(separatedBy: "\n")
+        var index = 0
+        while index < lines.count {
+            guard Self.quoteBody(lines[index]) != nil else {
+                let start = index
+                repeat { index += 1 } while index < lines.count && Self.quoteBody(lines[index]) == nil
+                var text = lines[start..<index].joined(separator: "\n")
+                if index < lines.count { text += "\n" }
+                result.append(TranscriptLinks.render(text, attributes: attributes))
+                continue
+            }
+            var quoted: [String] = []
+            while index < lines.count, let body = Self.quoteBody(lines[index]) {
+                quoted.append(body)
+                index += 1
+            }
+            let body = TranscriptLinks.render(quoted.joined(separator: "\n"), attributes: attributes)
+            let start = result.length
+            let feedback = copyFeedback.flatMap { $0.id == item.id && $0.block == quoteIndex ? $0.succeeded : nil }
+            let label = feedback.map { $0 ? L10n.text("Скопировано", "Copied") : L10n.text("Не удалось скопировать", "Could not copy") }
+                ?? L10n.text("Копировать текст", "Copy text")
+            result.append(NSAttributedString(string: label + "\n", attributes: [
+                .font: NSFont.systemFont(ofSize: 12, weight: .medium),
+                .foregroundColor: feedback.map { $0 ? NSColor.systemGreen : .systemRed } ?? .secondaryLabelColor,
+                .link: "contextdesk-quote-copy", .quoteCopy: body.string, .quoteIndex: quoteIndex,
+                .toolTip: L10n.text("Скопировать текст блока", "Copy the block text")
+            ]))
+            result.append(body)
+            result.append(NSAttributedString(string: "\n", attributes: attributes))
+            result.addAttribute(.quoteCard, value: quoteIndex, range: NSRange(location: start, length: result.length - start))
+            result.append(NSAttributedString(string: "\n", attributes: attributes))
+            quoteIndex += 1
+        }
+    }
+
+    private static func quoteBody(_ line: String) -> String? {
+        let prefix = line.prefix(while: { $0 == " " })
+        guard prefix.count <= 3 else { return nil }
+        let trimmed = line.dropFirst(prefix.count)
+        guard trimmed.first == ">" else { return nil }
+        var body = trimmed.dropFirst()
+        if body.first == " " || body.first == "\t" { body = body.dropFirst() }
+        return String(body)
     }
 
     private func applyMessageStyle(_ item: TranscriptItem, to text: NSMutableAttributedString, range: NSRange) {
@@ -388,6 +441,20 @@ public struct NativeTranscript: NSViewRepresentable {
             footer.paragraphSpacingBefore = 4
             text.addAttribute(.paragraphStyle, value: footer, range: copyRange)
         }
+        text.enumerateAttribute(.quoteCard, in: range) { value, cardRange, _ in
+            guard value != nil else { return }
+            let card = paragraph.mutableCopy() as! NSMutableParagraphStyle
+            card.firstLineHeadIndent = 16; card.headIndent = 16; card.tailIndent = -16
+            card.paragraphSpacing = 4
+            text.addAttribute(.paragraphStyle, value: card, range: cardRange)
+        }
+        text.enumerateAttribute(.quoteCopy, in: range) { value, controlRange, _ in
+            guard value != nil else { return }
+            let control = paragraph.mutableCopy() as! NSMutableParagraphStyle
+            control.alignment = .right; control.tailIndent = -16
+            control.paragraphSpacingBefore = 12; control.paragraphSpacing = 12
+            text.addAttribute(.paragraphStyle, value: control, range: controlRange)
+        }
         // Leave the final empty paragraph outside the bubble as inter-message spacing.
         text.addAttribute(.messageBubble, value: item.id, range: NSRange(location: range.location, length: range.length - 1))
         text.addAttribute(.outgoingBubble, value: outgoing, range: NSRange(location: range.location, length: range.length - 1))
@@ -408,8 +475,32 @@ public struct NativeTranscript: NSViewRepresentable {
         reflectScrolledClipView(contentView)
     }
 
+    private func showCopyFeedback(id: String, succeeded: Bool, block: Int?) {
+        let previousID = copyFeedback?.id
+        copyFeedbackTask?.cancel()
+        copyFeedback = (id, succeeded, block)
+        if let previousID, previousID != id { rerenderItem(id: previousID) }
+        rerenderItem(id: id)
+        copyFeedbackTask = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(2)) } catch { return }
+            guard let self else { return }
+            self.copyFeedback = nil
+            self.rerenderItem(id: id)
+        }
+    }
+
     public func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
         let value = (link as? URL)?.absoluteString ?? (link as? String) ?? ""
+        if value == "contextdesk-quote-copy" {
+            guard let storage = transcript.textStorage, charIndex >= 0, charIndex < storage.length,
+                  let body = storage.attribute(.quoteCopy, at: charIndex, effectiveRange: nil) as? String,
+                  let block = storage.attribute(.quoteIndex, at: charIndex, effectiveRange: nil) as? Int,
+                  let index = ranges.firstIndex(where: { NSLocationInRange(charIndex, $0) }) else { return true }
+            let id = previous[index].id
+            pasteboard.clearContents()
+            showCopyFeedback(id: id, succeeded: pasteboard.setString(body, forType: .string), block: block)
+            return true
+        }
         if value.hasPrefix("contextdesk-copy:") {
             let id = String(value.dropFirst("contextdesk-copy:".count))
             guard let item = previous.first(where: { $0.id == id && ($0.kind == "user" || $0.kind == "assistant") }),
@@ -417,17 +508,7 @@ public struct NativeTranscript: NSViewRepresentable {
             // Copy the source body only, never rendered headers, disclosures or adjacent messages.
             pasteboard.clearContents()
             let succeeded = pasteboard.setString(item.text, forType: .string)
-            let previousID = copyFeedback?.id
-            copyFeedbackTask?.cancel()
-            copyFeedback = (id, succeeded)
-            if let previousID, previousID != id { rerenderItem(id: previousID) }
-            rerenderItem(id: id)
-            copyFeedbackTask = Task { [weak self] in
-                do { try await Task.sleep(for: .seconds(2)) } catch { return }
-                guard let self else { return }
-                self.copyFeedback = nil
-                self.rerenderItem(id: id)
-            }
+            showCopyFeedback(id: id, succeeded: succeeded, block: nil)
             return true
         }
         if value.hasPrefix("contextdesk-metrics:") {
@@ -472,6 +553,9 @@ private final class TranscriptTextView: NSTextView {
 }
 
 private extension NSAttributedString.Key {
+    static let quoteCard = NSAttributedString.Key("ContextDeskQuoteCard")
+    static let quoteCopy = NSAttributedString.Key("ContextDeskQuoteCopy")
+    static let quoteIndex = NSAttributedString.Key("ContextDeskQuoteIndex")
     static let messageCopy = NSAttributedString.Key("ContextDeskMessageCopy")
     static let responseHeader = NSAttributedString.Key("ContextDeskResponseHeader")
     static let responseSeparator = NSAttributedString.Key("ContextDeskResponseSeparator")
@@ -509,6 +593,19 @@ private final class BubbleLayoutManager: NSLayoutManager {
                               width: max(1, width * 0.78 - 4), height: bounds.maxY + 7 - top)
             DeskPalette.outgoingBubble.setFill()
             NSBezierPath(roundedRect: rect, xRadius: 14, yRadius: 14).fill()
+        }
+        storage.enumerateAttribute(.quoteCard, in: characters) { value, range, _ in
+            guard value != nil else { return }
+            var fullRange = NSRange()
+            _ = storage.attribute(.quoteCard, at: range.location, longestEffectiveRange: &fullRange,
+                                  in: NSRange(location: 0, length: storage.length))
+            let glyphs = glyphRange(forCharacterRange: fullRange, actualCharacterRange: nil)
+            let bounds = boundingRect(forGlyphRange: glyphs, in: container)
+            let rect = NSRect(x: origin.x + 2, y: origin.y + bounds.minY - 4,
+                              width: max(1, container.containerSize.width - 4), height: bounds.height + 8)
+            let path = NSBezierPath(roundedRect: rect, xRadius: 14, yRadius: 14)
+            NSColor.controlBackgroundColor.setFill(); path.fill()
+            NSColor.separatorColor.setStroke(); path.lineWidth = 1; path.stroke()
         }
         super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
     }
