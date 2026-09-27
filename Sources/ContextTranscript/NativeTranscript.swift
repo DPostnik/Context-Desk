@@ -338,29 +338,34 @@ public struct NativeTranscript: NSViewRepresentable {
         if (item.kind == "user" || item.kind == "assistant"), item.showsCopyControl, !item.text.isEmpty {
             if !result.string.hasSuffix("\n") { result.append(NSAttributedString(string: "\n")) }
             let feedback = copyFeedback.flatMap { $0.id == item.id && $0.block == nil ? $0.succeeded : nil }
-            let feedbackText = feedback.map { $0 ? L10n.text("Скопировано", "Copied") : L10n.text("Не удалось скопировать", "Could not copy") }
-            let description = feedbackText ?? L10n.text("Скопировать полный текст сообщения", "Copy the full message text")
-            let color: NSColor = feedback.map { $0 ? .systemGreen : .systemRed } ?? .secondaryLabelColor
-            let symbol = feedback.map { $0 ? "checkmark" : "exclamationmark.circle" } ?? "doc.on.doc"
-            let attachment = NSTextAttachment()
-            attachment.image = NSImage(systemSymbolName: symbol, accessibilityDescription: description)?
-                .withSymbolConfiguration(.init(pointSize: 14, weight: .regular)
-                    .applying(.init(paletteColors: [color])))
-            attachment.bounds = NSRect(x: 0, y: -3, width: 18, height: 18)
-            let icon = NSMutableAttributedString(attachment: attachment)
-            icon.addAttributes([
-                .link: "contextdesk-copy:" + item.id, .toolTip: description, .messageCopy: true
-            ], range: NSRange(location: 0, length: icon.length))
-            result.append(icon)
-            if let feedbackText {
-                result.append(NSAttributedString(string: " " + feedbackText, attributes: [
-                    .font: NSFont.systemFont(ofSize: 11), .foregroundColor: color,
-                    .link: "contextdesk-copy:" + item.id, .messageCopy: true
-                ]))
-            }
+            result.append(copyControl(feedback: feedback,
+                                      description: L10n.text("Скопировать полный текст сообщения", "Copy the full message text"),
+                                      attributes: [.link: "contextdesk-copy:" + item.id, .messageCopy: true]))
         }
         result.append(NSAttributedString(string: "\n\n", attributes: [.font: NSFont.systemFont(ofSize: 14)]))
         applyMessageStyle(item, to: result, range: NSRange(location: 0, length: result.length))
+        return result
+    }
+
+    private func copyControl(feedback: Bool?, description: String,
+                             attributes: [NSAttributedString.Key: Any]) -> NSAttributedString {
+        let feedbackText = feedback.map { $0 ? L10n.text("Скопировано", "Copied") : L10n.text("Не удалось скопировать", "Could not copy") }
+        let description = feedbackText ?? description
+        let color: NSColor = feedback.map { $0 ? .systemGreen : .systemRed } ?? .secondaryLabelColor
+        let symbol = feedback.map { $0 ? "checkmark" : "exclamationmark.circle" } ?? "doc.on.doc"
+        let attachment = NSTextAttachment()
+        attachment.image = NSImage(systemSymbolName: symbol, accessibilityDescription: description)?
+            .withSymbolConfiguration(.init(pointSize: 14, weight: .regular)
+                .applying(.init(paletteColors: [color])))
+        attachment.bounds = NSRect(x: 0, y: -3, width: 18, height: 18)
+        let result = NSMutableAttributedString(attachment: attachment)
+        if let feedbackText {
+            result.append(NSAttributedString(string: " " + feedbackText, attributes: [
+                .font: NSFont.systemFont(ofSize: 11), .foregroundColor: color
+            ]))
+        }
+        result.addAttributes(attributes, range: NSRange(location: 0, length: result.length))
+        result.addAttribute(.toolTip, value: description, range: NSRange(location: 0, length: result.length))
         return result
     }
 
@@ -386,14 +391,14 @@ public struct NativeTranscript: NSViewRepresentable {
             let body = TranscriptLinks.render(quoted.joined(separator: "\n"), attributes: attributes)
             let start = result.length
             let feedback = copyFeedback.flatMap { $0.id == item.id && $0.block == quoteIndex ? $0.succeeded : nil }
-            let label = feedback.map { $0 ? L10n.text("Скопировано", "Copied") : L10n.text("Не удалось скопировать", "Could not copy") }
-                ?? L10n.text("Копировать текст", "Copy text")
-            result.append(NSAttributedString(string: label + "\n", attributes: [
-                .font: NSFont.systemFont(ofSize: 12, weight: .medium),
-                .foregroundColor: feedback.map { $0 ? NSColor.systemGreen : .systemRed } ?? .secondaryLabelColor,
-                .link: "contextdesk-quote-copy", .quoteCopy: body.string, .quoteIndex: quoteIndex,
-                .toolTip: L10n.text("Скопировать текст блока", "Copy the block text")
-            ]))
+            let controlAttributes: [NSAttributedString.Key: Any] = [
+                .link: "contextdesk-quote-copy", .quoteCopy: body.string, .quoteIndex: quoteIndex
+            ]
+            result.append(copyControl(feedback: feedback,
+                                      description: L10n.text("Скопировать текст блока", "Copy the block text"),
+                                      attributes: controlAttributes))
+            // Keep the control paragraph aligned as one unit, including its newline.
+            result.append(NSAttributedString(string: "\n", attributes: controlAttributes))
             result.append(body)
             result.append(NSAttributedString(string: "\n", attributes: attributes))
             result.addAttribute(.quoteCard, value: quoteIndex, range: NSRange(location: start, length: result.length - start))

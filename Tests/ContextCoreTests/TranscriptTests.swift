@@ -380,6 +380,11 @@ import ContextTranscript
     #expect(!storage.string.contains("> Hi Elina"))
     #expect(!view.transcript.isEditable && view.transcript.isSelectable)
     let first = try #require(controls().first)
+    let icon = try #require(storage.attribute(.attachment, at: first.0, effectiveRange: nil) as? NSTextAttachment)
+    #expect(icon.image != nil)
+    #expect(icon.bounds.size == NSSize(width: 18, height: 18))
+    #expect(storage.attribute(.toolTip, at: first.0, effectiveRange: nil) as? String ==
+            L10n.text("Скопировать текст блока", "Copy the block text"))
     _ = view.textView(view.transcript, clickedOnLink: "contextdesk-quote-copy", at: first.0)
     #expect(pasteboard.string(forType: .string) == "Hi Elina,\n\nСпасибо за разговор 👋.\nCould you please confirm the details before we proceed with the submission?\n\nBest regards,\nDaniil")
     #expect(storage.string.contains(L10n.text("Скопировано", "Copied")))
