@@ -1,0 +1,107 @@
+import Foundation
+import Testing
+@testable import ContextCore
+@testable import ContextDesk
+
+private func controlRequest(job: ManagedJob? = nil) throws -> ScheduleControlRequest {
+    var object: [String: Any] = ["version": 1, "id": UUID().uuidString, "expires": Date().addingTimeInterval(60).timeIntervalSinceReferenceDate, "operation": job == nil ? "list" : "update"]
+    if let job { object["expected"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(job)) }
+    return try JSONDecoder().decode(ScheduleControlRequest.self, from: JSONSerialization.data(withJSONObject: object))
+}
+
+@Test func scheduleControlPreservesPermissionsAndRequiresPausedSource() throws {
+    var job = ManagedJob(); job.name = "Test"; job.prompt = "old"; job.projectID = UUID(); job.source = "codex:test"
+    job.model = "selected-model"; job.effort = "medium"
+    var request = try controlRequest(job: job); request.enabled = true; request.prompt = "new"; request.confirmSourceDisabled = true
+    #expect(throws: (any Error).self) { try ScheduleControl.updated(request, originalPaused: false) }
+    let result = try ScheduleControl.updated(request, originalPaused: true)
+    #expect(result.enabled && result.sourceDisabled && result.prompt == "new")
+    #expect(result.projectID == job.projectID && result.route == job.route && result.model == job.model && result.effort == job.effort)
+    #expect(result.acceptsExternalPolicy == job.acceptsExternalPolicy)
+}
+
+@Test func scheduleControlRejectsConcurrentChangesAndBusyJobs() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = JobStore(file: root.appendingPathComponent("jobs.json"))
+    var job = ManagedJob(); job.name = "Test"; job.prompt = "old"; job.projectID = UUID()
+    _ = try await store.save(job)
+    var other = job; other.prompt = "UI edit"; _ = try await store.save(other)
+    job.prompt = "stale edit"
+    await #expect(throws: (any Error).self) { try await store.save(job, expected: job) }
+    #expect(try await store.load().jobs.first?.prompt == "UI edit")
+    _ = try await store.claim(other.id, manual: true)
+    await #expect(throws: (any Error).self) { try await store.save(other, expected: other) }
+    await store.release()
+}
+
+@Test @MainActor func scheduleControlClaimsOnceAndRejectsExpiredCommands() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    defer { try? FileManager.default.removeItem(at: root) }
+    let request = try controlRequest()
+    let file = root.appendingPathComponent(request.id.uuidString + ".request.json")
+    let data = try JSONEncoder().encode(request)
+    try data.write(to: file)
+    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+    var count = 0
+    try await ScheduleControl.drain(directory: root) { _ in count += 1; return [] }
+    #expect(count == 1)
+    // Resubmission with the same ID and a lost reply cannot repeat a mutation.
+    try FileManager.default.removeItem(at: root.appendingPathComponent(request.id.uuidString + ".response.json"))
+    try data.write(to: file)
+    try await ScheduleControl.drain(directory: root) { _ in count += 1; return [] }
+    #expect(count == 1)
+    var expired = try controlRequest(); expired.expires = Date().addingTimeInterval(-1)
+    try JSONEncoder().encode(expired).write(to: root.appendingPathComponent(expired.id.uuidString + ".request.json"))
+    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: root.appendingPathComponent(expired.id.uuidString + ".request.json").path)
+    try await ScheduleControl.drain(directory: root) { _ in count += 1; return [] }
+    let reply = try JSONDecoder().decode(ScheduleControlReply.self, from: Data(contentsOf: root.appendingPathComponent(expired.id.uuidString + ".response.json")))
+    #expect(reply.status == "rejected" && count == 1)
+}
+
+@Test @MainActor func scheduleControlUpdatesLiveModelAndPersistsWithoutDispatch() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let inbox = root.appendingPathComponent("control"), originals = root.appendingPathComponent("originals")
+    try FileManager.default.createDirectory(at: inbox, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    try FileManager.default.createDirectory(at: originals.appendingPathComponent("test"), withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Data("version = 1\nid = \"test\"\nname = \"Original\"\nkind = \"cron\"\nstatus = \"PAUSED\"\n".utf8).write(to: originals.appendingPathComponent("test/automation.toml"))
+    let store = JobStore(file: root.appendingPathComponent("jobs.json"))
+    let model = DeskModel(store: AppStore(file: root.appendingPathComponent("state.sqlite")), jobStore: store)
+    let project = Project(path: root.path); model.state.projects = [project]; model.schedulerReady = true
+    var job = ManagedJob(); job.name = "Test"; job.prompt = "old"; job.projectID = project.id; job.source = "codex:test"
+    #expect(await model.saveJob(job))
+    var request = try controlRequest(job: job); request.enabled = true; request.prompt = "no submissions"; request.confirmSourceDisabled = true
+    let file = inbox.appendingPathComponent(request.id.uuidString + ".request.json")
+    try JSONEncoder().encode(request).write(to: file)
+    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+    await model.processScheduleControl(directory: inbox, originals: originals)
+    let updated = try #require(model.jobLedger.jobs.first)
+    #expect(updated.enabled && updated.sourceDisabled && updated.prompt == "no submissions")
+    #expect(updated.nextRun != nil && model.jobLedger.runs.isEmpty)
+    #expect(try await store.load().jobs.first == updated)
+    await model.stopScheduler()
+}
+
+@Test @MainActor func scheduleControlFailsClosedAndReportsUncertainPersistence() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    defer { try? FileManager.default.removeItem(at: root) }
+    let request = try controlRequest()
+    var object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? [String: Any])
+    object["shell"] = "must never execute"
+    let file = root.appendingPathComponent(request.id.uuidString + ".request.json")
+    try JSONSerialization.data(withJSONObject: object).write(to: file)
+    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+    var called = false
+    try await ScheduleControl.drain(directory: root) { _ in called = true; return [] }
+    #expect(!called)
+    let second = try controlRequest()
+    let secondFile = root.appendingPathComponent(second.id.uuidString + ".request.json")
+    try JSONEncoder().encode(second).write(to: secondFile)
+    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: secondFile.path)
+    try await ScheduleControl.drain(directory: root) { _ in throw ScheduleControlUncertain() }
+    let reply = try JSONDecoder().decode(ScheduleControlReply.self, from: Data(contentsOf: root.appendingPathComponent(second.id.uuidString + ".response.json")))
+    #expect(reply.status == "uncertain")
+}

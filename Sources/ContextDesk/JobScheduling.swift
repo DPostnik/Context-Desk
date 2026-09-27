@@ -4,7 +4,18 @@ import ContextCore
 @MainActor extension DeskModel {
     func startScheduler() async {
         guard schedulerTask == nil, !schedulerStopping else { return }
-        do { jobLedger = try await jobStore.load(); schedulerReady = true }
+        do {
+            jobLedger = try await jobStore.load(); schedulerReady = true
+            if let resources = Bundle.main.resourceURL {
+                let source = resources.appendingPathComponent("Skills/schedule-control")
+                let destination = Locations.root.appendingPathComponent("workflows/schedule-control")
+                if FileManager.default.fileExists(atPath: source.path), !FileManager.default.fileExists(atPath: destination.path) {
+                    try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+                    try FileManager.default.copyItem(at: source, to: destination)
+                    if connected { try await connection.registerWorkflows(at: summarySkillsDirectory) }
+                }
+            }
+        }
         catch { schedulerReady = false; self.error = error.localizedDescription; return }
         schedulerTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -14,6 +25,8 @@ import ContextCore
         }
     }
     func tickJobs(now: Date = Date()) async {
+        guard schedulerReady, !schedulerStopping else { return }
+        await processScheduleControl()
         guard schedulerReady, !schedulerStopping else { return }
         for job in jobLedger.jobs where job.enabled && job.nextRun.map({ $0 <= now }) == true {
             // Offline Codex work remains due; no network call has been made and no run is claimed.
@@ -121,5 +134,32 @@ import ContextCore
         // A source thread belongs to the other app. Only its explicit prompt can be transferred.
         job.schedule = JobSchedule(rule: source.rawRule)
         return job
+    }
+}
+
+@MainActor extension DeskModel {
+    func processScheduleControl(directory: URL = Locations.root.appendingPathComponent("schedule-control"), originals: URL = Locations.automations) async {
+        do {
+            try await ScheduleControl.drain(directory: directory) { request in
+                guard self.schedulerReady, !self.schedulerStopping else { throw ScheduleControl.invalid }
+                if request.operation == "list" { return try await self.jobStore.load().jobs }
+                let source = request.expected?.source
+                let paused = source.map { source in
+                    ScheduledJobs.read(directory: originals).contains {
+                        "codex:" + $0.id == source && $0.status == "PAUSED" && $0.issue == nil
+                    }
+                } ?? false
+                let job = try ScheduleControl.updated(request, originalPaused: paused)
+                guard let project = self.state.projects.first(where: { $0.id == job.projectID }),
+                      FileManager.default.fileExists(atPath: project.path) else { throw ScheduleControl.invalid }
+                if job.enabled, let issue = self.routineIssue(job) { throw ClientFailure(issue) }
+                do { self.jobLedger = try await self.jobStore.save(job, expected: request.expected) }
+                catch {
+                    if error is ScheduleControlUncertain { self.schedulerReady = false }
+                    throw error
+                }
+                return self.jobLedger.jobs
+            }
+        } catch { self.error = error.localizedDescription }
     }
 }

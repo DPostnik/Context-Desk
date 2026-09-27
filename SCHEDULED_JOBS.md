@@ -28,3 +28,27 @@ Both engines now run through the typed `AgentScheduledExecutor` contract. The se
 - Imports are paused by default and never enable the external scheduler. Enabling an imported schedule requires the user to confirm they disabled its original schedule in the source app. This confirmation prevents an accidental double schedule; Context Desk cannot verify remote/cloud scheduler state. A manual run is always an explicit action.
 
 Source contracts: [Claude Desktop scheduled tasks](https://code.claude.com/docs/en/desktop-scheduled-tasks), [CLI reference](https://code.claude.com/docs/en/cli-reference), [permission modes](https://code.claude.com/docs/en/permissions). Checked 2026-09-27 against the installed CLI version and help. Real user jobs were not executed as part of development validation.
+
+## Chat control — 2026-09-27
+
+The bundled [schedule-control skill](Skills/schedule-control/SKILL.md) lets an
+authorized agent list existing app-owned jobs, edit their instructions, enable
+or pause them without Apple Events. Its Python client sends private, expiring
+JSON requests to the running scheduler; it never edits the ledger directly.
+The app preserves project/model/route/permission settings and uses its existing
+JobStore and routine validation. Enabling a Codex import independently verifies
+that its exact original is PAUSED, with explicit source-disabled confirmation.
+Other imported engines require the editor's existing confirmation flow.
+
+Updates compare the full observed job to reject concurrent edits; active runs
+cannot be edited. Requests are claimed before execution and never replayed.
+Unknown operations, versions, fields, expired requests, nonprivate files and
+symlinks fail closed. A failed persistence acknowledgement is uncertain, not
+permission to retry. Use `status REQUEST_ID` and inspect current job state.
+Receipts stay in the private home with no automatic retention policy yet.
+
+The scheduler polls every 15 seconds. The client waits up to 40 seconds per
+request, with a 60-second expiry. The app must be open and the Mac awake. New
+builds need Cmd+Q and reopen before their control channel is available. This
+feature does not add immediate execution, creation, deletion or external
+scheduler management; use the editor for existing operations outside its scope.

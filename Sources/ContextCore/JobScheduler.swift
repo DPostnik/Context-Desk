@@ -171,15 +171,23 @@ public actor JobStore {
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
         ledger = value
     }
-    public func save(_ job: ManagedJob, now: Date = Date()) throws -> JobLedger {
+    public func save(_ job: ManagedJob, now: Date = Date(), expected: ManagedJob? = nil) throws -> JobLedger {
         try job.validate()
         var value = try load()
+        if let expected {
+            guard expected.id == job.id, value.jobs.first(where: { $0.id == job.id }) == expected else { throw ScheduleControl.changed }
+        }
         guard !value.runs.contains(where: { $0.jobID == job.id && $0.status.active }) else { throw Self.busy }
         var job = job
         job.nextRun = job.enabled ? try job.schedule.next(after: now) : nil
         if job.enabled && job.nextRun == nil { job.enabled = false }
         if let index = value.jobs.firstIndex(where: { $0.id == job.id }) { value.jobs[index] = job } else { value.jobs.append(job) }
-        try commit(value); return value
+        do { try commit(value) }
+        catch {
+            if expected != nil { throw ScheduleControlUncertain() }
+            throw error
+        }
+        return value
     }
     public func remove(_ id: UUID) throws -> JobLedger {
         var value = try load()
