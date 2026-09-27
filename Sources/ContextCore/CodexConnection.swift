@@ -8,7 +8,7 @@ public actor CodexConnection {
     private var input: FileHandle?
     private var outputPipe: Pipe?
     private var errorPipe: Pipe?
-    private var buffer = Data()
+    private var buffer = JSONLineBuffer()
     private var sequence = 0
     private var generation = UUID()
     private var pending: [String: CheckedContinuation<JSONValue, any Error>] = [:]
@@ -95,13 +95,12 @@ public actor CodexConnection {
     }
     private func ingest(_ data: Data, token: UUID) {
         guard token == generation else { return }
-        buffer.append(data)
-        guard buffer.count <= 32 * 1024 * 1024 else {
+        let lines: [Data]
+        do { lines = try buffer.append(data) } catch {
             eventSink.yield(.object(["method": .string("client/error"), "params": .object(["message": .string(L10n.text("Ответ движка превышает допустимый размер", "The engine response exceeds the size limit"))])]))
             stop(); return
         }
-        while let end = buffer.firstIndex(of: 10) {
-            let line = buffer[..<end]; buffer.removeSubrange(...end)
+        for line in lines {
             guard !line.isEmpty else { continue }
             guard let message = try? JSONDecoder().decode(JSONValue.self, from: Data(line)) else { continue }
             if message["method"].string != nil { eventSink.yield(message); continue }
@@ -135,7 +134,7 @@ public actor CodexConnection {
         outputPipe?.fileHandleForReading.readabilityHandler = nil
         errorPipe?.fileHandleForReading.readabilityHandler = nil
         try? input?.close(); input = nil
-        reader?.cancel(); reader = nil; buffer.removeAll()
+        reader?.cancel(); reader = nil; buffer = JSONLineBuffer()
         for task in timeouts.values { task.cancel() }; timeouts.removeAll()
         let waiting = pending.values; pending.removeAll()
         for c in waiting { c.resume(throwing: ClientFailure(L10n.text("Соединение с Codex закрыто", "The connection to Codex is closed"))) }

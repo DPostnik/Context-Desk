@@ -20,6 +20,10 @@ private func fixture() throws -> (URL, URL) {
         method = m.get("method")
         if method == "initialize":
             emit({"id": m["id"], "result": {"userAgent": "fixture"}})
+        elif method == "test/history":
+            payload = (json.dumps({"id": m["id"], "result": {"text": "x" * (8 * 1024 * 1024)}}) + "\n").encode()
+            for offset in range(0, len(payload), 1024):
+                os.write(1, payload[offset:offset + 1024])
         elif method == "test/echo":
             emit({"id": m["id"], "result": m["params"]})
         elif method == "account/read":
@@ -112,4 +116,20 @@ private func fixture() throws -> (URL, URL) {
         Issue.record("Expected disconnect")
     } catch { #expect(error.localizedDescription.contains("закрыто")) }
     await client.stop()
+}
+
+@Test func largeHistoryReplyDoesNotBlockFollowingRequests() async throws {
+    let (folder, executable) = try fixture()
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let client = CodexConnection()
+    try await client.start(executable: executable, home: folder)
+    do {
+        let result = try await client.request("test/history", timeout: 10)
+        #expect(result["text"].string?.utf8.count == 8 * 1024 * 1024)
+        #expect(try await client.request("test/echo", params: .string("ready"), timeout: 2) == .string("ready"))
+        await client.stop()
+    } catch {
+        await client.stop()
+        throw error
+    }
 }
