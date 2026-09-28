@@ -37,7 +37,10 @@ private func compactionEvent(_ method: String) throws -> TranscriptItem {
     let range = (view.transcript.string as NSString).range(of: started.text)
     #expect(range.location != NSNotFound)
     let storage = try #require(view.transcript.textStorage)
-    #expect(storage.attribute(.backgroundColor, at: range.location, effectiveRange: nil) != nil)
+    #expect(storage.attribute(.backgroundColor, at: range.location, effectiveRange: nil) == nil)
+    let badgeKey = NSAttributedString.Key("ContextDeskCompactionBadge")
+    #expect(storage.attribute(badgeKey, at: range.location, effectiveRange: nil) != nil)
+    #expect(storage.attribute(badgeKey, at: NSMaxRange(range), effectiveRange: nil) == nil)
     #expect(storage.attribute(.link, at: range.location, effectiveRange: nil) == nil)
     #expect(view.transcript.string.contains("Working"))
 

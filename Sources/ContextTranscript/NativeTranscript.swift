@@ -356,12 +356,37 @@ public struct NativeTranscript: NSViewRepresentable {
         paragraph.lineSpacing = item.kind == "activity" ? 1 : 4; paragraph.paragraphSpacing = item.kind == "activity" ? 2 : 0
         paragraph.lineBreakMode = .byWordWrapping
         if item.kind == "compaction" {
-            return NSAttributedString(string: "↔ " + item.text + "\n\n", attributes: [
-                .font: NSFont.systemFont(ofSize: 13, weight: .semibold),
-                .foregroundColor: NSColor.labelColor,
-                .backgroundColor: NSColor.controlAccentColor.withAlphaComponent(0.14),
-                .paragraphStyle: paragraph
-            ])
+            let active = item.phase == "inProgress"
+            let color = active ? NSColor.controlAccentColor : NSColor.secondaryLabelColor
+            let symbol = active ? "arrow.triangle.2.circlepath" : item.phase == "completed" ? "checkmark.circle" : "minus.circle"
+            let attachment = NSTextAttachment()
+            attachment.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+                .withSymbolConfiguration(.init(pointSize: 12, weight: .medium)
+                    .applying(.init(paletteColors: [color])))
+            attachment.bounds = NSRect(x: 0, y: -2, width: 14, height: 14)
+            let spacer = NSMutableParagraphStyle()
+            spacer.maximumLineHeight = 8
+            result.append(NSAttributedString(string: "\n", attributes: [
+                .font: NSFont.systemFont(ofSize: 6), .paragraphStyle: spacer
+            ]))
+            let badgeStart = result.length
+            result.append(NSAttributedString(attachment: attachment))
+            result.append(NSAttributedString(string: "  " + item.text))
+            paragraph.firstLineHeadIndent = 12
+            paragraph.headIndent = 12
+            paragraph.tailIndent = -12
+            paragraph.paragraphSpacingBefore = 8
+            paragraph.paragraphSpacing = 12
+            paragraph.lineSpacing = 2
+            result.addAttributes([
+                .font: NSFont.systemFont(ofSize: 12, weight: .medium),
+                .foregroundColor: color, .paragraphStyle: paragraph,
+                .compactionBadge: item.id, .compactionActive: active
+            ], range: NSRange(location: badgeStart, length: result.length - badgeStart))
+            // Keep paragraph terminators outside the badge so it hugs its content.
+            result.append(NSAttributedString(string: "\n", attributes: [.paragraphStyle: paragraph,
+                .font: NSFont.systemFont(ofSize: 12)]))
+            return result
         }
         if item.kind == "loading" {
             return NSAttributedString(string: "      " + item.text + "\n\n", attributes: [
@@ -637,6 +662,8 @@ private final class TranscriptTextView: NSTextView {
 }
 
 private extension NSAttributedString.Key {
+    static let compactionBadge = NSAttributedString.Key("ContextDeskCompactionBadge")
+    static let compactionActive = NSAttributedString.Key("ContextDeskCompactionActive")
     static let quoteCard = NSAttributedString.Key("ContextDeskQuoteCard")
     static let quoteCopy = NSAttributedString.Key("ContextDeskQuoteCopy")
     static let quoteIndex = NSAttributedString.Key("ContextDeskQuoteIndex")
@@ -656,6 +683,24 @@ private final class BubbleLayoutManager: NSLayoutManager {
             return
         }
         let characters = characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
+        storage.enumerateAttribute(.compactionBadge, in: characters) { value, range, _ in
+            guard value != nil else { return }
+            var fullRange = NSRange()
+            _ = storage.attribute(.compactionBadge, at: range.location, longestEffectiveRange: &fullRange,
+                                  in: NSRange(location: 0, length: storage.length))
+            let glyphs = glyphRange(forCharacterRange: fullRange, actualCharacterRange: nil)
+            let bounds = boundingRect(forGlyphRange: glyphs, in: container)
+            let rect = bounds.offsetBy(dx: origin.x, dy: origin.y).insetBy(dx: -10, dy: -6)
+            let active = storage.attribute(.compactionActive, at: range.location, effectiveRange: nil) as? Bool ?? false
+            let path = NSBezierPath(roundedRect: rect, xRadius: 9, yRadius: 9)
+            (active ? NSColor.controlAccentColor.withAlphaComponent(0.08)
+                    : NSColor.quaternaryLabelColor.withAlphaComponent(0.07)).setFill()
+            path.fill()
+            (active ? NSColor.controlAccentColor.withAlphaComponent(0.18)
+                    : NSColor.separatorColor.withAlphaComponent(0.35)).setStroke()
+            path.lineWidth = 0.5
+            path.stroke()
+        }
         storage.enumerateAttribute(.responseSeparator, in: characters) { value, range, _ in
             guard value != nil else { return }
             let glyphs = glyphRange(forCharacterRange: range, actualCharacterRange: nil)
