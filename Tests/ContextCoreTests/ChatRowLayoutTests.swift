@@ -35,13 +35,15 @@ import Testing
         let short = try #require(rows(host).first { $0.chatID == "short" })
         let long = try #require(rows(host).first { $0.chatID == "long" })
         let height = long.frame.height
-        #expect(height > short.frame.height + 5)
+        #expect(abs(height - 40) < 1)
+        #expect(abs(short.frame.height - height) < 1)
         for index in 0..<6 {
             model.state.chats[1].unreadCompletionID = index.isMultiple(of: 2) ? "response" : nil
             model.showingJobs = index.isMultiple(of: 2)
             window.setContentSize(NSSize(width: index.isMultiple(of: 2) ? 900 : 1100, height: 700))
             settle()
             #expect(abs(long.frame.height - height) < 1)
+            #expect(abs(short.frame.height - height) < 1)
             #expect(long.accessibilityLabel() == title)
             #expect(long.hitTest(NSPoint(x: long.frame.midX, y: long.frame.midY)) === long)
         }

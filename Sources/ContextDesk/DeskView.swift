@@ -409,7 +409,9 @@ struct DeskView: View {
             HStack(spacing: 8) {
                 Image(systemName: chat.isArchived ? "archivebox" : "bubble.left").foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(chat.title).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                    Text(chat.title)
+                        .lineLimit(2, reservesSpace: true)
+                        .frame(height: 32, alignment: .leading)
                     if favorite, let project = model.state.projects.first(where: { $0.id == chat.projectID }) {
                         Text(project.name).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                             .help(project.path)
