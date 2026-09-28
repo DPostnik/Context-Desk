@@ -51,6 +51,8 @@ import Testing
     project.defaultChatAccessMode = .standard
     model.state.projects = [project]; model.connected = true; model.authenticated = true
     model.state.model = "fixture-model"; model.projectID = project.id; model.draft = "Desktop draft"
+    model.models = [AgentModelInfo(id: "fixture-model", displayName: "Model A", defaultEffort: "medium"),
+                    AgentModelInfo(id: "fixture-alternate", displayName: "Model B", defaultEffort: "low")]
     await integration.observe(sessions: [.init(connection: .originalCodex, nativeID: "existing")])
     let reader = Task { @MainActor in
         for await event in integration.events {
@@ -62,6 +64,74 @@ import Testing
     defer { reader.cancel() }
     do { try await body(model, wire, store, project); await model.shutdown() }
     catch { await model.shutdown(); throw error }
+}
+
+@Test(arguments: RemoteAccessMode.allCases) @MainActor func mobileCreationAppliesExplicitModelAndAccess(access: RemoteAccessMode) async throws {
+    try await withMobileActionFixture { model, wire, store, project in
+        let options = RemoteChatOptions(model: "fixture-alternate", access: access)
+        let command = RemoteCommand.newChat(owner: UUID().uuidString, device: UUID().uuidString, project: project.id.uuidString, text: "Chosen settings", options: options)
+        #expect(command.kind == "create")
+        let decoded = try JSONDecoder().decode(RemoteCommand.self, from: JSONEncoder().encode(command))
+        #expect(decoded.settings?.options == options)
+        #expect(try await model.executeRemote(decoded) == "submitted")
+        let saved = try #require(await store.load().chats.first)
+        #expect(saved.model == options.model && saved.effort == "low")
+        #expect(saved.inheritsProjectAccess == false && saved.accessMode?.rawValue == access.rawValue)
+        #expect(model.state.projects.first?.defaultChatAccessMode == .standard)
+        let requests = try await wire.request("test/received").array
+        for method in ["thread/start", "turn/start"] {
+            let params = try #require(requests.first(where: { $0["method"].string == method }))["params"]
+            #expect(params["model"].string == options.model)
+            #expect(params["approvalPolicy"].string == (access == .fullAccess ? "never" : "on-request"))
+        }
+    }
+}
+
+@Test @MainActor func mobileSettingsPersistWithoutDispatchAndRejectStaleBusyOrUnknownChoices() async throws {
+    try await withMobileActionFixture { model, wire, store, project in
+        model.state.chats = [Chat(id: "existing", projectID: project.id, title: "Existing", model: "fixture-model")]
+        let initial = await model.remoteSnapshot(projects: [project.id.uuidString])
+        #expect(initial.projects.first?.models?.map(\.id) == ["fixture-model", "fixture-alternate"])
+        let expected = try #require(initial.chats.first?.settings)
+        let options = RemoteChatOptions(model: "fixture-alternate", access: .fullAccess)
+        var command = RemoteCommand.configure(owner: UUID().uuidString, device: UUID().uuidString, project: project.id.uuidString,
+                                              chat: "existing", options: options, expected: expected)
+        #expect(try await model.executeRemote(command) == "submitted")
+        let saved = try #require(await store.load().chats.first)
+        #expect(saved.model == options.model && saved.accessMode == .fullAccess && saved.effort == "low")
+        #expect(saved.inheritsProjectAccess == false)
+        #expect(model.chatID == nil && model.draft == "Desktop draft" && model.state.model == "fixture-model")
+        #expect(model.state.projects.first?.defaultChatAccessMode == .standard)
+        #expect(try await wire.request("test/received").array.allSatisfy { !["thread/start", "turn/start"].contains($0["method"].string ?? "") })
+        await #expect(throws: RemoteFailure.self) { try await model.executeRemote(command) }
+        var current = try #require(await model.remoteSnapshot(projects: [project.id.uuidString]).chats.first?.settings)
+        command = .configure(owner: command.owner, device: command.device, project: command.project, chat: command.chat,
+                             options: RemoteChatOptions(model: "unavailable-model"), expected: current)
+        await #expect(throws: RemoteFailure.self) { try await model.executeRemote(command) }
+        command = .configure(owner: command.owner, device: command.device, project: command.project, chat: command.chat,
+                             options: RemoteChatOptions(model: options.model), expected: current)
+        #expect(try await model.executeRemote(command) == "submitted")
+        #expect(model.state.chats.first?.inheritsProjectAccess == true && model.state.chats.first?.accessMode == nil)
+        current = try #require(await model.remoteSnapshot(projects: [project.id.uuidString]).chats.first?.settings)
+        let send = RemoteCommand(owner: command.owner, device: command.device, project: command.project, chat: command.chat, kind: "send", text: "Start work")
+        #expect(try await model.executeRemote(send) == "submitted")
+        command = .configure(owner: command.owner, device: command.device, project: command.project, chat: command.chat, options: options, expected: current)
+        await #expect(throws: RemoteFailure.self) { try await model.executeRemote(command) }
+        #expect(await model.remoteSnapshot(projects: [project.id.uuidString]).chats.first?.settings?.canEdit == false)
+    }
+}
+
+@Test func mobileSettingsCommandsRejectMalformedOrMisroutedOptions() throws {
+    let options = RemoteChatOptions(model: "model", access: .standard)
+    var command = RemoteCommand.newChat(owner: UUID().uuidString, device: UUID().uuidString, project: UUID().uuidString, text: "Hi", options: options)
+    try command.validate()
+    command.kind = "send"
+    #expect(throws: RemoteFailure.self) { try command.validate() }
+    command.kind = "configure"
+    #expect(throws: RemoteFailure.self) { try command.validate() }
+    command.kind = "create"; command.chat = "existing"
+    #expect(throws: RemoteFailure.self) { try command.validate() }
+    #expect(throws: (any Error).self) { try JSONDecoder().decode(RemoteChatOptions.self, from: Data(#"{"model":"model","access":"future-mode"}"#.utf8)) }
 }
 
 @Test @MainActor func phoneCreatesAndPersistsChatWithoutChangingDesktopOrReplaying() async throws {

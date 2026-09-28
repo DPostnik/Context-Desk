@@ -21,11 +21,49 @@ public struct RemoteSetup: Codable, Sendable {
 }
 
 /// Version 1 is shared verbatim with the native iOS target. No engine credentials cross this boundary.
+public enum RemoteAccessMode: String, Codable, CaseIterable, Sendable {
+    case standard, fullAccess
+    public var title: String {
+        self == .fullAccess ? L10n.text("Полный доступ", "Full access") : L10n.text("С подтверждениями", "Ask for approval")
+    }
+}
+public struct RemoteModelOption: Codable, Identifiable, Sendable, Equatable {
+    public var id: String
+    public var name: String
+    public init(id: String, name: String) { self.id = id; self.name = name }
+}
+public struct RemoteChatOptions: Codable, Sendable, Equatable {
+    public var model: String
+    /// nil inherits the project's interactive default without changing it.
+    public var access: RemoteAccessMode?
+    public init(model: String, access: RemoteAccessMode? = nil) { self.model = model; self.access = access }
+    public func validate() throws {
+        guard !model.isEmpty, model.utf8.count <= 200 else { throw RemoteFailure.invalidCommand }
+    }
+}
+public struct RemoteChatSettings: Codable, Sendable, Equatable {
+    public var options: RemoteChatOptions
+    public var projectAccess: RemoteAccessMode
+    public var canEdit: Bool
+    public init(options: RemoteChatOptions, projectAccess: RemoteAccessMode, canEdit: Bool) {
+        self.options = options; self.projectAccess = projectAccess; self.canEdit = canEdit
+    }
+}
+public struct RemoteSettingsChange: Codable, Sendable, Equatable {
+    public var options: RemoteChatOptions
+    public var expected: RemoteChatOptions?
+    public var expectedProjectAccess: RemoteAccessMode?
+    public init(options: RemoteChatOptions, expected: RemoteChatOptions? = nil, expectedProjectAccess: RemoteAccessMode? = nil) {
+        self.options = options; self.expected = expected; self.expectedProjectAccess = expectedProjectAccess
+    }
+}
 public struct RemoteProject: Codable, Identifiable, Sendable, Equatable {
     public var id: String
     public var name: String
     /// Absent on older hosts. Creation is an initial send to a reserved app conversation ID.
     public var canCreateChat: Bool?
+    public var models: [RemoteModelOption]?
+    public var settings: RemoteChatSettings?
     public init(id: String, name: String, canCreateChat: Bool? = nil) {
         self.id = id; self.name = name; self.canCreateChat = canCreateChat
     }
@@ -39,6 +77,7 @@ public struct RemoteChat: Codable, Identifiable, Sendable, Equatable {
     public var messages: [RemoteMessage]
     public var approvals: [RemoteApproval]
     public var supportsPhotos: Bool?
+    public var settings: RemoteChatSettings?
     public init(id: String, project: String, title: String, running: Bool, messages: [RemoteMessage], approvals: [RemoteApproval], turn: String? = nil) { self.id = id; self.project = project; self.title = title; self.running = running; self.messages = messages; self.approvals = approvals; self.turn = turn; supportsPhotos = true }
 }
 public struct RemoteMessage: Codable, Identifiable, Sendable, Equatable {
@@ -105,12 +144,19 @@ public struct RemoteCommand: Codable, Identifiable, Sendable {
     public var turn: String?
     public var status: String
     public var photos: [RemotePhoto]?
+    public var settings: RemoteSettingsChange?
     /// Uses the existing immutable send envelope and queue; no database migration required.
     /// The first send owns the new app ID. Later sends cannot recreate a missing conversation.
-    public var createsChat: Bool { kind == "send" && chat == "mobile:" + id.lowercased() }
-    public static func newChat(owner: String, device: String, project: String, text: String) -> Self {
-        var command = Self(owner: owner, device: device, project: project, chat: "", kind: "send", text: text)
+    public var createsChat: Bool { ["send", "create"].contains(kind) && chat == "mobile:" + id.lowercased() }
+    public static func newChat(owner: String, device: String, project: String, text: String, options: RemoteChatOptions? = nil) -> Self {
+        var command = Self(owner: owner, device: device, project: project, chat: "", kind: options == nil ? "send" : "create", text: text)
         command.chat = "mobile:" + command.id
+        command.settings = options.map { RemoteSettingsChange(options: $0) }
+        return command
+    }
+    public static func configure(owner: String, device: String, project: String, chat: String, options: RemoteChatOptions, expected: RemoteChatSettings) -> Self {
+        var command = Self(owner: owner, device: device, project: project, chat: chat, kind: "configure")
+        command.settings = RemoteSettingsChange(options: options, expected: expected.options, expectedProjectAccess: expected.projectAccess)
         return command
     }
     public init(owner: String, device: String, project: String, chat: String, kind: String, text: String = "", approval: String? = nil, turn: String? = nil, photos: [RemotePhoto] = []) {
@@ -122,14 +168,24 @@ public struct RemoteCommand: Codable, Identifiable, Sendable {
     public func validate() throws {
         guard UUID(uuidString: id) != nil, UUID(uuidString: project) != nil,
               !chat.isEmpty, text.utf8.count <= 32_000,
-              ["send", "stop", "allow", "deny"].contains(kind),
-              kind != "send" || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !(photos ?? []).isEmpty,
+              ["send", "stop", "allow", "deny", "create", "configure"].contains(kind),
+              !["send", "create"].contains(kind) || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !(photos ?? []).isEmpty,
               !["allow", "deny"].contains(kind) || approval.flatMap(UUID.init(uuidString:)) != nil
         else { throw RemoteFailure.invalidCommand }
         let photos = photos ?? []
         guard photos.count <= RemotePhoto.maximumCount,
-              photos.isEmpty || kind == "send", Set(photos.map(\.id)).count == photos.count else { throw RemoteFailure.invalidPhoto }
+              photos.isEmpty || ["send", "create"].contains(kind), Set(photos.map(\.id)).count == photos.count else { throw RemoteFailure.invalidPhoto }
         try photos.forEach { try $0.validate() }
+        if ["create", "configure"].contains(kind) {
+            guard let settings, approval == nil, turn == nil else { throw RemoteFailure.invalidCommand }
+            try settings.options.validate()
+            if kind == "create" {
+                guard createsChat, settings.expected == nil, settings.expectedProjectAccess == nil else { throw RemoteFailure.invalidCommand }
+            } else {
+                guard text.isEmpty, photos.isEmpty, let expected = settings.expected, settings.expectedProjectAccess != nil else { throw RemoteFailure.invalidCommand }
+                try expected.validate()
+            }
+        } else if settings != nil { throw RemoteFailure.invalidCommand }
     }
     /// Keep received files for the conversation, including uncertain submissions; never overwrite.
     public func photoPrompt(directory: URL) throws -> String {
@@ -153,13 +209,14 @@ public struct RemoteCommand: Codable, Identifiable, Sendable {
 }
 public enum RemoteFailure: Error, LocalizedError {
     case configuration, signedOut, request(Int), invalidCommand, uncertain, duplicate
-    case invalidPhoto, photoSetup
+    case invalidPhoto, photoSetup, settingsSetup
     case realtimeSetup, realtimeProtocol, realtimeTimeout
     case keychain(OSStatus)
     public var errorDescription: String? {
         switch self {
         case .invalidPhoto: L10n.text("Не удалось подготовить фото. Выбери до 4 изображений; каждое должно помещаться в 512 КБ после сжатия.", "Could not prepare photos. Choose up to 4 images; each must fit within 512 KB after compression.")
         case .photoSetup: L10n.text("Для отправки фото обнови схему мобильного доступа в Supabase (миграция photos).", "To send photos, update the Supabase mobile access schema (photos migration).")
+        case .settingsSetup: L10n.text("Для выбора модели и доступа обнови схему мобильного доступа в Supabase и приложение на Mac.", "To choose a model and access mode, update the Supabase mobile access schema and Mac app.")
         case .configuration: L10n.text("Проверь HTTPS URL Supabase и публичный ключ.", "Check the Supabase HTTPS URL and public key.")
         case .signedOut: L10n.text("Войди в Supabase заново.", "Sign in to Supabase again.")
         case .keychain(let code): Self.keychainDescription(code, language: L10n.language)
@@ -356,6 +413,12 @@ public actor RemoteAPI {
     public func checkPhotoSchema() async throws {
         do { _ = try await request("rest/v1/remote_commands?select=photos&limit=0") }
         catch RemoteFailure.request(400) { throw RemoteFailure.photoSetup }
+    }
+    public func checkSettingsSchema() async throws {
+        do {
+            let version = try JSONDecoder().decode(Int.self, from: await request("rest/v1/rpc/remote_settings_version", method: "POST", body: Data("{}".utf8)))
+            guard version == 1 else { throw RemoteFailure.settingsSetup }
+        } catch RemoteFailure.request(404) { throw RemoteFailure.settingsSetup }
     }
     public func submit(_ command: RemoteCommand) async throws {
         try command.validate()

@@ -2,6 +2,30 @@ import XCTest
 import UIKit
 
 final class ScrollTests: XCTestCase {
+    @MainActor func testChatModelAndAccessChoicesInBothLanguages() throws {
+        for (language, full, ask, pending) in [("ru", "Полный доступ", "С подтверждениями", "Настройки ожидают Mac"),
+                                              ("en", "Full access", "Ask for approval", "Settings waiting for Mac")] {
+            let app = XCUIApplication()
+            app.launchArguments = ["-mobile-preview", "-preview-actions", "-preview-settings", "-preview-chat", "-interfaceLanguage", language]
+            app.launch()
+            XCTAssertTrue(app.buttons["chat-settings"].waitForExistence(timeout: 10))
+            app.buttons["chat-settings"].tap()
+            XCTAssertTrue(app.buttons["chat-model"].waitForExistence(timeout: 5))
+            XCTAssertFalse(app.buttons["save-chat-settings"].isEnabled)
+            app.buttons["chat-model"].tap(); app.buttons["Model B"].tap()
+            app.buttons["chat-access"].tap(); app.buttons[full].tap()
+            XCTAssertTrue(app.buttons["save-chat-settings"].isEnabled)
+            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            screenshot.name = "Chat settings " + language; screenshot.lifetime = .keepAlways; add(screenshot)
+            app.buttons["chat-access"].tap(); app.buttons[ask].tap()
+            app.buttons["save-chat-settings"].tap()
+            XCTAssertTrue(app.staticTexts["chat-settings-status"].waitForExistence(timeout: 8))
+            XCTAssertEqual(app.staticTexts["chat-settings-status"].label, pending)
+            XCTAssertFalse(app.buttons["save-chat-settings"].isEnabled)
+            app.terminate()
+        }
+    }
+
     @MainActor func testNewChatAndPermissionReplyInBothLanguages() throws {
         for (language, empty, waiting) in [("ru", "Пустой проект", "Ожидает Mac"), ("en", "Empty project", "Waiting for Mac")] {
             let app = XCUIApplication()
@@ -13,6 +37,9 @@ final class ScrollTests: XCTestCase {
             XCTAssertTrue(input.waitForExistence(timeout: 5))
             app.buttons["new-chat-project"].tap()
             app.buttons[empty + " · Mac"].tap()
+            app.buttons["chat-model"].tap(); app.buttons["Model B"].tap()
+            app.buttons["chat-access"].tap()
+            app.buttons[language == "ru" ? "Полный доступ" : "Full access"].tap()
             XCTAssertFalse(app.buttons["create-chat"].isEnabled)
             input.tap(); input.typeText("New conversation fixture")
             let create = app.buttons["create-chat"]

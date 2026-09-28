@@ -46,6 +46,7 @@ with tempfile.TemporaryDirectory(prefix='context-remote-db-', dir='/tmp') as dir
         sql((root/'supabase/migrations/202609280002_revision_continuity.sql').read_text())
         sql((root/'supabase/migrations/202609280003_photos.sql').read_text())
         sql((root/'supabase/migrations/202609280004_photo_retention.sql').read_text())
+        sql((root/'supabase/migrations/202609280006_chat_settings.sql').read_text())
         assert sql("select public.valid_remote_photos(null), public.valid_remote_photos('[]'), public.valid_remote_photos('{}'), public.valid_remote_photos('[{\"id\":\"bad\",\"data\":\"/9j/AA==\"}]');") == 't|t|f|f'
 
         owner = "set role authenticated; set request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';"
@@ -116,6 +117,31 @@ with tempfile.TemporaryDirectory(prefix='context-remote-db-', dir='/tmp') as dir
         assert sql(owner + f"select count(*) from public.claim_remote_command('{device}');").endswith('0')
         sql(owner + 'delete from public.remote_devices;')
         import json
+        # Settings preserve owner/project isolation, command immutability and uncertain-work blocking.
+        sql(owner + f"insert into public.remote_devices(id,name,projects,snapshot) values ('{device}','Mac',array['project'],'{{}}');")
+        created, configured, queued, stop = [str(uuid.uuid4()) for _ in range(4)]
+        options = {'model': 'model-a', 'access': 'standard'}
+        initial_options = json.dumps({'options': options})
+        settings = json.dumps({'options': {'model':'model-b','access':'fullAccess'}, 'expected':options, 'expectedProjectAccess':'standard'})
+        create = f"insert into public.remote_commands(id,device,project,chat,kind,text,settings) values ('{created}','{device}','project','mobile:{created}','create','Hello','{initial_options}');"
+        rejects(other + create)
+        rejects(owner + create.replace("'project'", "'private'"))
+        rejects(owner + create.replace('standard', 'unknown'))
+        sql(owner + create)
+        assert sql(owner + f"select kind from public.claim_remote_command('{device}');").endswith('create')
+        sql(owner + f"update public.remote_commands set status='submitted' where id='{created}';")
+        configure = f"insert into public.remote_commands(id,device,project,chat,kind,settings) values ('{configured}','{device}','project','mobile:{created}','configure','{settings}');"
+        sql(owner + configure)
+        rejects(owner + f"update public.remote_commands set settings='{initial_options}' where id='{configured}';")
+        assert sql(owner + f"select kind from public.claim_remote_command('{device}');").endswith('configure')
+        sql(owner + f"update public.remote_commands set status='uncertain' where id='{configured}';")
+        sql(owner + f"insert into public.remote_commands(id,device,project,chat,kind,text) values ('{queued}','{device}','project','mobile:{created}','send','Do not replay');")
+        assert sql(owner + f"select count(*) from public.claim_remote_command('{device}');").endswith('0')
+        sql(owner + f"insert into public.remote_commands(id,device,project,chat,kind,turn) values ('{stop}','{device}','project','mobile:{created}','stop','observed-turn');")
+        assert sql(owner + f"select kind from public.claim_remote_command('{device}');").endswith('stop')
+        rejects('set role anon; select public.remote_settings_version();')
+        assert sql(owner + 'select public.remote_settings_version();').endswith('1')
+        sql(owner + 'delete from public.remote_devices;')
         patch = f"select public.patch_remote_snapshot('{device}','Mac','[{{\"id\":\"project\",\"name\":\"Project\"}}]',array['a','b'],'[{{\"id\":\"a\",\"text\":\"first\"}},{{\"id\":\"b\",\"text\":\"second\"}}]');"
         sql(owner + patch)
         rev = int(sql(owner + 'select revision from public.remote_devices;').splitlines()[-1])
@@ -156,6 +182,6 @@ with tempfile.TemporaryDirectory(prefix='context-remote-db-', dir='/tmp') as dir
         sql(owner + patch)
         assert delta(last_revision)['device']['revision'] > last_revision
         assert len(delta(last_revision)['chats']) == 2
-        print('PASS: photo expiry, grace period, immutable history, retention permissions/idempotence; all data migrations, delete/recreate revision continuity, atomic event rollback, private channel RLS, compact signals, delta revisions/deletions, owner/project isolation, duplicate claims and no uncertain replay')
+        print('PASS: chat settings validation, immutable choices and uncertain-work blocking; photo expiry, grace period, immutable history, retention permissions/idempotence; all data migrations, delete/recreate revision continuity, atomic event rollback, private channel RLS, compact signals, delta revisions/deletions, owner/project isolation, duplicate claims and no uncertain replay')
     finally:
         if started: run('pg_ctl','-D',folder/'data','-m','fast','-w','stop')

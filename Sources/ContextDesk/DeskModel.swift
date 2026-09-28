@@ -36,6 +36,7 @@ private struct ChatRunState {
 @MainActor final class DeskModel: ObservableObject {
     let mobileRemote = MobileRemoteHost()
     private var remoteDeliveryResults: [String: Bool] = [:]
+    private var configuringRemoteChats: Set<String> = []
     @Published private(set) var plugins: [ProviderPlugin] = []
     @Published private(set) var pluginIssues: [String] = []
     @Published private(set) var pluginStatuses: [String: PluginStatus] = [:]
@@ -119,7 +120,7 @@ private struct ChatRunState {
     @Published private var runs: [String: ChatRunState] = [:]
     @Published private(set) var deletingChatIDs: Set<String> = []
     @Published private(set) var archivingChatIDs: Set<String> = []
-    func isChangingChat(_ id: String) -> Bool { deletingChatIDs.contains(id) || archivingChatIDs.contains(id) }
+    func isChangingChat(_ id: String) -> Bool { deletingChatIDs.contains(id) || archivingChatIDs.contains(id) || configuringRemoteChats.contains(id) }
     func isArchived(_ id: String) -> Bool { state.chats.first { $0.id == id }?.isArchived == true }
     var selectedChatIsArchived: Bool { selectedChat?.isArchived == true }
     private var completedTurns: [String: (status: AgentExecutionOutcome, hasError: Bool)] = [:]
@@ -394,6 +395,7 @@ private struct ChatRunState {
         } catch { self.error = error.localizedDescription }
     }
     func selectModel(_ model: String) {
+        guard !isChangingChat(currentRunKey) else { return }
         if let index = state.chats.firstIndex(where: { $0.id == chatID }) {
             state.chats[index].model = model
             state.chats[index].effort = "medium"
@@ -713,7 +715,7 @@ private struct ChatRunState {
         return L10n.text("По умолчанию проекта", "Project default") + ": " + mode.title
     }
     func selectAccessMode(_ mode: AccessMode?) {
-        guard !busy, !sending else { return }
+        guard !busy, !sending, !isChangingChat(currentRunKey) else { return }
         if let index = state.chats.firstIndex(where: { $0.id == chatID }) {
             state.chats[index].accessMode = mode
             state.chats[index].inheritsProjectAccess = mode == nil
@@ -1068,12 +1070,33 @@ private struct ChatRunState {
                 guard case .approval(let canAllow) = action.interaction.kind else { return nil }
                 return RemoteApproval(id: action.id, details: String(action.interaction.details.prefix(8000)), canAllow: canAllow && action.interaction.details.count <= 8000)
             }
-            chats.append(RemoteChat(id: chat.id, project: chat.projectID.uuidString, title: chat.title,
+            var remote = RemoteChat(id: chat.id, project: chat.projectID.uuidString, title: chat.title,
                 running: isBusy(threadID: chat.id), messages: messages.filter { ["user", "assistant"].contains($0.kind) }.suffix(20).map {
                     RemoteMessage(id: $0.id, role: $0.kind, text: String($0.text.prefix(2000)))
-                }, approvals: approvals, turn: runs[chat.id]?.turnID))
+                }, approvals: approvals, turn: runs[chat.id]?.turnID)
+            if let project = selected.first(where: { $0.id == chat.projectID }), chat.nativeSession?.connection == .originalCodex {
+                remote.settings = remoteSettings(chat, project: project)
+            }
+            chats.append(remote)
         }
-        return RemoteSnapshot(projects: selected.map { RemoteProject(id: $0.id.uuidString, name: $0.name, canCreateChat: canCreateRemoteChat) }, chats: chats)
+        return RemoteSnapshot(projects: selected.map {
+            var project = RemoteProject(id: $0.id.uuidString, name: $0.name, canCreateChat: canCreateRemoteChat)
+            project.models = models.map { RemoteModelOption(id: $0.id, name: $0.displayName) }
+            project.settings = RemoteChatSettings(options: RemoteChatOptions(model: state.model),
+                projectAccess: RemoteAccessMode(rawValue: ($0.defaultChatAccessMode ?? .standard).rawValue)!, canEdit: canCreateRemoteChat && !models.isEmpty)
+            return project
+        }, chats: chats)
+    }
+    private func remoteSettings(_ chat: Chat, project: Project) -> RemoteChatSettings {
+        RemoteChatSettings(options: RemoteChatOptions(model: chat.model,
+            access: chat.inheritsProjectAccess == true ? nil : RemoteAccessMode(rawValue: (chat.accessMode ?? .standard).rawValue)),
+            projectAccess: RemoteAccessMode(rawValue: (project.defaultChatAccessMode ?? .standard).rawValue)!,
+            canEdit: connected && authenticated && !models.isEmpty && !isChangingChat(chat.id) && !isBusy(threadID: chat.id)
+                && !pending.contains(where: { $0.threadID == chat.id }) && !queuedMessages.contains(where: { $0.threadID == chat.id }))
+    }
+    private func remoteModel(_ options: RemoteChatOptions) throws -> AgentModelInfo {
+        guard let model = models.first(where: { $0.id == options.model }) else { throw RemoteFailure.invalidCommand }
+        return model
     }
     private var canCreateRemoteChat: Bool {
         state.defaultConnection == .originalCodex && connected && authenticated && routeIsAvailable(defaultRoute)
@@ -1081,14 +1104,17 @@ private struct ChatRunState {
     private func createRemoteChat(_ command: RemoteCommand) async throws -> String {
         guard canCreateRemoteChat, !state.chats.contains(where: { $0.id == command.chat }),
               let project = state.projects.first(where: { $0.id.uuidString == command.project }) else { throw RemoteFailure.invalidCommand }
-        let model = state.model, effort = draftEffort, route = defaultRoute
-        let access = project.defaultChatAccessMode ?? .standard
+        let options = command.settings?.options
+        let chosen = try options.map { try remoteModel($0) }
+        let model = chosen?.id ?? state.model, effort = chosen?.defaultEffort ?? draftEffort, route = defaultRoute
+        let access = options?.access.flatMap { AccessMode(rawValue: $0.rawValue) } ?? project.defaultChatAccessMode ?? .standard
         // Persist the stable app ID before sending. Native identity never comes from the phone.
         let session = try await connection.createSession(projectPath: project.path, access: access, model: model, route: route)
         guard !state.chats.contains(where: { $0.id == command.chat }),
               ConversationIdentity.appID(for: session.nativeID, in: state, connection: session.connection) == nil else { throw RemoteFailure.invalidCommand }
         var chat = Chat(session: session, projectID: project.id, title: ChatTitle.placeholder(), model: model)
-        chat.id = command.chat; chat.effort = effort; chat.route = route; chat.inheritsProjectAccess = true
+        chat.id = command.chat; chat.effort = effort; chat.route = route
+        chat.accessMode = options?.access.flatMap { AccessMode(rawValue: $0.rawValue) }; chat.inheritsProjectAccess = chat.accessMode == nil
         state.chats.append(chat)
         try await store.save(state)
         loadedThreads.insert(chat.id)
@@ -1106,6 +1132,27 @@ private struct ChatRunState {
               let project = state.projects.first(where: { $0.id == chat.projectID }),
               !isChangingChat(chat.id), chatIsAvailable(chat.id), connected, authenticated else { throw RemoteFailure.invalidCommand }
         switch command.kind {
+        case "configure":
+            guard chat.nativeSession?.connection == .originalCodex, let change = command.settings else { throw RemoteFailure.invalidCommand }
+            let current = remoteSettings(chat, project: project)
+            guard current.canEdit, change.expected == current.options, change.expectedProjectAccess == current.projectAccess else { throw RemoteFailure.invalidCommand }
+            let selectedModel = try remoteModel(change.options)
+            configuringRemoteChats.insert(chat.id)
+            defer { configuringRemoteChats.remove(chat.id); objectWillChange.send() }
+            guard let index = state.chats.firstIndex(where: { $0.id == chat.id }) else { throw RemoteFailure.invalidCommand }
+            state.chats[index].model = selectedModel.id
+            if chat.model != selectedModel.id { state.chats[index].effort = selectedModel.defaultEffort }
+            state.chats[index].accessMode = change.options.access.flatMap { AccessMode(rawValue: $0.rawValue) }
+            state.chats[index].inheritsProjectAccess = change.options.access == nil
+            do { try await store.save(state) }
+            catch {
+                if let index = state.chats.firstIndex(where: { $0.id == chat.id }) {
+                    state.chats[index].model = chat.model; state.chats[index].effort = chat.effort
+                    state.chats[index].accessMode = chat.accessMode; state.chats[index].inheritsProjectAccess = chat.inheritsProjectAccess
+                }
+                throw error
+            }
+            return "submitted"
         case "send":
             guard !isBusy(threadID: chat.id), runs[chat.id]?.sending != true,
                   !queuedMessages.contains(where: { $0.threadID == chat.id }), !pending.contains(where: { $0.threadID == chat.id }) else { throw RemoteFailure.invalidCommand }

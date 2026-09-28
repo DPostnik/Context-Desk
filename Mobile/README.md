@@ -12,7 +12,8 @@ was provisioned on 2026-09-27; public signup is disabled.
    `supabase/migrations/202609280002_revision_continuity.sql` and
    `supabase/migrations/202609280003_photos.sql`,
    `supabase/migrations/202609280004_photo_retention.sql` and
-   `supabase/migrations/202609280005_photo_cleanup_cron.sql` once, in order, with its SQL editor. The migration uses Supabase Auth and PostgREST v1;
+   `supabase/migrations/202609280005_photo_cleanup_cron.sql` and
+   `supabase/migrations/202609280006_chat_settings.sql` once, in order, with its SQL editor. The migration uses Supabase Auth and PostgREST v1;
    it has no Supabase SDK dependency. Create a confirmed email/password Auth user.
    Disable public signup if the project is only for personal use.
 2. In the Mac app, Settings → Mobile access, enter the project HTTPS URL,
@@ -87,10 +88,25 @@ A macOS Swift typecheck of shared views is useful but is **not** an iOS build.
   creation. The first command alone can create that app conversation ID. It is
   persisted with a Mac-created native session before the first turn; duplicate
   initial sends are rejected and later sends cannot recreate a deleted chat.
-  Creation uses the Mac's configured Codex model/route and the project's
+  Legacy creation uses the Mac's configured Codex model/route and the project's
   interactive default permissions; it is unavailable when the default agent is
-  not Codex. Desktop selection and drafts stay unchanged. No SQL migration is
-  needed, and older installed clients retain the v1 snapshot/queue contract.
+  not Codex. Desktop selection and drafts stay unchanged. Older installed clients
+  retain the v1 snapshot/queue contract.
+- The phone receives the Mac's actual Codex model catalog and per-chat settings.
+  New chats and the Chat settings button offer model selection, Ask for approval,
+  Full access and Project default. These choices affect only that chat, from its
+  next message; changing them never changes project defaults or answers a pending
+  approval. Configuration is disabled while running, awaiting input or queued.
+  Model changes use the selected model's default reasoning effort.
+- Explicit `create` and `configure` commands carry immutable `settings` JSON and
+  require the additive chat-settings migration. Older hosts reject these unknown
+  actions instead of using different permissions. The Mac validates model IDs
+  against its catalog and compares expected current settings/project defaults
+  before accepting an update. A stale choice is rejected. A claimed or uncertain
+  settings command blocks later work on that conversation; Stop/approval replies
+  remain available. The phone preflights the settings capability before saving a
+  delivery receipt. It reports queue acknowledgement separately from confirmed
+  settings publication, and never retries an uncertain change.
 - Stop carries the observed turn ID and cannot stop a newer turn. An accepted
   stop is shown as requested, not completed. Approval replies carry the exact
   pending request ID; unknown/stale requests fail closed. Truncated approval
