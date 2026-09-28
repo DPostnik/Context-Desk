@@ -30,6 +30,7 @@ import Foundation
             if isCode { style[.font] = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular) }
             if !isCode, let target = run.link, let url = destination(target.scheme == nil ? (target.relativeString.removingPercentEncoding ?? target.relativeString) : target.absoluteString) {
                 style[.link] = url
+                style[.toolTip] = url.absoluteString
                 style[.foregroundColor] = NSColor.linkColor
                 style[.underlineStyle] = NSUnderlineStyle.single.rawValue
             }
@@ -39,7 +40,7 @@ import Foundation
                 let range = NSRange(location: 0, length: chunk.length)
                 for match in detector.matches(in: content, range: range) {
                     guard let target = match.url, let url = destination(target.absoluteString) else { continue }
-                    chunk.addAttributes([.link: url, .foregroundColor: NSColor.linkColor,
+                    chunk.addAttributes([.link: url, .toolTip: url.absoluteString, .foregroundColor: NSColor.linkColor,
                                          .underlineStyle: NSUnderlineStyle.single.rawValue], range: match.range)
                 }
             }
