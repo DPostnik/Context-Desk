@@ -74,10 +74,22 @@ def main():
     if health.returncode != 0:
         (OUT / 'swiftpm-error.log').write_text(health.stdout + health.stderr)
         print('SwiftPM cannot start; using direct compilation. Diagnostic: .build/local-build/swiftpm-error.log', flush=True)
-    frameworks = developer / 'Library/Developer/Frameworks'
+    # Full Xcode keeps testing frameworks in the macOS platform; CLT uses
+    # Library/Developer. Keep framework and runtime paths from the same layout.
+    testing_layouts = [
+        (developer / 'Platforms/MacOSX.platform/Developer/Library/Frameworks',
+         developer / 'Platforms/MacOSX.platform/Developer/usr/lib'),
+        (developer / 'Library/Developer/Frameworks',
+         developer / 'Library/Developer/usr/lib'),
+    ]
+    frameworks, testing_libraries = next(
+        (layout for layout in testing_layouts if (layout[0] / 'Testing.framework').is_dir()),
+        testing_layouts[0],
+    )
+    has_testing_framework = (frameworks / 'Testing.framework').is_dir()
     test_flags = []
-    if (frameworks / 'Testing.framework').is_dir():
-        test_flags = ['-F', str(frameworks), '-Xlinker', '-rpath', '-Xlinker', str(frameworks), '-Xlinker', '-rpath', '-Xlinker', str(developer / 'Library/Developer/usr/lib')]
+    if has_testing_framework:
+        test_flags = ['-F', str(frameworks), '-Xlinker', '-rpath', '-Xlinker', str(frameworks), '-Xlinker', '-rpath', '-Xlinker', str(testing_libraries)]
     macros = Path(compiler).parent.parent / 'lib/swift/host/plugins/testing'
     if macros.is_dir():
         test_flags += ['-plugin-path', str(macros)]
@@ -100,8 +112,8 @@ def main():
             command = [swift, 'test', '--sdk', sdk, '--disable-xctest', '--force-resolved-versions']
             if macros.is_dir():
                 command += ['-Xswiftc', '-plugin-path', '-Xswiftc', macros]
-            if test_flags:
-                command += ['-Xswiftc', '-F', '-Xswiftc', frameworks, '-Xlinker', '-F', '-Xlinker', frameworks, '-Xlinker', '-rpath', '-Xlinker', frameworks, '-Xlinker', '-rpath', '-Xlinker', developer / 'Library/Developer/usr/lib']
+            if has_testing_framework:
+                command += ['-Xswiftc', '-F', '-Xswiftc', frameworks, '-Xlinker', '-F', '-Xlinker', frameworks, '-Xlinker', '-rpath', '-Xlinker', frameworks, '-Xlinker', '-rpath', '-Xlinker', testing_libraries]
             run(command)
     else:
         resolved = json.loads((ROOT / 'Package.resolved').read_text())

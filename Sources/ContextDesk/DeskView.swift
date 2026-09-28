@@ -773,6 +773,7 @@ struct SettingsView: View {
     @AppStorage(AppLanguage.preferenceKey) private var selectedLanguage = L10n.language.rawValue
     var body: some View {
         Form {
+            MobileRemoteSettings(host: model.mobileRemote, model: model)
             Section("Язык / Language") {
                 Picker(L10n.text("Язык интерфейса", "Interface language"), selection: $selectedLanguage) {
                     ForEach(AppLanguage.allCases, id: \.rawValue) { language in
