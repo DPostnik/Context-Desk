@@ -80,11 +80,11 @@ private struct ChatRunState {
     @Published var usage: [String: UsageSnapshot] = [:]
     @Published var models: [AgentModelInfo] = []
     @Published var draftAccessModes: [UUID: AccessMode] = [:]
-    @Published var draftEffort = ""
+    @Published var draftEffort = "medium"
     var effort: String {
         get {
             guard let chat = selectedChat else { return draftEffort }
-            return chat.effort ?? ""
+            return chat.effort ?? "medium"
         }
         set {
             if let index = state.chats.firstIndex(where: { $0.id == chatID }) {
@@ -377,10 +377,10 @@ private struct ChatRunState {
     func selectModel(_ model: String) {
         if let index = state.chats.firstIndex(where: { $0.id == chatID }) {
             state.chats[index].model = model
-            state.chats[index].effort = models.first { $0.id == model }?.defaultEffort ?? ""
+            state.chats[index].effort = "medium"
         } else {
             state.model = model
-            draftEffort = models.first { $0.id == model }?.defaultEffort ?? ""
+            draftEffort = "medium"
         }
         persist()
     }

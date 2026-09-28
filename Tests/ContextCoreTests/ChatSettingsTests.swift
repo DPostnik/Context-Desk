@@ -12,15 +12,22 @@ import ContextCore
     var project = Project(path: folder.path); project.accessMode = .fullAccess
     model.state.projects = [project]; model.projectID = project.id
     model.state.model = "global-default"
+    #expect(model.effort == "medium")
+    model.models = [.init(id: "model-a-updated", displayName: "A", defaultEffort: "high", efforts: ["medium", "high"])]
     model.state.chats = [Chat(id: "a", projectID: project.id, title: "A", model: "model-a"),
                          Chat(id: "b", projectID: project.id, title: "B", model: "model-b")]
     model.chatID = "a"
     #expect(model.accessMode == .standard)
     #expect(model.currentModel == "model-a")
-    model.selectAccessMode(.fullAccess); model.selectModel("model-a-updated"); model.effort = "high"
+    model.selectAccessMode(.fullAccess); model.selectModel("model-a-updated")
+    #expect(model.effort == "medium")
+    model.effort = "high"
     model.chatID = "b"
     #expect(model.accessMode == .standard)
     #expect(model.currentModel == "model-b")
+    #expect(model.effort == "medium")
+    model.effort = ""
+    model.chatID = "a"; model.chatID = "b"
     #expect(model.effort == "")
     model.selectAccessMode(.standard); model.effort = "low"
     #expect(model.state.projects[0].accessMode == .fullAccess)
@@ -28,7 +35,11 @@ import ContextCore
     model.newChat()
     #expect(model.accessMode == .standard)
     model.selectAccessMode(.fullAccess)
-    model.selectModel("new-draft"); model.effort = "medium"
+    #expect(model.effort == "medium")
+    model.selectModel("new-draft")
+    #expect(model.effort == "medium")
+    model.effort = ""
+    #expect(model.effort == "")
     model.chatID = "a"
     #expect(model.currentModel == "model-a-updated")
     #expect(model.effort == "high")
@@ -120,6 +131,11 @@ import ContextCore
     #expect(scheduledTurn["model"].string == job.model && scheduledTurn["effort"].string == job.effort)
     #expect(scheduledTurn["approvalPolicy"].string == "on-request")
     #expect(model.chatID == "a" && model.currentModel == "model-a" && model.effort == "high")
+    model.chatID = scheduled.id
+    #expect(model.effort == job.effort)
+    let restored = try JSONDecoder().decode(SavedState.self, from: JSONEncoder().encode(model.state))
+    model.state = restored
+    #expect(model.effort == job.effort)
     await model.stopScheduler()
     await wire.stop()
 }
