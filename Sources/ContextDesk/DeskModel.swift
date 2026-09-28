@@ -171,10 +171,24 @@ private struct ChatRunState {
         models.first { $0.id == currentModel }?.efforts ?? []
     }
 
+    private var photoCleanupTask: Task<Void, Never>?
+    private func cleanTemporaryPhotos() {
+        guard photoCleanupTask != nil else { return }
+        let active = Set(runs.filter { $0.value.running || $0.value.sending }.map(\.key))
+            .union(pending.map(\.threadID))
+        do { try MobilePhotoRetention.sweep(root: Locations.root.appendingPathComponent("mobile-photos"), activeChats: active) }
+        catch { self.error = L10n.text("Не удалось очистить временные фотографии: ", "Could not clean up temporary photos: ") + error.localizedDescription }
+    }
     func boot() async {
         guard !booted else { return }; booted = true
         defer { isBootstrapping = false }
         do { state = try await store.load(); usage = try await store.loadUsage(); projectID = state.projects.first?.id } catch { self.error = error.localizedDescription; return }
+        photoCleanupTask = Task { [weak self] in
+            while !Task.isCancelled {
+                self?.cleanTemporaryPhotos()
+                do { try await Task.sleep(for: .seconds(300)) } catch { return }
+            }
+        }
         await restoreSummaryQueue()
         for chat in state.chats where chat.hasUnreadResponse {
             let project = state.projects.first { $0.id == chat.projectID }
@@ -910,6 +924,7 @@ private struct ChatRunState {
             runs[threadID, default: ChatRunState()].queuePaused = true
         }
         runs[threadID, default: ChatRunState()].priorityMessageID = nil
+        cleanTemporaryPhotos()
         scheduleQueue(threadID: threadID)
     }
     private func setDelivery(_ id: String, phase: String) {
@@ -1083,6 +1098,7 @@ private struct ChatRunState {
         }
     }
     func shutdown() async {
+        photoCleanupTask?.cancel(); photoCleanupTask = nil
         await mobileRemote.disable()
         historyBackfillTask?.cancel()
         for task in historyRefreshTasks.values { task.cancel() }

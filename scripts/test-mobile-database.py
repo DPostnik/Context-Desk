@@ -45,6 +45,7 @@ with tempfile.TemporaryDirectory(prefix='context-remote-db-', dir='/tmp') as dir
         sql((root/'supabase/migrations/202609280001_realtime.sql').read_text())
         sql((root/'supabase/migrations/202609280002_revision_continuity.sql').read_text())
         sql((root/'supabase/migrations/202609280003_photos.sql').read_text())
+        sql((root/'supabase/migrations/202609280004_photo_retention.sql').read_text())
         assert sql("select public.valid_remote_photos(null), public.valid_remote_photos('[]'), public.valid_remote_photos('{}'), public.valid_remote_photos('[{\"id\":\"bad\",\"data\":\"/9j/AA==\"}]');") == 't|t|f|f'
 
         owner = "set role authenticated; set request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';"
@@ -74,6 +75,30 @@ with tempfile.TemporaryDirectory(prefix='context-remote-db-', dir='/tmp') as dir
         rejects(owner + "update public.remote_commands set status = 'claimed';")
         sql(owner + 'delete from public.remote_devices;')
         assert sql(owner + 'select count(*) from public.remote_commands;').endswith('0')
+        # Real PostgreSQL retention/permissions test; synthetic rows only.
+        import uuid
+        sql(owner + f"insert into public.remote_devices(id,name,projects,snapshot) values ('{device}','Mac',array['project'],'{{}}');")
+        photo = '[{"id":"11111111-1111-1111-1111-111111111111","data":"/9j/AA=="}]'
+        ids = {}
+        for status in ['pending','claimed','submitted','rejected','uncertain']:
+            value = str(uuid.uuid4()); ids[status] = value
+            sql(f"insert into public.remote_commands(id,owner,device,project,chat,kind,text,status,photos,photos_expire_at) values ('{value}','11111111-1111-1111-1111-111111111111','{device}','project','{value}','send','keep history','{status}','{photo}',now()-interval '1 second');")
+        rejects(owner + 'select public.cleanup_remote_photos();')
+        rejects('set role anon; select public.cleanup_remote_photos();')
+        rejects(owner + f"update public.remote_commands set photos=null where id='{ids['pending']}';")
+        rejects(owner + f"update public.remote_commands set photos=null where id='{ids['claimed']}';")
+        rejects(owner + f"update public.remote_commands set photos=null,text='changed' where id='{ids['submitted']}';")
+        sql(other + 'update public.remote_commands set photos=null;')
+        assert sql('select public.cleanup_remote_photos();') == '3'
+        assert sql('select public.cleanup_remote_photos();') == '0'
+        assert sql("select count(*) from public.remote_commands where photos is not null;") == '2'
+        assert sql("select count(*) from public.remote_commands where text='keep history';") == '5'
+        sql(owner + f"update public.remote_commands set status='submitted' where id='{ids['claimed']}';")
+        assert sql(f"select photos_expire_at >= now()+interval '59 minutes' from public.remote_commands where id='{ids['claimed']}';") == 't'
+        rejects(owner + f"update public.remote_commands set photos=null where id='{ids['claimed']}';")
+        rejects(owner + f"update public.remote_commands set photos_expire_at=now() where id='{ids['claimed']}';")
+        assert sql('select public.cleanup_remote_photos();') == '0'
+        sql(owner + 'delete from public.remote_devices;')
         import json
         patch = f"select public.patch_remote_snapshot('{device}','Mac','[{{\"id\":\"project\",\"name\":\"Project\"}}]',array['a','b'],'[{{\"id\":\"a\",\"text\":\"first\"}},{{\"id\":\"b\",\"text\":\"second\"}}]');"
         sql(owner + patch)
@@ -115,6 +140,6 @@ with tempfile.TemporaryDirectory(prefix='context-remote-db-', dir='/tmp') as dir
         sql(owner + patch)
         assert delta(last_revision)['device']['revision'] > last_revision
         assert len(delta(last_revision)['chats']) == 2
-        print('PASS: all migrations, delete/recreate revision continuity, atomic event rollback, private channel RLS, compact signals, delta revisions/deletions, owner/project isolation, duplicate claims and no uncertain replay')
+        print('PASS: photo expiry, grace period, immutable history, retention permissions/idempotence; all data migrations, delete/recreate revision continuity, atomic event rollback, private channel RLS, compact signals, delta revisions/deletions, owner/project isolation, duplicate claims and no uncertain replay')
     finally:
         if started: run('pg_ctl','-D',folder/'data','-m','fast','-w','stop')

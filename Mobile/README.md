@@ -10,7 +10,9 @@ was provisioned on 2026-09-27; public signup is disabled.
 1. Choose a Supabase project. Apply `supabase/migrations/202609270001_remote.sql` and then
    `supabase/migrations/202609280001_realtime.sql` and
    `supabase/migrations/202609280002_revision_continuity.sql` and
-   `supabase/migrations/202609280003_photos.sql` once, in order, with its SQL editor. The migration uses Supabase Auth and PostgREST v1;
+   `supabase/migrations/202609280003_photos.sql`,
+   `supabase/migrations/202609280004_photo_retention.sql` and
+   `supabase/migrations/202609280005_photo_cleanup_cron.sql` once, in order, with its SQL editor. The migration uses Supabase Auth and PostgREST v1;
    it has no Supabase SDK dependency. Create a confirmed email/password Auth user.
    Disable public signup if the project is only for personal use.
 2. In the Mac app, Settings → Mobile access, enter the project HTTPS URL,
@@ -234,10 +236,48 @@ photos. A per-chat capability flag prevents selection against an older Mac snaps
 Photos are sent atomically in the immutable owner-scoped command, not public URLs.
 The existing command RLS, single-claim rules and uncertain-delivery receipt apply.
 The Keychain receipt contains identity/text only; status queries omit photo bytes.
-Cloud photo payloads remain until the device cloud copy is deleted. The receiving Mac
+Cloud photo payloads expire one hour after a submitted, rejected or uncertain receipt.
+A server-side Cron job clears expired payloads every five minutes; pending and
+claimed commands retain their photos for delivery/recovery. Text/status rows remain. The receiving Mac
 validates JPEG decoding, dimensions and size, writes generated filenames under its
 own `mobile-photos/<command UUID>` directory, and supplies these paths in the agent's
-prompt for image-tool processing. Local images are retained for conversation use;
+prompt for image-tool processing. Local images are temporary: the Mac sweeps every five minutes while the app is
+running, with a one-hour grace period after the owning chat becomes idle. Active
+chats and approval waits protect their files; old folders without chat metadata
+are protected while any chat is active. Grace-period metadata survives restarts.
+Expired images cannot be reopened from old transcript paths; attach them again
+when needed. Only app-owned UUID/JPEG folders are removed; unknown files, corrupt
+metadata and symbolic links are skipped. Cleanup is independent of mobile access;
 existing project permissions still apply to agent file access. No engine credentials
 or source photo filenames are transferred. This is file-based image-tool input,
 not a native multimodal input block. Photo contents are not included in snapshots.
+
+
+### Photo retention maintenance
+
+Scope: temporary phone images only. The two deterministic jobs use no model calls.
+Cloud input is indexed terminal command expiry; Mac input is image-folder metadata
+and current active chats. Neither job retries commands or alters chat history.
+Run the retention migration before the named Cron activation migration; the latter
+upserts `context-desk-photo-cleanup` on `*/5 * * * *`. Cloud cleanup processes at
+most 500 command rows per run and is idempotent. Previously terminal photos get
+a fresh hour on migration. Cloud backups, if enabled, follow provider retention.
+
+Verify activation and recent execution (metadata only):
+
+```sql
+select jobname, schedule, active from cron.job
+where jobname = 'context-desk-photo-cleanup';
+select status, return_message, start_time, end_time from cron.job_run_details
+where jobid = (select jobid from cron.job where jobname = 'context-desk-photo-cleanup')
+order by start_time desc limit 5;
+select count(*) as overdue from public.remote_commands
+where photos is not null and photos_expire_at <= now()
+  and status in ('submitted','rejected','uncertain');
+```
+
+To pause only this job, use `cron.alter_job(jobid, active := false)` with the ID
+selected above. Do not remove the Cron extension or touch other jobs. If activation
+fails, report cloud cleanup as inactive until verified; local cleanup is independent.
+For local errors, inspect the app's localized error and folder permissions. No
+measured storage savings are claimed until real expiry runs occur.

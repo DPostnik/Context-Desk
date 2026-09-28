@@ -126,6 +126,9 @@ public struct RemoteCommand: Codable, Identifiable, Sendable {
         let folder = directory.appendingPathComponent(id, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true,
                                                attributes: [.posixPermissions: 0o700])
+        #if os(macOS)
+        try MobilePhotoRetention.register(folder: folder, chat: chat)
+        #endif
         var paths: [String] = []
         for photo in photos {
             let file = folder.appendingPathComponent(photo.id.uuidString + ".jpg")
