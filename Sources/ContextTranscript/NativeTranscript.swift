@@ -19,7 +19,7 @@ public struct NativeTranscript: NSViewRepresentable {
         self.isWorking = isWorking
         self.items = items; self.conversationID = conversationID; self.followOutput = followOutput
     }
-    public func makeNSView(context: Context) -> TranscriptScrollView { TranscriptScrollView() }
+    public func makeNSView(context: Context) -> TranscriptScrollView { TranscriptScrollView(positions: .session) }
     public func sizeThatFits(_ proposal: ProposedViewSize, nsView: TranscriptScrollView, context: Context) -> CGSize? {
         proposal.replacingUnspecifiedDimensions(by: .zero)
     }
@@ -43,6 +43,9 @@ public struct NativeTranscript: NSViewRepresentable {
     private var copyFeedback: (id: String, succeeded: Bool, block: Int?)?
     private var copyFeedbackTask: Task<Void, Never>?
     private var needsEndScroll = false
+    private let positions: TranscriptReadingPositions
+    private var pendingPosition: TranscriptReadingPositions.Position?
+    private var changingLayout = false
     private var unreadCompletionID: String?
     private var unreadResponseItemID: String?
     private var readCheckScheduled = false
@@ -51,7 +54,8 @@ public struct NativeTranscript: NSViewRepresentable {
     public private(set) var editCount = 0
     public let workingIndicator = NSHostingView(rootView: ChatLoadingIndicator())
 
-    public init(pasteboard: NSPasteboard = .general) {
+    public init(pasteboard: NSPasteboard = .general, positions: TranscriptReadingPositions = TranscriptReadingPositions()) {
+        self.positions = positions
         self.pasteboard = pasteboard
         // TextKit 1's non-contiguous layout avoids laying out an entire long
         // transcript to display a small viewport.
@@ -80,7 +84,7 @@ public struct NativeTranscript: NSViewRepresentable {
         transcript.setAccessibilityLabel(L10n.text("История разговора", "Conversation history"))
         documentView = transcript
         contentView.postsBoundsChangedNotifications = true
-        NotificationCenter.default.addObserver(self, selector: #selector(scheduleReadCheck),
+        NotificationCenter.default.addObserver(self, selector: #selector(viewportChanged),
                                                name: NSView.boundsDidChangeNotification, object: contentView)
         NotificationCenter.default.addObserver(self, selector: #selector(scheduleReadCheck),
                                                name: NSWindow.didBecomeKeyNotification, object: nil)
@@ -95,9 +99,12 @@ public struct NativeTranscript: NSViewRepresentable {
 
     public func update(items: [TranscriptItem], conversationID: String?, followOutput: Bool, isWorking: Bool = false,
                        unreadCompletionID: String? = nil, unreadResponseItemID: String? = nil) {
+        let savedPosition = pendingPosition ?? capturePosition()
+        if let id = self.conversationID, let savedPosition { positions.values[id] = savedPosition }
+        changingLayout = true
+        defer { changingLayout = false; scheduleReadCheck() }
         self.unreadResponseItemID = unreadResponseItemID
         self.unreadCompletionID = unreadCompletionID
-        defer { scheduleReadCheck() }
         var items = Self.groupActivities(items, isWorking: isWorking)
         if isWorking {
             items.append(TranscriptItem(id: "local-working", kind: "loading", text: ""))
@@ -140,18 +147,24 @@ public struct NativeTranscript: NSViewRepresentable {
         needsLayout = true
         if switched {
             needsEndScroll = false
-            if unreadCompletionID == nil { scrollToEnd() }
-            else { contentView.scroll(to: .zero); reflectScrolledClipView(contentView) }
+            pendingPosition = conversationID.flatMap { positions.values[$0] }
+            if pendingPosition == nil { scrollToEnd() }
         } else if followOutput && (wasAtEnd || resumeFollowing) { scrollToEnd() }
-        else { contentView.scroll(to: oldOrigin); reflectScrolledClipView(contentView) }
+        else {
+            if case .anchor = savedPosition { pendingPosition = savedPosition }
+            contentView.scroll(to: oldOrigin); reflectScrolledClipView(contentView)
+        }
     }
 
     private func scrollToEnd() {
+        pendingPosition = nil
         needsEndScroll = true
         needsLayout = true
     }
 
     public override func layout() {
+        changingLayout = true
+        defer { changingLayout = false; rememberPosition() }
         super.layout()
         let width = transcript.textContainer?.containerSize.width ?? 0
         if width > 0, abs(width - styledWidth) > 0.5 {
@@ -166,9 +179,62 @@ public struct NativeTranscript: NSViewRepresentable {
         }
         positionWorkingIndicator()
         defer { scheduleReadCheck() }
-        guard needsEndScroll, contentSize.width > 0, contentSize.height > 0 else { return }
-        needsEndScroll = false
-        transcript.scrollRangeToVisible(NSRange(location: transcript.textStorage?.length ?? 0, length: 0))
+        guard contentSize.width > 0, contentSize.height > 0, !previous.isEmpty else { return }
+        if let position = pendingPosition {
+            pendingPosition = nil
+            restorePosition(position)
+        } else if needsEndScroll {
+            needsEndScroll = false
+            if let container = transcript.textContainer { transcript.layoutManager?.ensureLayout(for: container) }
+            transcript.scrollRangeToVisible(NSRange(location: transcript.textStorage?.length ?? 0, length: 0))
+        }
+    }
+
+    @objc private func viewportChanged() {
+        rememberPosition()
+        scheduleReadCheck()
+    }
+
+    private func rememberPosition() {
+        guard !changingLayout, pendingPosition == nil, !needsEndScroll,
+              let id = conversationID, let position = capturePosition() else { return }
+        positions.values[id] = position
+    }
+
+    private func capturePosition() -> TranscriptReadingPositions.Position? {
+        guard !previous.isEmpty, contentSize.width > 0, contentSize.height > 0,
+              let manager = transcript.layoutManager, let container = transcript.textContainer,
+              let storage = transcript.textStorage, storage.length > 0 else { return nil }
+        if needsEndScroll || isAtTranscriptEnd { return .end }
+        let origin = contentView.bounds.origin
+        let point = NSPoint(x: container.lineFragmentPadding,
+                            y: max(0, origin.y - transcript.textContainerOrigin.y))
+        let glyph = manager.glyphIndex(for: point, in: container)
+        guard glyph < manager.numberOfGlyphs else { return nil }
+        let character = manager.characterIndexForGlyph(at: glyph)
+        guard let index = ranges.firstIndex(where: { NSLocationInRange(character, $0) }) else { return nil }
+        let line = manager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        return .anchor(itemID: previous[index].id, character: character - ranges[index].location,
+                       offset: origin.y - (line.minY + transcript.textContainerOrigin.y), fallbackY: origin.y)
+    }
+
+    private func restorePosition(_ position: TranscriptReadingPositions.Position) {
+        guard let manager = transcript.layoutManager, let container = transcript.textContainer else { return }
+        manager.ensureLayout(for: container)
+        switch position {
+        case .end:
+            transcript.scrollRangeToVisible(NSRange(location: transcript.textStorage?.length ?? 0, length: 0))
+        case let .anchor(itemID, character, offset, fallbackY):
+            var y = fallbackY
+            if let index = previous.firstIndex(where: { $0.id == itemID }), ranges[index].length > 0 {
+                let location = ranges[index].location + min(character, ranges[index].length - 1)
+                let glyph = manager.glyphIndexForCharacter(at: location)
+                y = manager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minY
+                    + transcript.textContainerOrigin.y + offset
+            }
+            contentView.scroll(to: NSPoint(x: 0, y: max(0, y)))
+            reflectScrolledClipView(contentView)
+        }
     }
 
     /// Non-contiguous TextKit layout can place the final glyph at an estimated
@@ -224,7 +290,7 @@ public struct NativeTranscript: NSViewRepresentable {
             guard let completionID = self.unreadCompletionID, let threadID = self.conversationID,
                   let window = self.window, window.isKeyWindow, window.isVisible, !window.isMiniaturized,
                   NSApplication.shared.isActive, !self.isHiddenOrHasHiddenAncestor,
-                  !self.needsEndScroll, self.isUnreadResponseVisible else { return }
+                  !self.needsEndScroll, self.pendingPosition == nil, self.isUnreadResponseVisible else { return }
             self.onReadToEnd?(threadID, completionID)
         }
     }

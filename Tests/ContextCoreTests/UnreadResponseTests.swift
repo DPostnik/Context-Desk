@@ -66,13 +66,13 @@ import ContextTranscript
     Issue.record("Read state was not persisted")
 }
 
-@Test @MainActor func unreadLongTranscriptOpensAtTopAndTracksTheActualEnd() {
+@Test @MainActor func unreadLongTranscriptOpensAtEndAndTracksTheActualEnd() {
     let view = TranscriptScrollView()
     view.frame = NSRect(x: 0, y: 0, width: 700, height: 400)
     let items = [TranscriptItem(id: "reply", kind: "assistant", text: String(repeating: "Ответ агента\n", count: 100))]
     view.update(items: items, conversationID: "thread", followOutput: true, unreadCompletionID: "completion")
     view.layoutSubtreeIfNeeded()
-    #expect(!view.isAtTranscriptEnd)
+    #expect(view.isAtTranscriptEnd)
     view.transcript.scrollRangeToVisible(NSRange(location: view.transcript.string.utf16.count, length: 0))
     view.layoutSubtreeIfNeeded()
     #expect(view.isAtTranscriptEnd)
@@ -137,6 +137,8 @@ import ContextTranscript
     view.update(items: items, conversationID: "thread", followOutput: false, isWorking: true,
                 unreadCompletionID: "completion", unreadResponseItemID: "finished")
     view.layoutSubtreeIfNeeded()
+    view.contentView.scroll(to: .zero)
+    view.reflectScrolledClipView(view.contentView)
     #expect(!view.isAtTranscriptEnd)
     #expect(view.isUnreadResponseVisible)
     view.update(items: items, conversationID: "thread", followOutput: false, isWorking: true,
