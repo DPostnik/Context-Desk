@@ -1,4 +1,5 @@
 import SwiftUI
+import ContextTranscript
 import ContextCore
 import AgentContract
 
@@ -61,40 +62,103 @@ struct RoutineLibrary: View {
     @ObservedObject var model: DeskModel
     @State private var editing: PortableRoutine?
     @State private var job: ManagedJob?
+    @State private var deleting: PortableRoutine?
+    @State private var search = ""
     @Environment(\.dismiss) private var dismiss
+
+    private var filteredRoutines: [PortableRoutine] {
+        model.routines.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) || $0.intent.localizedCaseInsensitiveContains(search) }
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Text(L10n.text("Рутины", "Routines")).font(.title2.bold())
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(L10n.text("Библиотека рутин", "Routine library")).font(.title2.bold())
+                    Text(L10n.text("Повторяемая работа с понятными шагами и проверками", "Repeatable work with clear steps and checks"))
+                        .font(.callout).foregroundStyle(.secondary)
+                }
                 Spacer()
-                Button(L10n.text("Новая рутина", "New routine")) { editing = PortableRoutine() }
-                Button(L10n.text("Закрыть", "Close")) { dismiss() }
-            }
-            Text(L10n.text("Рутина задаёт цель, шаги и проверки. Сохранение не включает расписание. Задание получает отдельную версию рутины; дальнейшие правки библиотеки не меняют его.", "A routine defines a goal, steps and checks. Saving does not enable a schedule. A task receives a frozen routine revision; later library edits do not change it.")).font(.callout)
-            List(model.routines) { routine in
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(routine.name).font(.headline)
-                    Text(routine.intent).lineLimit(3)
-                    HStack {
-                        Button(L10n.text("Изменить", "Edit")) { editing = routine }
-                        Button(L10n.text("Создать задание…", "Create task…")) {
-                            do {
-                                let invocation = RoutineInvocation(definition: routine)
-                                var value = ManagedJob(); value.name = routine.name; value.routine = invocation
-                                value.prompt = try invocation.prompt(); value.projectID = model.projectID
-                                value.model = model.state.model; value.route = model.defaultRoute
-                                value.schedule.rule = ""; job = value
-                            } catch { model.error = error.localizedDescription }
-                        }
-                        Button(L10n.text("Удалить из библиотеки", "Remove from library")) { Task { await model.removeRoutine(routine.id) } }
+                Button { editing = PortableRoutine() } label: {
+                    Label(L10n.text("Новая рутина", "New routine"), systemImage: "plus")
+                }.buttonStyle(DeskButtonStyle())
+                Button(L10n.text("Готово", "Done")) { dismiss() }.buttonStyle(DeskButtonStyle()).keyboardShortcut(.cancelAction)
+            }.padding(24)
+            Divider()
+            VStack(alignment: .leading, spacing: 16) {
+                RoutineNotice(icon: "square.stack", text: L10n.text("Сохрани рутину, затем создай из неё задание. У каждого задания своя версия: правки в библиотеке не меняют уже созданные задания.", "Save a routine, then create a task from it. Each task keeps its own revision: library edits do not change existing tasks."))
+                HStack {
+                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    TextField(L10n.text("Найти рутину", "Find a routine"), text: $search).textFieldStyle(.plain)
+                    if !search.isEmpty {
+                        Button { search = "" } label: { Image(systemName: "xmark.circle.fill") }
+                            .buttonStyle(.plain).accessibilityLabel(L10n.text("Очистить поиск", "Clear search"))
                     }
-                }.padding(.vertical, 6)
-            }
-            if let error = model.error { Text(error).font(.caption).foregroundStyle(.red) }
-        }.padding(24).frame(width: 720, height: 600)
+                }.padding(12).background(DeskPalette.subtle, in: RoundedRectangle(cornerRadius: 12))
+                if filteredRoutines.isEmpty {
+                    VStack(spacing: 16) {
+                        EmptyState(icon: "repeat", title: search.isEmpty ? L10n.text("Пока нет рутин", "No routines yet") : L10n.text("Ничего не найдено", "No results"),
+                                   text: search.isEmpty ? L10n.text("Опиши цель, добавь шаги и проверки результата.", "Describe a goal, add steps and checks for the result.") : L10n.text("Попробуй другое название или описание.", "Try a different name or description."))
+                        if search.isEmpty {
+                            Button(L10n.text("Создать первую рутину", "Create your first routine")) { editing = PortableRoutine() }.buttonStyle(DeskButtonStyle())
+                        }
+                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 12) {
+                            ForEach(filteredRoutines) { routine in
+                                RoutineCard {
+                                    HStack(alignment: .top, spacing: 12) {
+                                        Image(systemName: "repeat").font(.title3).padding(10)
+                                            .background(DeskPalette.subtle, in: RoundedRectangle(cornerRadius: 10))
+                                        VStack(alignment: .leading, spacing: 6) {
+                                            Text(routine.name).font(.headline)
+                                            Text(routine.intent).font(.callout).foregroundStyle(.secondary).lineLimit(3)
+                                            Text(L10n.text("Шагов: \(routine.steps.count)", "Steps: \(routine.steps.count)"))
+                                                .font(.caption).foregroundStyle(.secondary)
+                                        }
+                                        Spacer(minLength: 0)
+                                        Menu {
+                                            Button(L10n.text("Удалить из библиотеки", "Remove from library"), role: .destructive) { deleting = routine }
+                                        } label: { Image(systemName: "ellipsis") }
+                                            .menuStyle(.borderlessButton).menuIndicator(.hidden).frame(width: 24)
+                                            .accessibilityLabel(L10n.text("Действия с рутиной", "Routine actions"))
+                                    }
+                                    HStack {
+                                        Spacer()
+                                        Button(L10n.text("Изменить", "Edit")) { editing = routine }
+                                        Button(L10n.text("Создать задание…", "Create task…")) { createTask(routine) }
+                                            .disabled(!model.schedulerReady)
+                                    }.buttonStyle(DeskButtonStyle())
+                                }
+                            }
+                        }.padding(1)
+                    }
+                }
+                if let error = model.error { RoutineNotice(icon: "exclamationmark.triangle", text: error).foregroundStyle(.red) }
+            }.padding(24)
+        }.frame(width: 780, height: 660).background(DeskPalette.canvas)
             .task { await model.loadRoutines() }
             .sheet(item: $editing) { RoutineEditor(model: model, routine: $0) }
             .sheet(item: $job) { JobEditor(model: model, job: $0) }
+            .confirmationDialog(L10n.text("Удалить рутину из библиотеки?", "Remove this routine from the library?"), isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
+                Button(L10n.text("Удалить", "Remove"), role: .destructive) {
+                    if let routine = deleting { Task { await model.removeRoutine(routine.id) } }
+                    deleting = nil
+                }
+            } message: {
+                Text(L10n.text("Созданные задания сохранят свою версию рутины.", "Existing tasks will keep their saved routine revision."))
+            }
+    }
+
+    private func createTask(_ routine: PortableRoutine) {
+        do {
+            let invocation = RoutineInvocation(definition: routine)
+            var value = ManagedJob(); value.name = routine.name; value.routine = invocation
+            value.prompt = try invocation.prompt(); value.projectID = model.projectID
+            value.model = model.state.model; value.route = model.defaultRoute
+            value.schedule.rule = ""; job = value
+        } catch { model.error = error.localizedDescription }
     }
 }
 
@@ -104,54 +168,131 @@ struct RoutineEditor: View {
     @State private var issue: String?
     @State private var saving = false
     @Environment(\.dismiss) private var dismiss
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(L10n.text("Определение рутины", "Routine definition")).font(.title2.bold())
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(L10n.text("Редактор рутины", "Routine editor")).font(.title2.bold())
+                    Text(L10n.text("Цель → шаги → проверка результата", "Goal → steps → result checks")).font(.callout).foregroundStyle(.secondary)
+                }
+                Spacer()
+            }.padding(24)
+            Divider()
             ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    TextField(L10n.text("Название", "Name"), text: $routine.name)
-                    field(L10n.text("Цель и условия применения", "Goal and applicability"), text: $routine.intent)
-                    field(L10n.text("Ожидаемые входные данные", "Expected input"), text: $routine.inputs)
-                    field(L10n.text("Ограничения", "Constraints"), text: $routine.constraints)
-                    ForEach($routine.steps) { $step in
-                        VStack(alignment: .leading) {
-                            field(L10n.text("Шаг", "Step"), text: $step.instruction)
-                            TextField(L10n.text("Как проверить результат шага", "How to verify this step"), text: $step.completionCheck)
-                            Button(L10n.text("Удалить шаг", "Remove step")) { routine.steps.removeAll { $0.id == step.id } }
-                        }.padding(10).background(.gray.opacity(0.05))
+                VStack(alignment: .leading, spacing: 20) {
+                    RoutineCard {
+                        Text(L10n.text("Основное", "Basics")).font(.headline)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(L10n.text("Название", "Name")).font(.callout.weight(.medium))
+                            TextField(L10n.text("Например, еженедельный обзор проекта", "For example, weekly project review"), text: $routine.name).textFieldStyle(.roundedBorder)
+                        }
+                        RoutineTextField(label: L10n.text("Цель и условия применения", "Goal and applicability"), text: $routine.intent)
                     }
-                    Button(L10n.text("Добавить шаг", "Add step")) { routine.steps.append(RoutineStep()) }.disabled(routine.steps.count >= 32)
-                    TextField(L10n.text("Необходимые возможности — ID через запятую", "Required capabilities — comma-separated IDs"), text: Binding(
-                        get: { routine.requirements.joined(separator: ", ") },
-                        set: { routine.requirements = $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } }))
-                    Text(L10n.text("Например: approvals, userQuestions, workflowRegistration. Неизвестные требования блокируют запуск.", "Examples: approvals, userQuestions, workflowRegistration. Unknown requirements block execution.")).font(.caption).foregroundStyle(.secondary)
-                    ForEach(routine.extensions.indices, id: \.self) { index in
-                        VStack(alignment: .leading) {
-                            Text(L10n.text("Расширение для агента", "Agent-specific extension") + ": " + routine.extensions[index].agent.rawValue).font(.headline)
-                            TextEditor(text: $routine.extensions[index].instructions).frame(minHeight: 65)
-                            Button(L10n.text("Удалить расширение", "Remove extension")) { routine.extensions.remove(at: index) }
+                    RoutineCard {
+                        Text(L10n.text("Контекст", "Context")).font(.headline)
+                        RoutineTextField(label: L10n.text("Ожидаемые входные данные", "Expected input"), text: $routine.inputs)
+                        RoutineTextField(label: L10n.text("Ограничения", "Constraints"), text: $routine.constraints)
+                    }
+                    HStack {
+                        Text(L10n.text("Шаги выполнения", "Execution steps")).font(.headline)
+                        Spacer()
+                        Text("\(routine.steps.count) / 32").font(.caption).foregroundStyle(.secondary)
+                    }
+                    if routine.steps.isEmpty {
+                        RoutineNotice(icon: "list.number", text: L10n.text("Добавь первый шаг и опиши, как проверить его результат.", "Add the first step and describe how to check its result."))
+                    }
+                    ForEach($routine.steps) { $step in
+                        RoutineCard {
+                            HStack {
+                                Text(L10n.text("Шаг \((routine.steps.firstIndex { $0.id == step.id } ?? 0) + 1)", "Step \((routine.steps.firstIndex { $0.id == step.id } ?? 0) + 1)")).font(.headline)
+                                Spacer()
+                                Button(L10n.text("Удалить шаг", "Remove step"), role: .destructive) { routine.steps.removeAll { $0.id == step.id } }
+                                    .buttonStyle(.borderless)
+                            }
+                            RoutineTextField(label: L10n.text("Что сделать", "What to do"), text: $step.instruction)
+                            VStack(alignment: .leading, spacing: 6) {
+                                Label(L10n.text("Как проверить результат", "How to check the result"), systemImage: "checkmark.circle").font(.callout.weight(.medium))
+                                TextField(L10n.text("Ожидаемый результат шага", "Expected step result"), text: $step.completionCheck, axis: .vertical).textFieldStyle(.roundedBorder)
+                            }
                         }
                     }
-                    Menu(L10n.text("Добавить расширение агента", "Add agent-specific extension")) {
-                        Button("Codex") { routine.extensions.append(.init(agent: .codex, instructions: "")) }
-                        Button("Claude Code") { routine.extensions.append(.init(agent: .claudeCode, instructions: "")) }
+                    Button { routine.steps.append(RoutineStep()) } label: {
+                        Label(L10n.text("Добавить шаг", "Add step"), systemImage: "plus")
+                    }.buttonStyle(DeskButtonStyle()).disabled(routine.steps.count >= 32)
+                    RoutineCard {
+                        DisclosureGroup(L10n.text("Возможности и расширения агентов", "Agent capabilities and extensions")) {
+                            VStack(alignment: .leading, spacing: 14) {
+                                TextField(L10n.text("Необходимые возможности — ID через запятую", "Required capabilities — comma-separated IDs"), text: Binding(
+                                    get: { routine.requirements.joined(separator: ", ") },
+                                    set: { routine.requirements = $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } })).textFieldStyle(.roundedBorder)
+                                Text(L10n.text("Например: approvals, userQuestions, workflowRegistration. Неизвестные требования блокируют запуск.", "Examples: approvals, userQuestions, workflowRegistration. Unknown requirements block execution.")).font(.caption).foregroundStyle(.secondary)
+                                ForEach(routine.extensions.indices, id: \.self) { index in
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        RoutineTextField(label: routine.extensions[index].agent.rawValue, text: $routine.extensions[index].instructions)
+                                        Button(L10n.text("Удалить расширение", "Remove extension"), role: .destructive) { routine.extensions.remove(at: index) }
+                                    }
+                                }
+                                Menu(L10n.text("Добавить расширение агента", "Add agent-specific extension")) {
+                                    Button("Codex") { routine.extensions.append(.init(agent: .codex, instructions: "")) }
+                                    Button("Claude Code") { routine.extensions.append(.init(agent: .claudeCode, instructions: "")) }
+                                }
+                                Text(L10n.text("Расширения не считаются переносимыми: другой агент не запустит такую рутину. Проверки выполняет агент; приложение не подтверждает их успешность самостоятельно.", "Extensions are not portable: another agent cannot run this routine. Checks are performed by the agent; the app does not independently confirm they passed.")).font(.caption).foregroundStyle(.secondary)
+                            }.padding(.top, 12)
+                        }
                     }
-                    Text(L10n.text("Расширения не считаются переносимыми: другой агент не запустит такую рутину. Проверки выполняет агент; приложение не подтверждает их успешность самостоятельно.", "Extensions are not portable: another agent cannot run this routine. Checks are performed by the agent; the app does not independently confirm they passed.")).font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            if let issue { Text(issue).foregroundStyle(.red).font(.caption) }
-            HStack {
-                Spacer(); Button(L10n.text("Отмена", "Cancel")) { dismiss() }.disabled(saving)
-                Button(L10n.text("Сохранить", "Save")) {
-                    do {
-                        try routine.validate(); routine.revision = UUID(); saving = true
-                        Task { if await model.saveRoutine(routine) { dismiss() } else { issue = model.error }; saving = false }
-                    } catch { issue = error.localizedDescription }
-                }.disabled(saving)
-            }
-        }.padding(24).frame(width: 680, height: 720)
+                }.padding(24)
+            }.disabled(saving)
+            Divider()
+            VStack(alignment: .leading, spacing: 12) {
+                if let issue { Label(issue, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.caption).textSelection(.enabled) }
+                HStack {
+                    if saving { ProgressView().controlSize(.small) }
+                    Spacer()
+                    Button(L10n.text("Отмена", "Cancel")) { dismiss() }.keyboardShortcut(.cancelAction).disabled(saving)
+                    Button(L10n.text("Сохранить", "Save")) {
+                        do {
+                            try routine.validate(); routine.revision = UUID(); saving = true
+                            Task { if await model.saveRoutine(routine) { dismiss() } else { issue = model.error }; saving = false }
+                        } catch { issue = error.localizedDescription }
+                    }.keyboardShortcut(.defaultAction).disabled(saving)
+                }.buttonStyle(DeskButtonStyle())
+            }.padding(20)
+        }.frame(width: 720, height: 740).background(DeskPalette.canvas).interactiveDismissDisabled(saving)
     }
-    private func field(_ label: String, text: Binding<String>) -> some View {
-        VStack(alignment: .leading) { Text(label).font(.callout.bold()); TextEditor(text: text).frame(minHeight: 65).border(.gray.opacity(0.25)) }
+}
+
+struct RoutineCard<Content: View>: View {
+    @ViewBuilder var content: Content
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) { content }
+            .frame(maxWidth: .infinity, alignment: .leading).padding(18)
+            .background(DeskPalette.canvas, in: RoundedRectangle(cornerRadius: 16))
+            .overlay(RoundedRectangle(cornerRadius: 16).stroke(DeskPalette.border))
+    }
+}
+
+struct RoutineNotice: View {
+    let icon: String
+    let text: String
+    var body: some View {
+        Label(text, systemImage: icon).font(.callout).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14).background(DeskPalette.subtle, in: RoundedRectangle(cornerRadius: 12))
+    }
+}
+
+struct RoutineTextField: View {
+    let label: String
+    @Binding var text: String
+    @FocusState private var focused: Bool
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(label).font(.callout.weight(.medium))
+            TextEditor(text: $text).font(.body).scrollContentBackground(.hidden)
+                .padding(8).frame(minHeight: 88).focused($focused).accessibilityLabel(label)
+                .background(DeskPalette.subtle, in: RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(focused ? DeskPalette.focusBorder : DeskPalette.border))
+        }
     }
 }
