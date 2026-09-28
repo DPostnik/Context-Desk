@@ -15,7 +15,7 @@ struct JobsView: View {
                 Button(L10n.text("Рутины…", "Routines…")) { showingRoutines = true }
                 Button(L10n.text("Обновить", "Refresh")) { Task { await model.refreshJobs() } }
                 Button(L10n.text("Создать", "New task"), systemImage: "plus") {
-                    var job = ManagedJob(); job.projectID = model.projectID; job.model = model.state.model; job.route = model.defaultRoute; editing = job
+                    var job = ManagedJob(); job.projectID = model.projectID; job.model = model.currentModel; job.effort = model.effort; job.route = model.defaultRoute; editing = job
                 }.disabled(!model.schedulerReady)
             }.padding()
             Text(model.schedulerReady

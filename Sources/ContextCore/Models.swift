@@ -35,6 +35,9 @@ public struct Chat: Identifiable, Codable, Hashable, Sendable {
     public var projectID: UUID
     public var title: String
     public var model: String
+    public var effort: String?
+    /// Missing legacy values do not inherit a folder-wide permission escalation.
+    public var accessMode: AccessMode?
     public var updated: Date
     public init(id: String, projectID: UUID, title: String, model: String) {
         self.id = id; self.projectID = projectID; self.title = title; self.model = model; updated = Date()

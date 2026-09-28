@@ -605,14 +605,24 @@ struct ChatView: View {
                     Picker(L10n.text("Разрешения", "Permissions"), selection: Binding(get: { model.accessMode }, set: { model.selectAccessMode($0) })) {
                         ForEach(AccessMode.allCases, id: \.self) { mode in Text(mode.title).tag(mode) }
                     }.pointingHandCursor().labelsHidden().fixedSize().disabled(model.busy || model.sending)
-                        .help(L10n.text("Режим для этой папки. Полный доступ: команды, файлы и сеть без подтверждений Codex. Применяется со следующего сообщения.", "Permissions for this folder. Full access allows commands, files, and network access without Codex approvals. Applies from the next message."))
+                        .help(L10n.text("Режим только для этого чата. Полный доступ: команды, файлы и сеть без подтверждений Codex. Применяется со следующего сообщения.", "Permissions for this chat only. Full access allows commands, files, and network access without Codex approvals. Applies from the next message."))
                     Spacer()
                     if !model.models.isEmpty {
-                        Picker(L10n.text("Модель", "Model"), selection: Binding(get: { model.state.model }, set: { model.selectModel($0) })) {
+                        Picker(L10n.text("Модель", "Model"), selection: Binding(get: { model.currentModel }, set: { model.selectModel($0) })) {
+                            Text(L10n.text("Авто", "Auto")).tag("")
+                            if !model.currentModel.isEmpty && !model.models.contains(where: { $0.id == model.currentModel }) {
+                                Text(model.currentModel).tag(model.currentModel)
+                            }
                             ForEach(model.models, id: \.self) { entry in Text(entry.displayName).tag(entry.id) }
                         }.pointingHandCursor().labelsHidden().frame(maxWidth: 200, alignment: .trailing).disabled(model.busy)
                         if !model.supportedEfforts.isEmpty {
-                            Picker(L10n.text("Рассуждение", "Reasoning"), selection: $model.effort) { ForEach(model.supportedEfforts, id: \.self) { Text($0).tag($0) } }
+                            Picker(L10n.text("Рассуждение", "Reasoning"), selection: Binding(get: { model.effort }, set: { model.effort = $0 })) {
+                                Text(L10n.text("Авто", "Auto")).tag("")
+                                if !model.effort.isEmpty && !model.supportedEfforts.contains(model.effort) {
+                                    Text(model.effort).tag(model.effort)
+                                }
+                                ForEach(model.supportedEfforts, id: \.self) { Text($0).tag($0) }
+                            }
                                 .pointingHandCursor().labelsHidden().frame(width: 100).disabled(model.busy)
                         }
                     }

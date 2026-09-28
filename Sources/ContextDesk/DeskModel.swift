@@ -79,7 +79,20 @@ private struct ChatRunState {
     @Published var pending: [PendingAction] = []
     @Published var usage: [String: UsageSnapshot] = [:]
     @Published var models: [AgentModelInfo] = []
-    @Published var effort = ""
+    @Published var draftAccessModes: [UUID: AccessMode] = [:]
+    @Published var draftEffort = ""
+    var effort: String {
+        get {
+            guard let chat = selectedChat else { return draftEffort }
+            return chat.effort ?? ""
+        }
+        set {
+            if let index = state.chats.firstIndex(where: { $0.id == chatID }) {
+                state.chats[index].effort = newValue
+                persist()
+            } else { draftEffort = newValue }
+        }
+    }
     private var newChatDrafts: [UUID: String] = [:]
     private var chatDrafts: [String: String] = [:]
     @Published var draft = "" {
@@ -152,8 +165,9 @@ private struct ChatRunState {
     var currentAction: PendingAction? { pending.first { $0.threadID == chatID } }
     var currentUsage: UsageSnapshot? { chatID.flatMap { usage[$0] } }
     var canSend: Bool { (chatID.map { chatIsAvailable($0) } ?? (state.defaultConnection == .originalCodex)) && !selectedChatIsArchived && !isChangingChat(currentRunKey) && routeIsAvailable(currentRoute) && connected && authenticated && selectedProject != nil && !sending && !loadingChat && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    var currentModel: String { selectedChat?.model ?? state.model }
     var supportedEfforts: [String] {
-        models.first { $0.id == state.model }?.efforts ?? []
+        models.first { $0.id == currentModel }?.efforts ?? []
     }
 
     func boot() async {
@@ -355,14 +369,19 @@ private struct ChatRunState {
             if !models.contains(where: { $0.id == state.model }) {
                 state.model = (models.first { $0.isDefault } ?? models.first)?.id ?? ""
             }
-            selectModel(state.model)
+            persist()
         } catch let failure as AgentOperationFailure where failure.rejection == .staleContext {
             return
         } catch { self.error = error.localizedDescription }
     }
     func selectModel(_ model: String) {
-        state.model = model
-        effort = models.first { $0.id == model }?.defaultEffort ?? ""
+        if let index = state.chats.firstIndex(where: { $0.id == chatID }) {
+            state.chats[index].model = model
+            state.chats[index].effort = models.first { $0.id == model }?.defaultEffort ?? ""
+        } else {
+            state.model = model
+            draftEffort = models.first { $0.id == model }?.defaultEffort ?? ""
+        }
         persist()
     }
     func refreshLimits() async {
@@ -540,7 +559,7 @@ private struct ChatRunState {
             let prompt = try handoff.prompt()
             let selectedModel = state.model
             try await store.saveHandoff(handoff)
-            let session = try await connection.createSession(projectPath: project.path, access: project.accessMode ?? .standard,
+            let session = try await connection.createSession(projectPath: project.path, access: .standard,
                                                              model: selectedModel, route: route, context: descriptor.context)
             var chat = Chat(session: session, projectID: project.id, title: String(handoff.goal.prefix(100)), model: selectedModel)
             chat.route = route; chat.handoffOrigin = handoff.origin
@@ -660,11 +679,16 @@ private struct ChatRunState {
         do { try await store.saveDeletingChat(state, threadID: id) }
         catch { self.error = L10n.text("Чат удалён в Codex, но не удалось сохранить изменения в приложении: ", "The chat was deleted in Codex, but the change could not be saved in the app: ") + error.localizedDescription }
     }
-    var accessMode: AccessMode { selectedProject?.accessMode ?? .standard }
+    var accessMode: AccessMode {
+        if let chat = selectedChat { return chat.accessMode ?? .standard }
+        return projectID.flatMap { draftAccessModes[$0] } ?? .standard
+    }
     func selectAccessMode(_ mode: AccessMode) {
-        guard !busy, !sending, let index = state.projects.firstIndex(where: { $0.id == projectID }) else { return }
-        state.projects[index].accessMode = mode
-        persist()
+        guard !busy, !sending else { return }
+        if let index = state.chats.firstIndex(where: { $0.id == chatID }) {
+            state.chats[index].accessMode = mode
+            persist()
+        } else if let projectID { draftAccessModes[projectID] = mode }
     }
     var queuedMessages: [QueuedMessage] { state.queuedMessages ?? [] }
     var visibleQueue: [QueuedMessage] { queuedMessages.filter { $0.threadID == chatID } }
@@ -745,13 +769,13 @@ private struct ChatRunState {
         if let thread = chatID, busy || !visibleQueue.isEmpty {
             if visibleQueue.isEmpty { runs[thread, default: ChatRunState()].queuePaused = false }
             state.queuedMessages = queuedMessages + [QueuedMessage(id: localID, threadID: thread,
-                projectID: project.id, text: text, model: state.model, effort: effort)]
+                projectID: project.id, text: text, model: currentModel, effort: effort)]
             persist()
             scheduleQueue(threadID: thread)
             return
         }
         await deliver(text: text, project: project, threadID: chatID, localID: localID,
-                      selectedModel: state.model, selectedEffort: effort)
+                      selectedModel: currentModel, selectedEffort: effort)
     }
     private func deliver(text: String, project: Project, threadID: String?, localID: String,
                          selectedModel: String, selectedEffort: String, scheduledRun: UUID? = nil, scheduledRoute: RequestRoute? = nil) async {
@@ -767,7 +791,11 @@ private struct ChatRunState {
             if initialKey != runKey { runs.removeValue(forKey: initialKey) }
             scheduleQueue(threadID: runKey)
         }
-        let access = project.accessMode ?? .standard
+        // Capture the target's policy before suspension; selection can change while sending.
+        let access: AccessMode
+        if scheduledRun != nil { access = project.accessMode ?? .standard }
+        else if let threadID { access = state.chats.first { $0.id == threadID }?.accessMode ?? .standard }
+        else { access = draftAccessModes[project.id] ?? .standard }
         let route = scheduledRoute ?? (threadID == nil ? defaultRoute : (state.chats.first { $0.id == threadID }?.route ?? .direct))
         do {
             if let threadID { _ = try nativeThread(threadID) }
@@ -783,6 +811,8 @@ private struct ChatRunState {
                 let nativeCreated = session.nativeID
                 guard ConversationIdentity.appID(for: nativeCreated, in: state) == nil else { throw ConversationIdentity.invalidStorage }
                 var chat = Chat(session: session, projectID: project.id, title: ChatTitle.placeholder(), model: selectedModel)
+                chat.effort = selectedEffort
+                chat.accessMode = access
                 let created = chat.id
                 id = created
                 tokenTotals[created] = .zero
@@ -794,6 +824,7 @@ private struct ChatRunState {
                     chatDrafts[created] = draft.isEmpty ? nil : draft
                     newChatDrafts.removeValue(forKey: project.id)
                 }
+                if scheduledRun == nil { draftAccessModes.removeValue(forKey: project.id) }
                 loadedThreads.insert(created)
                 chat.route = route
                 if let scheduledRun, let run = jobLedger.runs.first(where: { $0.id == scheduledRun }) { chat.title = run.name }

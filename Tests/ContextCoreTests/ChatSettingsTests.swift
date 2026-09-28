@@ -1,0 +1,125 @@
+@_spi(NativeProtocol) import CodexAdapter
+import Foundation
+import Testing
+import ContextCore
+@testable import ContextDesk
+
+@Test @MainActor func chatSettingsPersistWithoutChangingOtherChatsOrProjectPolicy() async throws {
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let store = AppStore(file: folder.appendingPathComponent("state.sqlite"))
+    let model = DeskModel(store: store, summaryResources: nil)
+    var project = Project(path: folder.path); project.accessMode = .fullAccess
+    model.state.projects = [project]; model.projectID = project.id
+    model.state.model = "global-default"
+    model.state.chats = [Chat(id: "a", projectID: project.id, title: "A", model: "model-a"),
+                         Chat(id: "b", projectID: project.id, title: "B", model: "model-b")]
+    model.chatID = "a"
+    #expect(model.accessMode == .standard)
+    #expect(model.currentModel == "model-a")
+    model.selectAccessMode(.fullAccess); model.selectModel("model-a-updated"); model.effort = "high"
+    model.chatID = "b"
+    #expect(model.accessMode == .standard)
+    #expect(model.currentModel == "model-b")
+    #expect(model.effort == "")
+    model.selectAccessMode(.standard); model.effort = "low"
+    #expect(model.state.projects[0].accessMode == .fullAccess)
+    #expect(model.state.model == "global-default")
+    model.newChat()
+    #expect(model.accessMode == .standard)
+    model.selectAccessMode(.fullAccess)
+    model.selectModel("new-draft"); model.effort = "medium"
+    model.chatID = "a"
+    #expect(model.currentModel == "model-a-updated")
+    #expect(model.effort == "high")
+    #expect(model.accessMode == .fullAccess)
+    // Round-trip the complete state, including legacy chats with missing fields.
+    let restored = try JSONDecoder().decode(SavedState.self, from: JSONEncoder().encode(model.state))
+    let fresh = DeskModel(store: store, summaryResources: nil)
+    fresh.state = restored; fresh.projectID = project.id; fresh.chatID = "b"
+    #expect(fresh.currentModel == "model-b")
+    #expect(fresh.effort == "low")
+    #expect(fresh.accessMode == .standard)
+    fresh.chatID = "a"
+    #expect(fresh.currentModel == "model-a-updated" && fresh.effort == "high" && fresh.accessMode == .fullAccess)
+}
+
+@Test @MainActor func chatRequestsUseTheirOwnModelEffortAndPermissions() async throws {
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let executable = folder.appendingPathComponent("engine.py")
+    try Data(#"""
+    #!/usr/bin/python3
+    import sys,json
+    requests=[]
+    sessions=0
+    for line in sys.stdin:
+        m=json.loads(line)
+        if 'id' not in m: continue
+        method=m['method']; result={'userAgent':'codex/0.158.0-alpha.2.1 fixture'}
+        if method=='turn/start': result={'turn':{'id':'turn-'+m['params']['threadId']}}
+        if method=='thread/start':
+            sessions+=1
+            result={'thread':{'id':'created-'+str(sessions)}}
+        if method=='model/list': result={'data':[{'id':'unrelated-default','model':'unrelated-default','displayName':'Fixture','isDefault':True,'defaultReasoningEffort':'medium','supportedReasoningEfforts':[]}]}
+        if method=='test/requests': result=requests
+        else: requests.append(m)
+        print(json.dumps({'id':m['id'],'result':result}),flush=True)
+    """#.utf8).write(to: executable)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    let wire = CodexConnection()
+    try await wire.start(executable: executable, home: folder)
+    let model = DeskModel(connection: CodexIntegration(client: CodexClient(transport: wire)),
+                          store: AppStore(file: folder.appendingPathComponent("state.sqlite")), summaryResources: nil,
+                          summaryExecutable: executable, summaryHome: folder,
+                          jobStore: JobStore(file: folder.appendingPathComponent("jobs.json")))
+    var project = Project(path: folder.path); project.accessMode = .fullAccess
+    var a = Chat(id: "a", projectID: project.id, title: "A", model: "model-a")
+    a.effort = "high"; a.accessMode = .fullAccess
+    var b = Chat(id: "b", projectID: project.id, title: "B", model: "model-b")
+    b.effort = "low"
+    model.state.projects = [project]; model.state.chats = [a,b]; model.projectID = project.id
+    model.state.model = "unrelated-default"; model.state.defaultRoute = .direct
+    model.connected = true; model.authenticated = true
+    for id in ["a", "b"] {
+        model.chatID = id; model.draft = "Message for " + id
+        await model.send()
+    }
+    let requests = try await wire.request("test/requests").array
+    let turns = requests.filter { $0["method"].string == "turn/start" }.map { $0["params"] }
+    #expect(turns.count == 2)
+    #expect(turns[0]["model"].string == "model-a" && turns[0]["effort"].string == "high")
+    #expect(turns[0]["approvalPolicy"].string == "never")
+    #expect(turns[1]["model"].string == "model-b" && turns[1]["effort"].string == "low")
+    #expect(turns[1]["approvalPolicy"].string == "on-request")
+    #expect(turns[1]["sandboxPolicy"]["type"].string == "workspaceWrite")
+    await model.refreshModels()
+    #expect(model.currentModel == "model-b" && model.effort == "low")
+    model.newChat(); model.selectAccessMode(.fullAccess); model.selectModel("new-model"); model.effort = "medium"
+    model.draft = "Create a new conversation"
+    await model.send()
+    let created = try #require(model.selectedChat)
+    #expect(created.model == "new-model" && created.effort == "medium" && created.accessMode == .fullAccess)
+    model.newChat()
+    #expect(model.accessMode == .standard)
+    // The scheduled run must ignore the currently selected full-access chat and draft defaults.
+    model.chatID = "a"
+    model.state.projects[0].accessMode = .standard
+    model.schedulerReady = true
+    var job = ManagedJob(); job.name = "Scheduled fixture"; job.prompt = "Run fixture"
+    job.projectID = project.id; job.model = "scheduled-model"; job.effort = "xhigh"; job.enabled = true
+    #expect(await model.saveJob(job))
+    await model.launchJob(job.id)
+    for task in Array(model.jobTasks.values) { await task.value }
+    let run = try #require(model.jobLedger.runs.first)
+    let scheduled = try #require(model.state.chats.first { $0.id == run.threadID })
+    #expect(scheduled.model == job.model && scheduled.effort == job.effort && scheduled.accessMode == .standard)
+    let finalRequests = try await wire.request("test/requests").array
+    let scheduledTurn = try #require(finalRequests.last { $0["method"].string == "turn/start" })["params"]
+    #expect(scheduledTurn["model"].string == job.model && scheduledTurn["effort"].string == job.effort)
+    #expect(scheduledTurn["approvalPolicy"].string == "on-request")
+    #expect(model.chatID == "a" && model.currentModel == "model-a" && model.effort == "high")
+    await model.stopScheduler()
+    await wire.stop()
+}
