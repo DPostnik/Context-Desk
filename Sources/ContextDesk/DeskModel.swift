@@ -79,7 +79,6 @@ private struct ChatRunState {
     @Published var pending: [PendingAction] = []
     @Published var usage: [String: UsageSnapshot] = [:]
     @Published var models: [AgentModelInfo] = []
-    @Published var draftAccessModes: [UUID: AccessMode] = [:]
     @Published var draftEffort = "medium"
     var effort: String {
         get {
@@ -559,10 +558,12 @@ private struct ChatRunState {
             let prompt = try handoff.prompt()
             let selectedModel = state.model
             try await store.saveHandoff(handoff)
-            let session = try await connection.createSession(projectPath: project.path, access: .standard,
+            let access = state.projects.first { $0.id == project.id }?.defaultChatAccessMode ?? .standard
+            let session = try await connection.createSession(projectPath: project.path, access: access,
                                                              model: selectedModel, route: route, context: descriptor.context)
             var chat = Chat(session: session, projectID: project.id, title: String(handoff.goal.prefix(100)), model: selectedModel)
             chat.route = route; chat.handoffOrigin = handoff.origin
+            chat.inheritsProjectAccess = true
             guard !state.chats.contains(where: { $0.nativeSession == session }) else { throw ConversationIdentity.invalidStorage }
             state.chats.append(chat)
             do { try await store.save(state) }
@@ -680,15 +681,25 @@ private struct ChatRunState {
         catch { self.error = L10n.text("Чат удалён в Codex, но не удалось сохранить изменения в приложении: ", "The chat was deleted in Codex, but the change could not be saved in the app: ") + error.localizedDescription }
     }
     var accessMode: AccessMode {
-        if let chat = selectedChat { return chat.accessMode ?? .standard }
-        return projectID.flatMap { draftAccessModes[$0] } ?? .standard
+        guard let project = state.projects.first(where: { $0.id == projectID }) else { return .standard }
+        return selectedChat?.resolvedAccessMode(in: project) ?? project.defaultChatAccessMode ?? .standard
     }
-    func selectAccessMode(_ mode: AccessMode) {
+    var accessSelection: AccessMode? {
+        selectedChat?.inheritsProjectAccess == true ? nil : accessMode
+    }
+    var projectAccessTitle: String {
+        let mode = state.projects.first { $0.id == projectID }?.defaultChatAccessMode ?? .standard
+        return L10n.text("По умолчанию проекта", "Project default") + ": " + mode.title
+    }
+    func selectAccessMode(_ mode: AccessMode?) {
         guard !busy, !sending else { return }
         if let index = state.chats.firstIndex(where: { $0.id == chatID }) {
             state.chats[index].accessMode = mode
-            persist()
-        } else if let projectID { draftAccessModes[projectID] = mode }
+            state.chats[index].inheritsProjectAccess = mode == nil
+        } else if let mode, let index = state.projects.firstIndex(where: { $0.id == projectID }) {
+            state.projects[index].defaultChatAccessMode = mode
+        } else { return }
+        persist()
     }
     var queuedMessages: [QueuedMessage] { state.queuedMessages ?? [] }
     var visibleQueue: [QueuedMessage] { queuedMessages.filter { $0.threadID == chatID } }
@@ -794,8 +805,8 @@ private struct ChatRunState {
         // Capture the target's policy before suspension; selection can change while sending.
         let access: AccessMode
         if scheduledRun != nil { access = project.accessMode ?? .standard }
-        else if let threadID { access = state.chats.first { $0.id == threadID }?.accessMode ?? .standard }
-        else { access = draftAccessModes[project.id] ?? .standard }
+        else if let threadID { access = state.chats.first { $0.id == threadID }?.resolvedAccessMode(in: project) ?? .standard }
+        else { access = project.defaultChatAccessMode ?? .standard }
         let route = scheduledRoute ?? (threadID == nil ? defaultRoute : (state.chats.first { $0.id == threadID }?.route ?? .direct))
         do {
             if let threadID { _ = try nativeThread(threadID) }
@@ -812,7 +823,8 @@ private struct ChatRunState {
                 guard ConversationIdentity.appID(for: nativeCreated, in: state) == nil else { throw ConversationIdentity.invalidStorage }
                 var chat = Chat(session: session, projectID: project.id, title: ChatTitle.placeholder(), model: selectedModel)
                 chat.effort = selectedEffort
-                chat.accessMode = access
+                chat.accessMode = scheduledRun == nil ? nil : access
+                chat.inheritsProjectAccess = scheduledRun == nil
                 let created = chat.id
                 id = created
                 tokenTotals[created] = .zero
@@ -824,7 +836,6 @@ private struct ChatRunState {
                     chatDrafts[created] = draft.isEmpty ? nil : draft
                     newChatDrafts.removeValue(forKey: project.id)
                 }
-                if scheduledRun == nil { draftAccessModes.removeValue(forKey: project.id) }
                 loadedThreads.insert(created)
                 chat.route = route
                 if let scheduledRun, let run = jobLedger.runs.first(where: { $0.id == scheduledRun }) { chat.title = run.name }

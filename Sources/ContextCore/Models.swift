@@ -6,6 +6,8 @@ public struct Project: Identifiable, Codable, Hashable, Sendable {
     public var name: String
     public var path: String
     public var accessMode: AccessMode?
+    /// Default for interactive chats, independent of scheduled execution permissions.
+    public var defaultChatAccessMode: AccessMode?
     public init(path: String) {
         self.id = UUID(); self.path = URL(fileURLWithPath: path).standardizedFileURL.path
         self.name = URL(fileURLWithPath: path).lastPathComponent
@@ -38,6 +40,11 @@ public struct Chat: Identifiable, Codable, Hashable, Sendable {
     public var effort: String?
     /// Missing legacy values do not inherit a folder-wide permission escalation.
     public var accessMode: AccessMode?
+    /// Only an explicit true inherits; legacy records retain their stored permissions.
+    public var inheritsProjectAccess: Bool?
+    public func resolvedAccessMode(in project: Project) -> AccessMode {
+        inheritsProjectAccess == true ? (project.defaultChatAccessMode ?? .standard) : (accessMode ?? .standard)
+    }
     public var updated: Date
     public init(id: String, projectID: UUID, title: String, model: String) {
         self.id = id; self.projectID = projectID; self.title = title; self.model = model; updated = Date()

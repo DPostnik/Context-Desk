@@ -604,10 +604,11 @@ struct ChatView: View {
                         .frame(height: 84).padding(.horizontal, 16).padding(.vertical, 14).accessibilityLabel(L10n.text("Сообщение", "Message"))
                 }
                 HStack(spacing: 10) {
-                    Picker(L10n.text("Разрешения", "Permissions"), selection: Binding(get: { model.accessMode }, set: { model.selectAccessMode($0) })) {
-                        ForEach(AccessMode.allCases, id: \.self) { mode in Text(mode.title).tag(mode) }
+                    Picker(L10n.text("Разрешения", "Permissions"), selection: Binding(get: { model.accessSelection }, set: { model.selectAccessMode($0) })) {
+                        if model.selectedChat != nil { Text(model.projectAccessTitle).tag(Optional<AccessMode>.none) }
+                        ForEach(AccessMode.allCases, id: \.self) { mode in Text(mode.title).tag(Optional(mode)) }
                     }.pointingHandCursor().labelsHidden().fixedSize().disabled(model.busy || model.sending)
-                        .help(L10n.text("Режим только для этого чата. Полный доступ: команды, файлы и сеть без подтверждений Codex. Применяется со следующего сообщения.", "Permissions for this chat only. Full access allows commands, files, and network access without Codex approvals. Applies from the next message."))
+                        .help(L10n.text("В новом чате задаёт режим по умолчанию для проекта; в существующем — переопределение этого чата. Полный доступ: команды, файлы и сеть без подтверждений агента. Применяется со следующего сообщения.", "In a new chat, sets the project default; in an existing chat, overrides its permissions. Full access allows commands, files, and network access without agent approvals. Applies from the next message."))
                     Spacer()
                     if !model.models.isEmpty {
                         Picker(L10n.text("Модель", "Model"), selection: Binding(get: { model.currentModel }, set: { model.selectModel($0) })) {

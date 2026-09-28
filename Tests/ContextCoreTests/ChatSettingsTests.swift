@@ -111,9 +111,19 @@ import ContextCore
     model.draft = "Create a new conversation"
     await model.send()
     let created = try #require(model.selectedChat)
-    #expect(created.model == "new-model" && created.effort == "medium" && created.accessMode == .fullAccess)
+    #expect(created.model == "new-model" && created.effort == "medium" && created.inheritsProjectAccess == true && created.resolvedAccessMode(in: model.state.projects[0]) == .fullAccess)
     model.newChat()
-    #expect(model.accessMode == .standard)
+    #expect(model.accessMode == .fullAccess)
+    // A later project default must reach resume and turn/start for inherited chats.
+    model.selectAccessMode(.standard)
+    model.finishActiveTurn(threadID: created.id, turnID: "turn-created-1", status: .completed, hasError: false)
+    model.chatID = created.id; model.draft = "Use the changed project default"
+    await model.send()
+    let inheritedRequests = try await wire.request("test/requests").array
+    let inheritedTurn = try #require(inheritedRequests.last { $0["method"].string == "turn/start" })["params"]
+    #expect(inheritedTurn["approvalPolicy"].string == "on-request")
+    #expect(inheritedTurn["sandboxPolicy"]["type"].string == "workspaceWrite")
+    model.newChat(); model.selectAccessMode(.fullAccess)
     // The scheduled run must ignore the currently selected full-access chat and draft defaults.
     model.chatID = "a"
     model.state.projects[0].accessMode = .standard
@@ -138,4 +148,49 @@ import ContextCore
     #expect(model.effort == job.effort)
     await model.stopScheduler()
     await wire.stop()
+}
+
+@Test @MainActor func projectAccessDefaultsPersistAndRespectOverrides() async throws {
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let store = AppStore(file: folder.appendingPathComponent("state.sqlite"))
+    let model = DeskModel(store: store, summaryResources: nil)
+    let project = Project(path: folder.path)
+    let other = Project(path: folder.appendingPathComponent("other").path)
+    model.state.projects = [project, other]; model.projectID = project.id
+    let legacy = Chat(id: "legacy", projectID: project.id, title: "Legacy", model: "fixture")
+    var inherited = Chat(id: "inherited", projectID: project.id, title: "Inherited", model: "fixture")
+    inherited.inheritsProjectAccess = true
+    model.state.chats = [legacy, inherited]
+    #expect(model.accessMode == .standard)
+    model.selectAccessMode(.fullAccess)
+    #expect(model.state.projects[0].defaultChatAccessMode == .fullAccess)
+    #expect(model.state.projects[0].accessMode == nil)
+    model.chatID = legacy.id
+    #expect(model.accessMode == .standard)
+    model.chatID = inherited.id
+    #expect(model.accessMode == .fullAccess && model.accessSelection == nil)
+    model.selectAccessMode(.standard)
+    #expect(model.accessMode == .standard && model.accessSelection == .standard)
+    #expect(model.state.projects[0].defaultChatAccessMode == .fullAccess)
+    model.selectAccessMode(nil)
+    #expect(model.accessMode == .fullAccess && model.accessSelection == nil)
+    model.newChat(); model.selectAccessMode(.standard)
+    model.chatID = inherited.id
+    #expect(model.accessMode == .standard)
+    model.newChat(); model.selectAccessMode(.fullAccess)
+    model.projectID = other.id
+    #expect(model.accessMode == .standard)
+    // A separate store round-trip verifies persisted defaults, inheritance and legacy behavior.
+    let disk = AppStore(file: folder.appendingPathComponent("roundtrip.sqlite"))
+    try await disk.save(model.state)
+    let restored = try await disk.load()
+    #expect(restored.projects[0].defaultChatAccessMode == .fullAccess)
+    #expect(restored.projects[1].defaultChatAccessMode == nil)
+    #expect(restored.chats[0].resolvedAccessMode(in: restored.projects[0]) == .standard)
+    #expect(restored.chats[1].resolvedAccessMode(in: restored.projects[0]) == .fullAccess)
+    let legacyJSON = #"{"id":"old","projectID":"00000000-0000-0000-0000-000000000001","title":"Old","model":"fixture","updated":0}"#
+    let decoded = try JSONDecoder().decode(Chat.self, from: Data(legacyJSON.utf8))
+    #expect(decoded.inheritsProjectAccess == nil)
+    #expect(decoded.resolvedAccessMode(in: restored.projects[0]) == .standard)
 }
