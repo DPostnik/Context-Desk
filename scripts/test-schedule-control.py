@@ -28,6 +28,18 @@ class ScheduleClientTests(unittest.TestCase):
             self.assertEqual(update['prompt'], prompt.read_text())
             self.assertTrue(update['enabled'] and update['confirmSourceDisabled'])
 
+    def test_model_pair_is_explicit_and_does_not_enable_job(self):
+        job = {'id': 'B39B21BF-187C-4C45-8F94-F98F70F8643F', 'model': 'gpt-6-sol', 'effort': 'high', 'enabled': False}
+        args = ['client', 'update', '--job-id', job['id'], '--model', 'gpt-6-astra', '--effort', 'medium']
+        with patch('sys.argv', args), patch.object(client, 'send', side_effect=[{'jobs': [job]}, {'jobs': []}]) as send, contextlib.redirect_stdout(io.StringIO()):
+            client.main()
+        request = send.call_args_list[1].args[0]
+        self.assertEqual(request, {'operation': 'update', 'expected': job, 'model': 'gpt-6-astra', 'effort': 'medium'})
+        with patch('sys.argv', args[:-2]), patch.object(client, 'send') as send, contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                client.main()
+            send.assert_not_called()
+
     def test_timeout_keeps_one_receipt_and_status_never_resends(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(client, 'ROOT', Path(tmp)), contextlib.redirect_stderr(io.StringIO()):
             with patch.object(client.time, 'monotonic', side_effect=[0, 41]):

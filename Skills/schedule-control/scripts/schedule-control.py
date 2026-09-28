@@ -56,6 +56,8 @@ def main():
     update = sub.add_parser('update', help=message('Изменить существующее задание по поручению пользователя', 'Edit an existing task at the user’s request'))
     update.add_argument('--job-id', required=True)
     update.add_argument('--prompt-file', type=Path)
+    update.add_argument('--model', help=message('Модель вместе с --effort', 'Model together with --effort'))
+    update.add_argument('--effort', choices=['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'], help=message('Уровень рассуждения вместе с --model', 'Reasoning effort together with --model'))
     mode = update.add_mutually_exclusive_group()
     mode.add_argument('--enable', action='store_true')
     mode.add_argument('--pause', action='store_true')
@@ -68,7 +70,9 @@ def main():
             print(response.read_text()); return
         state = 'uncertain' if (ROOT / (key + '.claimed.json')).exists() else 'pending-or-expired' if (ROOT / (key + '.request.json')).exists() else 'unknown'
         print(json.dumps({'id': key, 'status': state})); return
-    if args.command == 'update' and not (args.prompt_file or args.enable or args.pause or args.confirm_source_disabled):
+    if args.command == 'update' and ((args.model is None) != (args.effort is None)):
+        parser.error(message('Укажи --model и --effort вместе', 'Specify --model and --effort together'))
+    if args.command == 'update' and not (args.prompt_file or args.enable or args.pause or args.confirm_source_disabled or args.model):
         parser.error(message('Не указано изменение', 'No change specified'))
     prompt = args.prompt_file.read_text() if args.command == 'update' and args.prompt_file else None
     reply = send({'operation': 'list'})
@@ -78,6 +82,8 @@ def main():
         if job is None:
             raise RuntimeError(message('Задание не найдено', 'Task not found'))
         request = {'operation': 'update', 'expected': job}
+        if args.model is not None:
+            request.update(model=args.model, effort=args.effort)
         if prompt is not None:
             request['prompt'] = prompt
         if args.enable or args.pause:

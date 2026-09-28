@@ -9,6 +9,8 @@ public struct ScheduleControlRequest: Codable, Sendable {
     public var expires: Date
     public var operation: String
     public var expected: ManagedJob?
+    public var model: String?
+    public var effort: String?
     public var prompt: String?
     public var enabled: Bool?
     public var confirmSourceDisabled: Bool?
@@ -41,6 +43,14 @@ public enum ScheduleControl {
     }
     public static func updated(_ request: ScheduleControlRequest, originalPaused: Bool) throws -> ManagedJob {
         guard request.operation == "update", var job = request.expected else { throw invalid }
+        guard (request.model == nil) == (request.effort == nil) else { throw invalid }
+        if let model = request.model, let effort = request.effort {
+            guard !model.isEmpty, model.count <= 128,
+                  model == model.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !model.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }),
+                  ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"].contains(effort) else { throw invalid }
+            job.model = model; job.effort = effort
+        }
         if let prompt = request.prompt { job.prompt = prompt }
         if let enabled = request.enabled { job.enabled = enabled }
         if request.confirmSourceDisabled == true {
@@ -84,14 +94,14 @@ public enum ScheduleControl {
             do {
                 let data = try Data(contentsOf: claim)
                 guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      Set(object.keys).isSubset(of: ["version", "id", "expires", "operation", "expected", "prompt", "enabled", "confirmSourceDisabled"]) else { throw invalid }
+                      Set(object.keys).isSubset(of: ["version", "id", "expires", "operation", "expected", "prompt", "enabled", "confirmSourceDisabled", "model", "effort"]) else { throw invalid }
                 let request = try JSONDecoder().decode(ScheduleControlRequest.self, from: data)
                 guard request.version == 1, request.id == id, request.expires > now,
                       request.expires.timeIntervalSince(now) <= 600,
                       ["list", "update"].contains(request.operation) else { throw invalid }
                 if request.operation == "list" {
                     guard request.expected == nil, request.prompt == nil, request.enabled == nil,
-                          request.confirmSourceDisabled == nil else { throw invalid }
+                          request.confirmSourceDisabled == nil, request.model == nil, request.effort == nil else { throw invalid }
                 }
                 reply = ScheduleControlReply(id: id, status: "completed", jobs: try await handle(request))
             } catch {

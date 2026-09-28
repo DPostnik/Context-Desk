@@ -105,3 +105,44 @@ private func controlRequest(job: ManagedJob? = nil) throws -> ScheduleControlReq
     let reply = try JSONDecoder().decode(ScheduleControlReply.self, from: Data(contentsOf: root.appendingPathComponent(second.id.uuidString + ".response.json")))
     #expect(reply.status == "uncertain")
 }
+
+@Test func scheduleControlChangesModelPairWithoutChangingScope() throws {
+    var job = ManagedJob(); job.name = "Coordinator"; job.prompt = "existing"; job.projectID = UUID()
+    job.model = "gpt-6-sol"; job.effort = "high"
+    var request = try controlRequest(job: job)
+    request.model = "gpt-6-astra"; request.effort = "medium"
+    let updated = try ScheduleControl.updated(request, originalPaused: false)
+    var expected = job; expected.model = "gpt-6-astra"; expected.effort = "medium"
+    #expect(updated == expected)
+    request.model = nil
+    #expect(throws: (any Error).self) { try ScheduleControl.updated(request, originalPaused: false) }
+    request.model = "gpt-6-astra"; request.effort = nil
+    #expect(throws: (any Error).self) { try ScheduleControl.updated(request, originalPaused: false) }
+    request.effort = "unknown"
+    #expect(throws: (any Error).self) { try ScheduleControl.updated(request, originalPaused: false) }
+    request.effort = "medium"; request.model = " "
+    #expect(throws: (any Error).self) { try ScheduleControl.updated(request, originalPaused: false) }
+}
+
+@Test @MainActor func scheduleControlModelPairTransportAndReadOnlyRejection() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    var job = ManagedJob(); job.name = "Coordinator"; job.prompt = "existing"; job.projectID = UUID()
+    for operation in ["update", "list"] {
+        var request = try controlRequest(job: operation == "update" ? job : nil)
+        request.operation = operation; request.model = "gpt-6-astra"; request.effort = "medium"
+        let path = root.appendingPathComponent(request.id.uuidString + ".request.json")
+        try JSONEncoder().encode(request).write(to: path)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path)
+        var called = false
+        try await ScheduleControl.drain(directory: root) { incoming in
+            called = true
+            return [try ScheduleControl.updated(incoming, originalPaused: false)]
+        }
+        let reply = try JSONDecoder().decode(ScheduleControlReply.self, from: Data(contentsOf: root.appendingPathComponent(request.id.uuidString + ".response.json")))
+        #expect(called == (operation == "update"))
+        #expect(reply.status == (operation == "update" ? "completed" : "rejected"))
+        if operation == "update" { #expect(reply.jobs?.first?.model == "gpt-6-astra") }
+    }
+}
