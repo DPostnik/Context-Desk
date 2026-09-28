@@ -770,9 +770,11 @@ struct SettingsView: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var model: DeskModel
+    let keepAwake: KeepAwake
     @AppStorage(AppLanguage.preferenceKey) private var selectedLanguage = L10n.language.rawValue
     var body: some View {
         Form {
+            KeepAwakeSettings(controller: keepAwake)
             MobileRemoteSettings(host: model.mobileRemote, model: model)
             Section("Язык / Language") {
                 Picker(L10n.text("Язык интерфейса", "Interface language"), selection: $selectedLanguage) {

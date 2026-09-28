@@ -6,6 +6,7 @@ import UserNotifications
 
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     weak var model: DeskModel?
+    let keepAwake = KeepAwake()
     func applicationDidFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
         NSApplication.shared.setActivationPolicy(.regular)
@@ -25,6 +26,7 @@ import UserNotifications
         Task { await model?.shutdown(); sender.reply(toApplicationShouldTerminate: true) }
         return .terminateLater
     }
+    func applicationWillTerminate(_ notification: Notification) { keepAwake.stop() }
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         let threadID = response.notification.request.content.userInfo["threadID"] as? String ?? ""
         await MainActor.run {
@@ -77,7 +79,7 @@ import UserNotifications
         Settings {
             Group {
                 if model.isBootstrapping { StartupLoadingView() }
-                else { SettingsView(model: model) }
+                else { SettingsView(model: model, keepAwake: delegate.keepAwake) }
             }.buttonStyle(PointerButtonStyle(base: .automatic))
                 .preferredColorScheme(.light)
                 .environment(\.locale, L10n.locale).frame(width: 520).padding(24)
