@@ -1,0 +1,222 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+AAAAC0000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptScrollController.swift; sourceTree = SOURCE_ROOT; };
+AAAAC0000000000000000002 = {isa = PBXBuildFile; fileRef = AAAAC0000000000000000001; };
+AAAAC0000000000000000003 = {isa = PBXBuildFile; fileRef = AAAAC0000000000000000001; };
+
+
+AAAAB0000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITests/ScrollTests.swift; sourceTree = SOURCE_ROOT; };
+AAAAB0000000000000000002 = {isa = PBXBuildFile; fileRef = AAAAB0000000000000000001; };
+AAAAB0000000000000000003 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (AAAAB0000000000000000002,AAAAC0000000000000000003); runOnlyForDeploymentPostprocessing = 0; };
+AAAAB0000000000000000004 = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = ContextMobileUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+AAAAB0000000000000000005 = {isa = PBXContainerItemProxy; containerPortal = 244210E48437B6556980A702; proxyType = 1; remoteGlobalIDString = 34A04005BCAF206EEC990BD9; remoteInfo = ContextMobile; };
+AAAAB0000000000000000006 = {isa = PBXTargetDependency; target = 34A04005BCAF206EEC990BD9; targetProxy = AAAAB0000000000000000005; };
+AAAAB0000000000000000007 = {isa = XCBuildConfiguration; name = Debug; buildSettings = {PRODUCT_BUNDLE_IDENTIFIER = com.contextdesk.mobile.uitests; PRODUCT_NAME = ContextMobileUITests; GENERATE_INFOPLIST_FILE = YES; TEST_TARGET_NAME = ContextMobile; IPHONEOS_DEPLOYMENT_TARGET = 17.0; SWIFT_VERSION = 6.0; CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = ""; TARGETED_DEVICE_FAMILY = "1,2"; }; };
+AAAAB0000000000000000008 = {isa = XCConfigurationList; buildConfigurations = (AAAAB0000000000000000007); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
+AAAAB0000000000000000009 = {isa = PBXNativeTarget; name = ContextMobileUITests; productName = ContextMobileUITests; productType = "com.apple.product-type.bundle.ui-testing"; productReference = AAAAB0000000000000000004; buildConfigurationList = AAAAB0000000000000000008; buildPhases = (AAAAB0000000000000000003); buildRules = (); dependencies = (AAAAB0000000000000000006); };
+
+
+AAAAD0000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ../Sources/ContextCore/MobileRealtime.swift; sourceTree = SOURCE_ROOT; };
+AAAAD0000000000000000002 = {isa = PBXBuildFile; fileRef = AAAAD0000000000000000001; };
+/* Begin PBXBuildFile section */
+		ABCDE0000000000000000001 = {isa = PBXBuildFile; fileRef = ABCDE0000000000000000002; };
+		59CFC907D5F4E60C0B46C6AC /* ../Sources/ContextCore/MobileRemote.swift in Sources */ = {isa = PBXBuildFile; fileRef = C23157AC2005C3BBBDA7D2C8 /* ../Sources/ContextCore/MobileRemote.swift */; };
+		C352761DDED09FAEFEAD3580 /* ../Mobile/ContextMobileApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C79C2EE66B66E01BA3CD8D1F /* ../Mobile/ContextMobileApp.swift */; };
+		D0FDF956FB34FEB9F0D65EA5 /* ../Sources/ContextCore/Localization.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F4C560AA5EAF2FB50C14506 /* ../Sources/ContextCore/Localization.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		ABCDE0000000000000000002 = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = SOURCE_ROOT; };
+		5F4C560AA5EAF2FB50C14506 /* ../Sources/ContextCore/Localization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ../Sources/ContextCore/Localization.swift; sourceTree = SOURCE_ROOT; };
+		A172CEDCAE47474B615C54D5 /* ContextMobile.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; path = ContextMobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		C23157AC2005C3BBBDA7D2C8 /* ../Sources/ContextCore/MobileRemote.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ../Sources/ContextCore/MobileRemote.swift; sourceTree = SOURCE_ROOT; };
+		C79C2EE66B66E01BA3CD8D1F /* ../Mobile/ContextMobileApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ../Mobile/ContextMobileApp.swift; sourceTree = SOURCE_ROOT; };
+/* End PBXFileReference section */
+
+/* Begin PBXResourcesBuildPhase section */
+		ABCDE0000000000000000003 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (ABCDE0000000000000000001); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXGroup section */
+		0A3E27B8CA818264D75C8D81 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A172CEDCAE47474B615C54D5 /* ContextMobile.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		4813494D137E1631BBA301D5 = {
+			isa = PBXGroup;
+			children = (
+				C79C2EE66B66E01BA3CD8D1F /* ../Mobile/ContextMobileApp.swift */,
+				C23157AC2005C3BBBDA7D2C8 /* ../Sources/ContextCore/MobileRemote.swift */,
+				5F4C560AA5EAF2FB50C14506 /* ../Sources/ContextCore/Localization.swift */,
+				0A3E27B8CA818264D75C8D81 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		34A04005BCAF206EEC990BD9 /* ContextMobile */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1B672BF3DA427763BF644BE3 /* Build configuration list for PBXNativeTarget "ContextMobile" */;
+			buildPhases = (
+				878A52FC5FF6A57D50B7B870 /* Sources */,
+				ABCDE0000000000000000003,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ContextMobile;
+			productName = ContextMobile;
+			productReference = A172CEDCAE47474B615C54D5 /* ContextMobile.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		244210E48437B6556980A702 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				LastUpgradeCheck = 1600;
+			};
+			buildConfigurationList = 76F8DEC3DFE0BDB465198890 /* Build configuration list for PBXProject "ContextMobile" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				ru,
+			);
+			mainGroup = 4813494D137E1631BBA301D5;
+			productRefGroup = 0A3E27B8CA818264D75C8D81 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				34A04005BCAF206EEC990BD9 /* ContextMobile */,
+AAAAB0000000000000000009,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		878A52FC5FF6A57D50B7B870 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C352761DDED09FAEFEAD3580 /* ../Mobile/ContextMobileApp.swift in Sources */,
+AAAAD0000000000000000002,
+AAAAC0000000000000000002,
+				59CFC907D5F4E60C0B46C6AC /* ../Sources/ContextCore/MobileRemote.swift in Sources */,
+				D0FDF956FB34FEB9F0D65EA5 /* ../Sources/ContextCore/Localization.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		0B0C687DF8B6B8DC790B519C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				SDKROOT = iphoneos;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		6C7EFF6369083C8E1F2B1994 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				INFOPLIST_KEY_UIRequiresFullScreen = YES;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "Context Desk";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.contextdesk.mobile;
+				PRODUCT_NAME = ContextMobile;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		73EBF6644258C120893E685D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				SDKROOT = iphoneos;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		DD75E2CB1C510A828AC72D96 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				INFOPLIST_KEY_UIRequiresFullScreen = YES;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "Context Desk";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.contextdesk.mobile;
+				PRODUCT_NAME = ContextMobile;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		1B672BF3DA427763BF644BE3 /* Build configuration list for PBXNativeTarget "ContextMobile" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6C7EFF6369083C8E1F2B1994 /* Debug */,
+				DD75E2CB1C510A828AC72D96 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		76F8DEC3DFE0BDB465198890 /* Build configuration list for PBXProject "ContextMobile" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				73EBF6644258C120893E685D /* Debug */,
+				0B0C687DF8B6B8DC790B519C /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 244210E48437B6556980A702 /* Project object */;
+}
