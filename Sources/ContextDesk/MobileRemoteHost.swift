@@ -83,7 +83,7 @@ import IOKit.ps
             channel.onPresence = { [weak self] peers in
                 if !peers.phones.isEmpty { self?.requestPublication() }
             }
-            modelChanges = model.objectWillChange.sink { [weak self] _ in self?.requestPublication() }
+            modelChanges = model.objectWillChange.merge(with: model.transcript.objectWillChange).sink { [weak self] _ in self?.requestPublication() }
             observePowerAndSleep()
             updateSleepAssertion()
             channel.start()

@@ -52,7 +52,7 @@ public struct NativeTranscript: NSViewRepresentable {
     public var onReadToEnd: ((String, String) -> Void)?
     private var styledWidth: CGFloat = 0
     public private(set) var editCount = 0
-    public let workingIndicator = NSHostingView(rootView: ChatLoadingIndicator())
+    public let workingIndicator = WorkingIndicatorView()
 
     public init(pasteboard: NSPasteboard = .general, positions: TranscriptReadingPositions = TranscriptReadingPositions()) {
         self.positions = positions
@@ -99,17 +99,14 @@ public struct NativeTranscript: NSViewRepresentable {
 
     public func update(items: [TranscriptItem], conversationID: String?, followOutput: Bool, isWorking: Bool = false,
                        unreadCompletionID: String? = nil, unreadResponseItemID: String? = nil) {
-        let savedPosition = pendingPosition ?? capturePosition()
-        if let id = self.conversationID, let savedPosition { positions.values[id] = savedPosition }
-        changingLayout = true
-        defer { changingLayout = false; scheduleReadCheck() }
         self.unreadResponseItemID = unreadResponseItemID
         self.unreadCompletionID = unreadCompletionID
         var items = Self.groupActivities(items, isWorking: isWorking)
         if isWorking {
             items.append(TranscriptItem(id: "local-working", kind: "loading", text: ""))
-            workingIndicator.isHidden = false
-        } else { workingIndicator.isHidden = true }
+        }
+        if workingIndicator.isHidden == isWorking { workingIndicator.isHidden = !isWorking }
+        workingIndicator.isWorking = isWorking
         let finished = wasWorking && !isWorking
         wasWorking = isWorking
         let switched = self.conversationID != conversationID
@@ -124,8 +121,13 @@ public struct NativeTranscript: NSViewRepresentable {
         followed = followOutput
         guard switched || finished || items != previous else {
             if resumeFollowing { scrollToEnd() }
+            scheduleReadCheck()
             return
         }
+        let savedPosition = pendingPosition ?? capturePosition()
+        if let id = self.conversationID, let savedPosition { positions.values[id] = savedPosition }
+        changingLayout = true
+        defer { changingLayout = false; scheduleReadCheck() }
         let wasAtEnd = followOutput && !switched && isAtTranscriptEnd
         guard let storage = transcript.textStorage else { return }
         let oldOrigin = contentView.bounds.origin
@@ -191,6 +193,7 @@ public struct NativeTranscript: NSViewRepresentable {
     }
 
     @objc private func viewportChanged() {
+        workingIndicator.refreshAnimation()
         rememberPosition()
         scheduleReadCheck()
     }
@@ -300,8 +303,10 @@ public struct NativeTranscript: NSViewRepresentable {
             manager.ensureLayout(forCharacterRange: range)
             let glyph = manager.glyphIndexForCharacter(at: range.location + 6)
             let rect = manager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
-            workingIndicator.frame = NSRect(x: transcript.textContainerOrigin.x + container.lineFragmentPadding,
-                                            y: transcript.textContainerOrigin.y + rect.midY - 10, width: 20, height: 20)
+            let frame = NSRect(x: transcript.textContainerOrigin.x + container.lineFragmentPadding,
+                               y: transcript.textContainerOrigin.y + rect.midY - 10, width: 20, height: 20)
+            if workingIndicator.frame != frame { workingIndicator.frame = frame }
+            workingIndicator.refreshAnimation()
         }
     }
 

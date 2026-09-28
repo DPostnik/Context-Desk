@@ -523,29 +523,7 @@ struct ChatView: View {
                     Button(L10n.text("Вернуть исходный контекст в черновик", "Restore initial context to draft")) { Task { await model.restoreHandoffDraft() } }.disabled(!model.draft.isEmpty)
                 }.padding(.horizontal, 24)
             }
-            if model.loadingChat {
-                ChatLoadingIndicator()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if model.items.isEmpty {
-                VStack {
-                    EmptyState(icon: "bubble.left.and.bubble.right", title: L10n.text("Чем помочь с проектом?", "How can I help with your project?"), text: model.chatID == nil ? L10n.text("Первое сообщение создаст новый чат в папке «\(model.selectedProject?.name ?? "")»", "Your first message will create a new chat in “\(model.selectedProject?.name ?? "")”") : L10n.text("Чат в папке «\(model.selectedProject?.name ?? "")»", "Chat in “\(model.selectedProject?.name ?? "")”"))
-                    if !model.selectedChatIsArchived {
-                        HStack {
-                            suggestion(L10n.text("Объясни проект", "Explain the project"), prompt: L10n.text("Объясни структуру этого проекта и как его запустить.", "Explain this project’s structure and how to run it."))
-                            suggestion(L10n.text("Найди проблемы", "Find problems"), prompt: L10n.text("Проверь проект и расскажи о найденных проблемах.", "Review the project and describe any problems you find."))
-                        }.padding(.bottom, 24)
-                    }
-                }.frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                let renderedItems = model.items
-                NativeTranscript(items: renderedItems, conversationID: model.chatID, followOutput: followOutput,
-                                 isWorking: model.busy, unreadCompletionID: model.selectedChat?.unreadCompletionID,
-                                 unreadResponseItemID: model.chatID.flatMap { model.unreadResponseItems[$0] }) { threadID, completionID in
-                    guard model.items == renderedItems else { return }
-                    model.markResponseRead(threadID: threadID, completionID: completionID)
-                }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
+            ChatHistoryView(model: model, transcript: model.transcript, followOutput: followOutput)
             if let action = model.currentAction {
                 ActionView(action: action, model: model).id(action.id)
                     .task(id: "\(action.id):\(model.loadingChat)") {
@@ -664,6 +642,38 @@ struct ChatView: View {
         .background(DeskPalette.canvas)
         .sheet(item: $handoff) { value in
             HandoffEditor(model: model, handoff: value, projectID: model.projectID, route: model.defaultRoute)
+        }
+    }
+}
+
+/// Only this subtree observes streamed text; the composer/sidebar/settings do not.
+struct ChatHistoryView: View {
+    @ObservedObject var model: DeskModel
+    @ObservedObject var transcript: TranscriptPresentation
+    let followOutput: Bool
+    var body: some View {
+        if model.loadingChat {
+            ChatLoadingIndicator()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if transcript.items.isEmpty {
+            VStack {
+                EmptyState(icon: "bubble.left.and.bubble.right", title: L10n.text("Чем помочь с проектом?", "How can I help with your project?"), text: model.chatID == nil ? L10n.text("Первое сообщение создаст новый чат в папке «\(model.selectedProject?.name ?? "")»", "Your first message will create a new chat in “\(model.selectedProject?.name ?? "")”") : L10n.text("Чат в папке «\(model.selectedProject?.name ?? "")»", "Chat in “\(model.selectedProject?.name ?? "")”"))
+                if !model.selectedChatIsArchived {
+                    HStack {
+                        suggestion(L10n.text("Объясни проект", "Explain the project"), prompt: L10n.text("Объясни структуру этого проекта и как его запустить.", "Explain this project’s structure and how to run it."))
+                        suggestion(L10n.text("Найди проблемы", "Find problems"), prompt: L10n.text("Проверь проект и расскажи о найденных проблемах.", "Review the project and describe any problems you find."))
+                    }.padding(.bottom, 24)
+                }
+            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            let renderedItems = transcript.items
+            NativeTranscript(items: renderedItems, conversationID: model.chatID, followOutput: followOutput,
+                             isWorking: model.busy, unreadCompletionID: model.selectedChat?.unreadCompletionID,
+                             unreadResponseItemID: model.chatID.flatMap { model.unreadResponseItems[$0] }) { threadID, completionID in
+                guard transcript.items == renderedItems else { return }
+                model.markResponseRead(threadID: threadID, completionID: completionID)
+            }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
     private func suggestion(_ title: String, prompt: String) -> some View {

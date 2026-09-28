@@ -48,7 +48,9 @@ private struct ChatRunState {
     private var notifiedTurns: Set<String> = []
     @Published var state = SavedState()
     @Published var projectID: UUID?
-    @Published var chatID: String?
+    @Published var chatID: String? {
+        didSet { if chatID != oldValue { transcript.cancelPending() } }
+    }
     @Published var showingArchive = false
     @Published var archiveViewingChat = false
     @Published var showingJobs = false
@@ -71,7 +73,11 @@ private struct ChatRunState {
     let summaryResources: URL?
     let summaryExecutable: URL?
     let summaryHome: URL
-    @Published var items: [TranscriptItem] = []
+    let transcript = TranscriptPresentation()
+    var items: [TranscriptItem] {
+        get { transcript.items }
+        set { transcript.replace(newValue) }
+    }
     @Published var localHistoryNotice: String?
     @Published var routines: [PortableRoutine] = []
     @Published var creatingHandoff = false
@@ -140,8 +146,6 @@ private struct ChatRunState {
     @Published var notificationStatus = L10n.text("Уведомления не включены", "Notifications are off")
     private var loadedThreads: Set<String> = []
     private var eventTask: Task<Void, Never>?
-    private var deltaTask: Task<Void, Never>?
-    private var deltas: [String: String] = [:]
     private var selectionGeneration = UUID()
     private var booted = false
     let connection: AgentClient
@@ -482,6 +486,7 @@ private struct ChatRunState {
     }
     func openChat(_ chat: Chat) async {
         guard !isChangingChat(chat.id), state.chats.contains(where: { $0.id == chat.id }) else { return }
+        transcript.cancelPending()
         showingArchive = isArchived(chat.id)
         archiveViewingChat = showingArchive
         showingJobs = false; projectID = chat.projectID; chatID = chat.id
@@ -1098,6 +1103,7 @@ private struct ChatRunState {
         }
     }
     func shutdown() async {
+        flushDeltas()
         photoCleanupTask?.cancel(); photoCleanupTask = nil
         await mobileRemote.disable()
         historyBackfillTask?.cancel()
@@ -1149,6 +1155,7 @@ private struct ChatRunState {
             await refreshAccount()
         case .limitsChanged: await refreshLimits()
         case .disconnected:
+            flushDeltas()
             historyBackfillTask?.cancel()
             for task in historyRefreshTasks.values { task.cancel() }
             agentDescriptor = nil; models = []
@@ -1158,7 +1165,7 @@ private struct ChatRunState {
             }
             resetRuns()
             connected = false
-            loadedThreads.removeAll(); pending.removeAll(); deltas.removeAll()
+            loadedThreads.removeAll(); pending.removeAll(); transcript.cancelPending()
             NSApplication.shared.dockTile.badgeLabel = nil
             error = L10n.text("Codex отключился. Подключись заново; отправка не будет повторена автоматически.", "Codex disconnected. Reconnect; the message will not be sent again automatically.")
         case .diagnostic(let message): error = message
@@ -1234,18 +1241,8 @@ private struct ChatRunState {
         case .delta(let turn, let id, let text):
             if let thread { historyEventRevisions[thread, default: 0] += 1 }
             guard thread == chatID else { return }
-            if !items.contains(where: { $0.id == id }) { items.append(TranscriptItem(id: id, kind: "assistant", text: "")) }
-            if let index = items.firstIndex(where: { $0.id == id }) { items[index].turnID = turn }
-            deltas[id, default: ""] += text
-            if deltaTask == nil {
-                deltaTask = Task { [weak self] in
-                    try? await Task.sleep(for: .milliseconds(50)); self?.flushDeltas(); self?.deltaTask = nil
-                }
-            }
+            transcript.enqueue(id: id, text: text, turn: turn)
         }
     }
-    private func flushDeltas() {
-        for (id, delta) in deltas { if let i = items.firstIndex(where: { $0.id == id }) { items[i].text += delta } }
-        deltas.removeAll()
-    }
+    private func flushDeltas() { transcript.flush() }
 }
