@@ -387,16 +387,16 @@ struct DeskView: View {
                         }
                     }
             } else {
-                // Let the original SwiftUI label determine height, including title wrapping.
-                // The native interaction surface fills that size without imposing a row height.
-                chatLabel(chat, favorite: false).hidden()
+                // Measure and render the same label; the native overlay only handles interaction.
+                chatLabel(chat, favorite: false)
+                    .accessibilityHidden(true) // The overlay exposes the row as one accessible button.
                     .overlay {
                         ChatRow(chat: chat, enabled: !model.isChangingChat(chat.id), activate: {
                             Task { await model.openChat(chat) }
                         }, move: { model.moveChat($0, to: chat.id) }, targeted: { targeted in
                             if targeted { dropTargetChatID = chat.id }
                             else if dropTargetChatID == chat.id { dropTargetChatID = nil }
-                        }, actions: chatActions(chat, reorder: true)) { chatLabel(chat, favorite: false) }
+                        }, actions: chatActions(chat, reorder: true))
                     }
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(dropTargetChatID == chat.id ? Color.accentColor : .clear, lineWidth: 2).allowsHitTesting(false))
             }
@@ -409,7 +409,7 @@ struct DeskView: View {
             HStack(spacing: 8) {
                 Image(systemName: chat.isArchived ? "archivebox" : "bubble.left").foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(chat.title).lineLimit(2)
+                    Text(chat.title).lineLimit(2).fixedSize(horizontal: false, vertical: true)
                     if favorite, let project = model.state.projects.first(where: { $0.id == chat.projectID }) {
                         Text(project.name).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                             .help(project.path)

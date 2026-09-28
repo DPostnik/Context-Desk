@@ -2,30 +2,19 @@ import AppKit
 import SwiftUI
 import ContextCore
 
-struct ChatRow<Content: View>: NSViewRepresentable {
+/// Transparent native interaction surface; SwiftUI owns the visible label and its size.
+struct ChatRow: NSViewRepresentable {
     let chat: Chat
     let enabled: Bool
     let activate: () -> Void
     let move: (String) -> Bool
     let targeted: (Bool) -> Void
     let actions: [ChatRowAction]
-    @ViewBuilder var content: Content
 
     func makeNSView(context: Context) -> ChatRowView {
-        let view = ChatRowView()
-        let host = NSHostingView(rootView: content)
-        host.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(host)
-        NSLayoutConstraint.activate([
-            host.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            host.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            host.topAnchor.constraint(equalTo: view.topAnchor),
-            host.bottomAnchor.constraint(equalTo: view.bottomAnchor)
-        ])
-        return view
+        ChatRowView()
     }
     func updateNSView(_ view: ChatRowView, context: Context) {
-        (view.subviews.first as? NSHostingView<Content>)?.rootView = content
         view.chatID = chat.id
         view.projectID = chat.projectID
         view.archived = chat.isArchived
