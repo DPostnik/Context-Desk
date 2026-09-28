@@ -99,6 +99,22 @@ with tempfile.TemporaryDirectory(prefix='context-remote-db-', dir='/tmp') as dir
         rejects(owner + f"update public.remote_commands set photos_expire_at=now() where id='{ids['claimed']}';")
         assert sql('select public.cleanup_remote_photos();') == '0'
         sql(owner + 'delete from public.remote_devices;')
+        # New-chat initial sends retain the v1 immutable envelope and stable app ID.
+        # PostgreSQL normalizes UUID columns but leaves the text conversation key intact.
+        import uuid
+        initial = str(uuid.uuid4())
+        approval_command = str(uuid.uuid4())
+        approval_handle = 'ABCDEFAB-ABCD-ABCD-ABCD-ABCDEFABCDEF'
+        sql(owner + f"insert into public.remote_devices(id,name,projects,snapshot) values ('{device}','Mac',array['project'],'{{}}');")
+        create = f"insert into public.remote_commands(id,device,project,chat,kind,text) values ('{initial}','{device}','project','mobile:{initial}','send','New chat');"
+        sql(owner + create)
+        rejects(owner + create)
+        assert sql(owner + f"select chat from public.claim_remote_command('{device}');").endswith('mobile:' + initial)
+        sql(owner + f"update public.remote_commands set status='submitted' where id='{initial}';")
+        sql(owner + f"insert into public.remote_commands(id,device,project,chat,kind,approval) values ('{approval_command}','{device}','project','mobile:{initial}','allow','{approval_handle}');")
+        assert sql(owner + f"select approval::text from public.claim_remote_command('{device}');").endswith(approval_handle.lower())
+        assert sql(owner + f"select count(*) from public.claim_remote_command('{device}');").endswith('0')
+        sql(owner + 'delete from public.remote_devices;')
         import json
         patch = f"select public.patch_remote_snapshot('{device}','Mac','[{{\"id\":\"project\",\"name\":\"Project\"}}]',array['a','b'],'[{{\"id\":\"a\",\"text\":\"first\"}},{{\"id\":\"b\",\"text\":\"second\"}}]');"
         sql(owner + patch)

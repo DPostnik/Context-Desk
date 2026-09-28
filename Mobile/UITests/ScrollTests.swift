@@ -2,6 +2,46 @@ import XCTest
 import UIKit
 
 final class ScrollTests: XCTestCase {
+    @MainActor func testNewChatAndPermissionReplyInBothLanguages() throws {
+        for (language, empty, waiting) in [("ru", "Пустой проект", "Ожидает Mac"), ("en", "Empty project", "Waiting for Mac")] {
+            let app = XCUIApplication()
+            app.launchArguments = ["-mobile-preview", "-preview-actions", "-interfaceLanguage", language]
+            app.launch()
+            XCTAssertTrue(app.staticTexts[empty].waitForExistence(timeout: 10))
+            app.buttons["new-chat"].tap()
+            let input = app.descendants(matching: .any)["new-chat-message"].firstMatch
+            XCTAssertTrue(input.waitForExistence(timeout: 5))
+            app.buttons["new-chat-project"].tap()
+            app.buttons[empty + " · Mac"].tap()
+            XCTAssertFalse(app.buttons["create-chat"].isEnabled)
+            input.tap(); input.typeText("New conversation fixture")
+            let create = app.buttons["create-chat"]
+            if !create.isHittable { app.swipeUp() }
+            XCTAssertTrue(create.isEnabled)
+            create.tap()
+            XCTAssertTrue(app.staticTexts["new-chat-status"].waitForExistence(timeout: 8))
+            XCTAssertEqual(app.staticTexts["new-chat-status"].label, waiting)
+            XCTAssertFalse(app.buttons["create-chat"].exists)
+            app.terminate()
+
+            app.launchArguments += ["-preview-chat", "-preview-long"]
+            app.launch()
+            let banner = app.buttons["show-approvals"]
+            XCTAssertTrue(banner.waitForExistence(timeout: 10))
+            banner.tap()
+            let allow = app.buttons["allow-approval"], deny = app.buttons["deny-approval"]
+            XCTAssertTrue(allow.isHittable && deny.isHittable)
+            allow.tap()
+            let acknowledged = NSPredicate { _, _ in !allow.isEnabled && !deny.isEnabled }
+            expectation(for: acknowledged, evaluatedWith: nil)
+            waitForExpectations(timeout: 8)
+            XCTAssertTrue(app.staticTexts[waiting].firstMatch.exists)
+            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            screenshot.name = "Permission reply " + language; screenshot.lifetime = .keepAlways; add(screenshot)
+            app.terminate()
+        }
+    }
+
     @MainActor func testOfflineConnectionStatusInBothLanguagesPreservesChat() throws {
         for (language, status) in [("ru", "Нет сети. Подключимся после её восстановления."),
                                    ("en", "Offline. Will reconnect when the network returns.")] {

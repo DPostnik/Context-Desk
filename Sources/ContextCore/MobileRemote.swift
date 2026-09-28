@@ -24,7 +24,11 @@ public struct RemoteSetup: Codable, Sendable {
 public struct RemoteProject: Codable, Identifiable, Sendable, Equatable {
     public var id: String
     public var name: String
-    public init(id: String, name: String) { self.id = id; self.name = name }
+    /// Absent on older hosts. Creation is an initial send to a reserved app conversation ID.
+    public var canCreateChat: Bool?
+    public init(id: String, name: String, canCreateChat: Bool? = nil) {
+        self.id = id; self.name = name; self.canCreateChat = canCreateChat
+    }
 }
 public struct RemoteChat: Codable, Identifiable, Sendable, Equatable {
     public var id: String
@@ -101,6 +105,14 @@ public struct RemoteCommand: Codable, Identifiable, Sendable {
     public var turn: String?
     public var status: String
     public var photos: [RemotePhoto]?
+    /// Uses the existing immutable send envelope and queue; no database migration required.
+    /// The first send owns the new app ID. Later sends cannot recreate a missing conversation.
+    public var createsChat: Bool { kind == "send" && chat == "mobile:" + id.lowercased() }
+    public static func newChat(owner: String, device: String, project: String, text: String) -> Self {
+        var command = Self(owner: owner, device: device, project: project, chat: "", kind: "send", text: text)
+        command.chat = "mobile:" + command.id
+        return command
+    }
     public init(owner: String, device: String, project: String, chat: String, kind: String, text: String = "", approval: String? = nil, turn: String? = nil, photos: [RemotePhoto] = []) {
         id = UUID().uuidString.lowercased(); self.owner = owner; self.device = device
         self.project = project; self.chat = chat; self.kind = kind; self.text = text

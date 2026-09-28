@@ -1057,7 +1057,11 @@ private struct ChatRunState {
     func remoteSnapshot(projects: Set<String>) async -> RemoteSnapshot {
         let selected = state.projects.filter { projects.contains($0.id.uuidString) }
         var chats: [RemoteChat] = []
-        for chat in state.chats.filter({ projects.contains($0.projectID.uuidString) && !$0.isArchived }).sorted(by: { $0.updated > $1.updated }).prefix(20) {
+        let awaitingApproval = Set(pending.map(\.threadID))
+        for chat in state.chats.filter({ projects.contains($0.projectID.uuidString) && !$0.isArchived }).sorted(by: {
+            if awaitingApproval.contains($0.id) != awaitingApproval.contains($1.id) { return awaitingApproval.contains($0.id) }
+            return $0.updated > $1.updated
+        }).prefix(20) {
             let history = try? await store.loadTranscript(conversationID: chat.id)
             let messages = chat.id == chatID ? items : history.map(LocalHistory.items) ?? []
             let approvals = pending.filter { $0.threadID == chat.id }.compactMap { action -> RemoteApproval? in
@@ -1069,10 +1073,35 @@ private struct ChatRunState {
                     RemoteMessage(id: $0.id, role: $0.kind, text: String($0.text.prefix(2000)))
                 }, approvals: approvals, turn: runs[chat.id]?.turnID))
         }
-        return RemoteSnapshot(projects: selected.map { RemoteProject(id: $0.id.uuidString, name: $0.name) }, chats: chats)
+        return RemoteSnapshot(projects: selected.map { RemoteProject(id: $0.id.uuidString, name: $0.name, canCreateChat: canCreateRemoteChat) }, chats: chats)
+    }
+    private var canCreateRemoteChat: Bool {
+        state.defaultConnection == .originalCodex && connected && authenticated && routeIsAvailable(defaultRoute)
+    }
+    private func createRemoteChat(_ command: RemoteCommand) async throws -> String {
+        guard canCreateRemoteChat, !state.chats.contains(where: { $0.id == command.chat }),
+              let project = state.projects.first(where: { $0.id.uuidString == command.project }) else { throw RemoteFailure.invalidCommand }
+        let model = state.model, effort = draftEffort, route = defaultRoute
+        let access = project.defaultChatAccessMode ?? .standard
+        // Persist the stable app ID before sending. Native identity never comes from the phone.
+        let session = try await connection.createSession(projectPath: project.path, access: access, model: model, route: route)
+        guard !state.chats.contains(where: { $0.id == command.chat }),
+              ConversationIdentity.appID(for: session.nativeID, in: state, connection: session.connection) == nil else { throw RemoteFailure.invalidCommand }
+        var chat = Chat(session: session, projectID: project.id, title: ChatTitle.placeholder(), model: model)
+        chat.id = command.chat; chat.effort = effort; chat.route = route; chat.inheritsProjectAccess = true
+        state.chats.append(chat)
+        try await store.save(state)
+        loadedThreads.insert(chat.id)
+        let prompt = try command.photoPrompt(directory: Locations.root.appendingPathComponent("mobile-photos", isDirectory: true))
+        await deliver(text: prompt, project: project, threadID: chat.id, localID: "local-user:remote:" + command.id,
+                      selectedModel: model, selectedEffort: effort)
+        let submitted = remoteDeliveryResults.removeValue(forKey: "local-user:remote:" + command.id) == true
+        if submitted { generateChatTitle(chat.id, firstMessage: command.text, model: model, route: route) }
+        return submitted ? "submitted" : "uncertain"
     }
     func executeRemote(_ command: RemoteCommand) async throws -> String {
         try command.validate()
+        if command.createsChat { return try await createRemoteChat(command) }
         guard let chat = state.chats.first(where: { $0.id == command.chat && $0.projectID.uuidString == command.project && !$0.isArchived }),
               let project = state.projects.first(where: { $0.id == chat.projectID }),
               !isChangingChat(chat.id), chatIsAvailable(chat.id), connected, authenticated else { throw RemoteFailure.invalidCommand }
@@ -1092,12 +1121,14 @@ private struct ChatRunState {
             try await connection.interrupt(sessionForChat(chat.id), turn: turn)
             return "stop_requested"
         case "allow", "deny":
-            guard let action = pending.first(where: { $0.threadID == chat.id && $0.id == command.approval }),
+            guard let approvalID = command.approval.flatMap(UUID.init(uuidString:)),
+                  let action = pending.first(where: { $0.threadID == chat.id && $0.interaction.id == approvalID }),
                   case .approval(let canAllow) = action.interaction.kind,
-                  command.kind != "allow" || canAllow else { throw RemoteFailure.invalidCommand }
+                  command.kind != "allow" || (canAllow && action.interaction.details.count <= 8000) else { throw RemoteFailure.invalidCommand }
             try await connection.answer(action.interaction.id, session: action.interaction.session,
                                                    response: command.kind == "allow" ? .allowOnce : .deny)
             pending.removeAll { $0.id == action.id }; removeActionNotices([action])
+            NSApplication.shared.dockTile.badgeLabel = pending.isEmpty ? nil : String(pending.count)
             return "submitted"
         default: throw RemoteFailure.invalidCommand
         }

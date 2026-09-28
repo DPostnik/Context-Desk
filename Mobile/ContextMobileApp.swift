@@ -18,6 +18,7 @@ import ImageIO
     @Published var sending = false
     @Published var unresolved: RemoteCommand?
     var api: RemoteAPI?
+    var receiptStorage: RemoteSessionStorage = .keychain
     @Published var connectionState: RemoteConnectionState = .stopped
     @Published var onlineMacs: Set<String> = []
     private var realtime: RemoteRealtime?
@@ -50,9 +51,10 @@ import ImageIO
             if !password.isEmpty { try await client.signIn(email: email, password: password) }
             password = ""
             _ = try await client.owner()
+            let receipt = try receiptStorage.read("pending-command").map { try JSONDecoder().decode(RemoteCommand.self, from: $0) }
             api = client; signedIn = true
             UserDefaults.standard.set(url, forKey: "supabaseURL"); UserDefaults.standard.set(key, forKey: "supabaseKey")
-            if let saved = RemoteVault.read("pending-command"), let command = try? JSONDecoder().decode(RemoteCommand.self, from: saved) { unresolved = command }
+            unresolved = receipt
             startConnection()
         } catch { password = ""; status = error.localizedDescription }
     }
@@ -65,6 +67,9 @@ import ImageIO
         }
     }
     func startConnection() {
+        #if targetEnvironment(simulator)
+        if ProcessInfo.processInfo.arguments.contains("-mobile-preview") { return }
+        #endif
         guard signedIn, active, let api else { return }
         if realtime == nil {
             let channel = RemoteRealtime(role: "phone", device: phoneID,
@@ -151,7 +156,7 @@ import ImageIO
     }
     private func resolveDelivery() throws {
         if let unresolved, commands.contains(where: { $0.id == unresolved.id }) {
-            try RemoteVault.save(nil, account: "pending-command"); self.unresolved = nil
+            try receiptStorage.write(nil, "pending-command"); self.unresolved = nil
         }
     }
     func refresh() async {
@@ -169,15 +174,33 @@ import ImageIO
                 guard chat.supportsPhotos == true else { throw RemoteFailure.photoSetup }
                 try await api.checkPhotoSchema()
             }
-            // Save the stable ID before networking. Never resubmit after a transport failure.
-            var receipt = command; receipt.photos = nil
-            try RemoteVault.save(JSONEncoder().encode(receipt), account: "pending-command")
-            unresolved = command
-            try await api.submit(command)
-            unresolved = nil; try RemoteVault.save(nil, account: "pending-command")
-            if self.api === api, active { dirtyCommands.insert(command.id); requestUpdates() }
+            try await submit(command, using: api)
             return true
         } catch { status = error.localizedDescription; return false }
+    }
+    func createChat(device: RemoteDevice, project: RemoteProject, text: String) async -> RemoteCommand? {
+        guard let api, !sending, unresolved == nil, project.canCreateChat == true else { return nil }
+        sending = true; defer { sending = false }
+        do {
+            let command = RemoteCommand.newChat(owner: try await api.owner(), device: device.id, project: project.id, text: text)
+            try command.validate()
+            try await submit(command, using: api)
+            return command
+        } catch { status = error.localizedDescription; return nil }
+    }
+    private func submit(_ command: RemoteCommand, using api: RemoteAPI) async throws {
+        // Save the stable ID before networking. Never resubmit after a transport failure.
+        var receipt = command; receipt.photos = nil
+        try receiptStorage.write(JSONEncoder().encode(receipt), "pending-command")
+        unresolved = command
+        try await api.submit(command)
+        try receiptStorage.write(nil, "pending-command"); unresolved = nil
+        if !commands.contains(where: { $0.id == receipt.id }) { commands.insert(receipt, at: 0) }
+        status = ""
+        if self.api === api, active { dirtyCommands.insert(command.id); requestUpdates() }
+    }
+    func approvalCommand(device: String, chat: String, approval: String) -> RemoteCommand? {
+        commands.first { $0.device == device && $0.chat == chat && $0.approval.flatMap(UUID.init(uuidString:)) == UUID(uuidString: approval) }
     }
     func signOut() async {
         lifecycle = UUID(); realtime?.stop(); realtime = nil; updates.cancel()
@@ -205,6 +228,8 @@ struct MobileRoot: View {
     @ObservedObject var model: MobileModel
     @State private var search = ""
     @State private var settings = false
+    @State private var creatingChat = false
+    @State private var destination: MobileChatDestination?
     var body: some View {
         NavigationStack {
             Group {
@@ -218,13 +243,14 @@ struct MobileRoot: View {
                                 let chats = device.snapshot.chats.filter {
                                     $0.project == project.id && (search.isEmpty || $0.title.localizedCaseInsensitiveContains(search))
                                 }
-                                if !chats.isEmpty {
+                                if !chats.isEmpty || search.isEmpty {
                                     Section(project.name) {
                                         ForEach(chats) { chat in
                                             NavigationLink {
                                                 MobileChatView(model: model, deviceID: device.id, chatID: chat.id)
                                             } label: { ChatRow(chat: chat) }
                                         }
+                                        if chats.isEmpty { Text(L10n.text("Пока нет чатов", "No chats yet")).foregroundStyle(.secondary) }
                                     }
                                 }
                             }
@@ -263,6 +289,13 @@ struct MobileRoot: View {
             }
             .navigationTitle(model.signedIn ? L10n.text("Чаты", "Chats") : "Context Desk")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    if model.signedIn {
+                        Button { creatingChat = true } label: { Image(systemName: "square.and.pencil") }
+                            .accessibilityLabel(L10n.text("Новый чат", "New chat")).accessibilityIdentifier("new-chat")
+                            .disabled(model.devices.allSatisfy { $0.snapshot.projects.isEmpty })
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { settings = true } label: { Image(systemName: "gearshape") }
                         .accessibilityLabel(L10n.text("Настройки", "Settings"))
@@ -270,6 +303,15 @@ struct MobileRoot: View {
             }
             .safeAreaInset(edge: .bottom, spacing: 0) { MobileNotice(model: model) }
             .sheet(isPresented: $settings) { MobileSettings(model: model) }
+            .sheet(isPresented: $creatingChat) {
+                MobileNewChatView(model: model) { command in
+                    creatingChat = false
+                    destination = MobileChatDestination(device: command.device, chat: command.chat)
+                }
+            }
+            .navigationDestination(item: $destination) { target in
+                MobileChatView(model: model, deviceID: target.device, chatID: target.chat)
+            }
             #if targetEnvironment(simulator)
             .navigationDestination(isPresented: .constant(ProcessInfo.processInfo.arguments.contains("-preview-chat") && model.signedIn)) {
                 if let device = model.devices.first, let chat = device.snapshot.chats.first {
@@ -277,6 +319,57 @@ struct MobileRoot: View {
                 }
             }
             #endif
+        }
+    }
+}
+
+struct MobileChatDestination: Hashable { let device: String; let chat: String }
+
+struct MobileNewChatView: View {
+    @ObservedObject var model: MobileModel
+    let created: (RemoteCommand) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var selection = ""
+    @State private var message = ""
+    private var choices: [(id: String, device: RemoteDevice, project: RemoteProject)] {
+        model.devices.flatMap { device in device.snapshot.projects.map { (device.id + ":" + $0.id, device, $0) } }
+    }
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section(L10n.text("Проект", "Project")) {
+                    Picker(L10n.text("Проект", "Project"), selection: $selection) {
+                        ForEach(choices, id: \.id) { choice in
+                            Text(choice.project.name + " · " + choice.device.name).tag(choice.id)
+                        }
+                    }.accessibilityIdentifier("new-chat-project")
+                    Text(L10n.text("Чат Codex создаётся на Mac с моделью и разрешениями проекта, выбранными на Mac.", "A Codex chat is created on your Mac using the model and project permissions selected there."))
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                Section(L10n.text("Первое сообщение", "First message")) {
+                    TextField(L10n.text("Что нужно сделать?", "What would you like to do?"), text: $message, axis: .vertical)
+                        .lineLimit(4...10).accessibilityIdentifier("new-chat-message")
+                }
+                if let choice = choices.first(where: { $0.id == selection }) {
+                    if choice.project.canCreateChat != true {
+                        Text(L10n.text("Обнови и открой Context Desk на Mac, подключи Codex и включи мобильный доступ.", "Update and open Context Desk on your Mac, connect Codex and enable mobile access."))
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                    Button {
+                        Task {
+                            if let command = await model.createChat(device: choice.device, project: choice.project, text: message) { created(command) }
+                        }
+                    } label: {
+                        HStack { Text(L10n.text("Создать и отправить", "Create and send")); Spacer(); if model.sending { ProgressView() } }
+                    }.accessibilityIdentifier("create-chat")
+                        .disabled(choice.project.canCreateChat != true || model.sending || model.unresolved != nil || message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                MobileNotice(model: model)
+            }
+            .navigationTitle(L10n.text("Новый чат", "New chat")).navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button(L10n.text("Отмена", "Cancel")) { dismiss() }.disabled(model.sending) } }
+            .interactiveDismissDisabled(model.sending)
+            .onAppear { if selection.isEmpty { selection = choices.first(where: { $0.project.canCreateChat == true })?.id ?? choices.first?.id ?? "" } }
         }
     }
 }
@@ -377,6 +470,7 @@ struct MobileChatView: View {
     @State private var following = true
     @State private var atBottom = true
     @State private var jumpRequest = 0
+    @State private var approvalJump = 0
     @State private var photoSelection: [PhotosPickerItem] = []
     @State private var loadingPhotos = false
     @State private var photoError: String?
@@ -391,6 +485,12 @@ struct MobileChatView: View {
         if let device = model.devices.first(where: { $0.id == deviceID }), let chat = device.snapshot.chats.first(where: { $0.id == chatID }) {
             VStack(spacing: 0) {
                 ConnectionStatus(model: model, device: device).padding(.horizontal).padding(.vertical, 9).background(.bar)
+                if !chat.approvals.isEmpty {
+                    Button { writing = false; approvalJump += 1 } label: {
+                        Label(L10n.text("Ожидают подтверждения: \(chat.approvals.count)", "Awaiting approval: \(chat.approvals.count)"), systemImage: "hand.raised.fill")
+                            .frame(maxWidth: .infinity, alignment: .leading).padding(12)
+                    }.foregroundStyle(.orange).background(Color.orange.opacity(0.08)).accessibilityIdentifier("show-approvals")
+                }
                 GeometryReader { viewport in
                 ScrollViewReader { proxy in
                     ScrollView {
@@ -401,17 +501,26 @@ struct MobileChatView: View {
                             if chat.running {
                                 HStack(spacing: 10) { ProgressView(); Text(L10n.text("Агент работает…", "Agent is working…")).font(.subheadline).foregroundStyle(.secondary) }
                             }
+                            Color.clear.frame(height: 1).id("approvals")
                             ForEach(chat.approvals) { approval in
+                                let response = model.approvalCommand(device: deviceID, chat: chatID, approval: approval.id)
                                 VStack(alignment: .leading, spacing: 12) {
                                     Label(L10n.text("Требуется подтверждение", "Approval required"), systemImage: "hand.raised.fill").font(.headline)
                                     Text(approval.details).font(.callout).textSelection(.enabled)
                                     HStack {
                                         Button(L10n.text("Отклонить", "Decline"), role: .destructive) { Task { _ = await model.send(device: device, chat: chat, kind: "deny", approval: approval.id) } }
+                                            .accessibilityIdentifier("deny-approval")
                                         Spacer()
                                         if approval.canAllow {
                                             Button(L10n.text("Разрешить один раз", "Allow once")) { Task { _ = await model.send(device: device, chat: chat, kind: "allow", approval: approval.id) } }
+                                                .accessibilityIdentifier("allow-approval")
                                         }
-                                    }.buttonStyle(.bordered).disabled(model.sending || model.unresolved != nil)
+                                    }.buttonStyle(.bordered).disabled(model.sending || model.unresolved != nil || response.map { $0.status != "rejected" } == true)
+                                    if let response { Text(commandLabel(response.status)).font(.caption).foregroundStyle(.secondary) }
+                                    if !approval.canAllow {
+                                        Text(L10n.text("Подтвердить этот запрос с телефона нельзя. Проверь полные детали на Mac или отклони запрос.", "This request cannot be approved on your phone. Review the full details on your Mac or decline it."))
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }
                                 }.padding().background(Color.orange.opacity(0.09), in: RoundedRectangle(cornerRadius: 18))
                             }
                             if let command = model.commands.first(where: { $0.chat == chatID && $0.device == deviceID }) {
@@ -447,6 +556,10 @@ struct MobileChatView: View {
                         following = true
                         proxy.scrollTo("tail", anchor: .bottom)
                     }
+                    .onChange(of: approvalJump) { _, _ in
+                        following = false
+                        proxy.scrollTo("approvals", anchor: .top)
+                    }
                     .overlay(alignment: .bottomTrailing) {
                         if !atBottom {
                             Button {
@@ -464,6 +577,7 @@ struct MobileChatView: View {
             .background(Color(.systemBackground))
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 VStack(spacing: 8) {
+                    MobileNotice(model: model)
                     if !photos.isEmpty {
                         ScrollView(.horizontal) {
                             HStack(spacing: 12) {
@@ -546,6 +660,15 @@ struct MobileChatView: View {
                     }
                 }
             }
+        } else if let command = model.commands.first(where: { $0.device == deviceID && $0.chat == chatID && $0.createsChat }) ?? model.unresolved.flatMap({ $0.device == deviceID && $0.chat == chatID && $0.createsChat ? $0 : nil }) {
+            VStack(spacing: 16) {
+                if ["pending", "claimed", "submitted"].contains(command.status) { ProgressView() }
+                Text(L10n.text("Новый чат", "New chat")).font(.title2)
+                Text(commandLabel(command.status)).foregroundStyle(.secondary).accessibilityIdentifier("new-chat-status")
+                Text(L10n.text("Чат откроется после обновления с Mac. Команда не отправляется повторно.", "The chat opens when your Mac publishes it. The command is not sent again."))
+                    .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                MobileNotice(model: model)
+            }.padding()
         } else {
             ContentUnavailableView(L10n.text("Чат недоступен", "Chat unavailable"), systemImage: "bubble.left",
                 description: Text(L10n.text("Проверь выбранные проекты на Mac.", "Check the selected projects on your Mac.")))
@@ -572,7 +695,7 @@ struct MobileChatView: View {
         case "claimed": L10n.text("Получено Mac", "Received by Mac")
         case "submitted": L10n.text("Передано агенту", "Submitted to agent")
         case "stop_requested": L10n.text("Остановка запрошена", "Stop requested")
-        case "rejected": L10n.text("Не отправлено: чат занят или недоступен", "Not sent: chat is busy or unavailable")
+        case "rejected": L10n.text("Команда отклонена: чат недоступен, занят или запрос устарел", "Command rejected: chat unavailable, busy or request stale")
         default: L10n.text("Результат неизвестен · проверь Mac", "Outcome unknown · check your Mac")
         }
     }
@@ -632,7 +755,7 @@ struct MessageBubble: View {
 #if targetEnvironment(simulator)
 extension MobileModel {
     func loadPreview() {
-        let project = RemoteProject(id: "preview-project", name: "Context Desk")
+        let project = RemoteProject(id: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", name: "Context Desk", canCreateChat: true)
         var chat = RemoteChat(id: "preview-chat", project: project.id, title: L10n.text("Мобильное приложение", "Mobile app"), running: false,
             messages: [RemoteMessage(id: "m1", role: "user", text: L10n.text("Сделаем удобный интерфейс для iPhone. Поле ввода должно быть всегда под рукой.", "Let's make the iPhone interface comfortable. Keep the message field within reach.")),
                        RemoteMessage(id: "m2", role: "assistant", text: L10n.text("Готово. Теперь переписка занимает весь экран, а поле ввода закреплено внизу.\n\n**Что изменилось**\n• Поиск по чатам\n• Превью последних сообщений\n• Кнопка скрытия клавиатуры\n\nПосле отправки клавиатура закрывается автоматически.", "Done. The conversation now fills the screen, with the composer pinned at the bottom.\n\n**What's new**\n• Chat search\n• Latest message previews\n• A button to hide the keyboard\n\nThe keyboard closes automatically after sending."))], approvals: [])
@@ -642,10 +765,33 @@ extension MobileModel {
                     text: "Message \(index)\n" + String(repeating: "Long transcript layout verification. ", count: index.isMultiple(of: 3) ? 70 : 10))
             }
         }
-        devices = [RemoteDevice(id: "preview-device", owner: "preview-owner", snapshot: RemoteSnapshot(projects: [project], chats: [chat]))]
+        var projects = [project]
+        if ProcessInfo.processInfo.arguments.contains("-preview-actions") {
+            receiptStorage = RemoteSessionStorage(read: { _ in nil }, write: { _, _ in })
+            chat.approvals = [RemoteApproval(id: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", details: "echo permission-fixture", canAllow: true)]
+            projects.append(RemoteProject(id: "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC", name: L10n.text("Пустой проект", "Empty project"), canCreateChat: true))
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.protocolClasses = [MobilePreviewTransport.self]
+            api = try? RemoteAPI(url: "https://preview.invalid", key: "sb_publishable_fixture", transport: URLSession(configuration: configuration),
+                storage: RemoteSessionStorage(read: { _ in Data(#"{"access_token":"fixture","refresh_token":"fixture","expires_at":4102444800,"user":{"id":"dddddddd-dddd-dddd-dddd-dddddddddddd"}}"#.utf8) }, write: { _, _ in }))
+        }
+        devices = [RemoteDevice(id: "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee", owner: "dddddddd-dddd-dddd-dddd-dddddddddddd", snapshot: RemoteSnapshot(projects: projects, chats: [chat]))]
         connectionState = ProcessInfo.processInfo.arguments.contains("-preview-offline") ? .offline : .connected
-        onlineMacs = ["preview-device"]
+        onlineMacs = Set(devices.map(\.id))
         signedIn = true
     }
+}
+
+/// Simulator-only deterministic acknowledgement. No cloud or agent access in UI fixtures.
+final class MobilePreviewTransport: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        let code = request.httpMethod == "POST" && request.url?.path == "/rest/v1/remote_commands" ? 201 : 400
+        let response = HTTPURLResponse(url: request.url!, statusCode: code, httpVersion: nil, headerFields: nil)!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() { }
 }
 #endif

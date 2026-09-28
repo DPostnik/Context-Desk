@@ -81,10 +81,26 @@ A macOS Swift typecheck of shared views is useful but is **not** an iOS build.
   pending. Transport ambiguity never triggers an execution retry. A stuck claim
   or uncertain send blocks later sends for that chat; control commands can still
   be claimed. Operator reconciliation is currently manual.
+- New chat opens a project picker, including projects with no conversations, and
+  submits the first message to `mobile:<command UUID>` using the existing `send`
+  envelope. The Mac advertises `canCreateChat` per project; older hosts disable
+  creation. The first command alone can create that app conversation ID. It is
+  persisted with a Mac-created native session before the first turn; duplicate
+  initial sends are rejected and later sends cannot recreate a deleted chat.
+  Creation uses the Mac's configured Codex model/route and the project's
+  interactive default permissions; it is unavailable when the default agent is
+  not Codex. Desktop selection and drafts stay unchanged. No SQL migration is
+  needed, and older installed clients retain the v1 snapshot/queue contract.
 - Stop carries the observed turn ID and cannot stop a newer turn. An accepted
   stop is shown as requested, not completed. Approval replies carry the exact
   pending request ID; unknown/stale requests fail closed. Truncated approval
   details cannot be approved from the phone.
+- Approval handles are compared as UUID values, including PostgreSQL's lowercase
+  representation. Pending chats take priority within the 20-chat snapshot limit.
+  The phone has a visible approval shortcut and disables both reply buttons after
+  queue acknowledgement. A truncated request is rejected by the Mac even if a
+  client bypasses the disabled Allow button. Structured questions and tool forms
+  still require the Mac.
 - Project permissions, native provider identity and existing chat route are
   preserved. Remote sends refuse busy chats, pending interactions and existing
   desktop queues. They do not change the selected desktop chat or its draft.
