@@ -162,7 +162,13 @@ enum CodexEventDecoder {
         case "turn/completed":
             guard let id = p["turn"]["id"].string else { return nil }; payload = .completed(.init(p["turn"], id: id))
         case "item/started", "item/completed":
-            guard var item = CodexDecoding.transcriptItem(p["item"]) else { return nil }; item.turnID = p["turnId"].string; payload = .item(item)
+            guard var item = CodexDecoding.transcriptItem(p["item"]) else { return nil }
+            if item.kind == "compaction", method == "item/started" {
+                item.phase = "inProgress"
+                item.text = L10n.text("Сжатие контекста…", "Compacting conversation…")
+            }
+            item.turnID = p["turnId"].string
+            payload = .item(item)
         case "item/agentMessage/delta":
             guard let id = p["itemId"].string else { return nil }; payload = .delta(turn: p["turnId"].string, item: id, text: p["delta"].string ?? "")
         case "error": payload = .diagnostic(p["error"]["message"].string ?? p["message"].string ?? L10n.text("Ошибка Codex", "Codex error"))

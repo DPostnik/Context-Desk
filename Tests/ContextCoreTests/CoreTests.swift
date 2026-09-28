@@ -94,6 +94,6 @@ import Testing
 
 @Test func compactionAppearsInTranscript() throws {
     let raw: JSONValue = .object(["id": .string("compaction-1"), "type": .string("contextCompaction")])
-    #expect(CodexDecoding.transcriptItem(raw)?.kind == "activity")
+    #expect(CodexDecoding.transcriptItem(raw)?.kind == "compaction")
     #expect(CodexDecoding.transcriptItem(.object(["id": .string("unknown"), "type": .string("future")])) == nil)
 }

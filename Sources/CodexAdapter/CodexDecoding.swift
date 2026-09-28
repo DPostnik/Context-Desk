@@ -53,7 +53,7 @@ enum CodexDecoding {
         case "userMessage":
             return TranscriptItem(id: id, kind: "user", text: raw["content"].array.compactMap { $0["text"].string }.joined(separator: "\n"))
         case "agentMessage": return TranscriptItem(id: id, kind: "assistant", text: raw["text"].string ?? "", phase: raw["phase"].string)
-        case "contextCompaction": return TranscriptItem(id: id, kind: "activity", text: L10n.text("Контекст разговора сжат", "Conversation context compacted"))
+        case "contextCompaction": return TranscriptItem(id: id, kind: "compaction", text: L10n.text("Контекст разговора сжат", "Conversation context compacted"), phase: "completed")
         case "commandExecution": return TranscriptItem(id: id, kind: "activity", text: raw["command"].string ?? L10n.text("Выполнение команды", "Running command"))
         case "fileChange": return TranscriptItem(id: id, kind: "activity", text: L10n.text("Изменение файлов · \(raw["status"].string ?? "")", "File changes · \(raw["status"].string ?? "")"))
         case "mcpToolCall": return TranscriptItem(id: id, kind: "activity", text: raw["tool"].string ?? L10n.text("Вызов инструмента", "Calling tool"))

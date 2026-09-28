@@ -254,6 +254,10 @@ public struct NativeTranscript: NSViewRepresentable {
             var inserted = false
             var showedAuthor = false
             for var item in segment {
+                if item.kind == "compaction", item.phase == "inProgress", !active {
+                    item.phase = "unconfirmed"
+                    item.text = L10n.text("Сжатие контекста: завершение не подтверждено", "Context compaction: completion unconfirmed")
+                }
                 if item.kind == "assistant" {
                     item.timing = showedAuthor ? nil : responseTiming
                     item.showsAuthor = !showedAuthor
@@ -285,6 +289,14 @@ public struct NativeTranscript: NSViewRepresentable {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineSpacing = item.kind == "activity" ? 1 : 4; paragraph.paragraphSpacing = item.kind == "activity" ? 2 : 0
         paragraph.lineBreakMode = .byWordWrapping
+        if item.kind == "compaction" {
+            return NSAttributedString(string: "↔ " + item.text + "\n\n", attributes: [
+                .font: NSFont.systemFont(ofSize: 13, weight: .semibold),
+                .foregroundColor: NSColor.labelColor,
+                .backgroundColor: NSColor.controlAccentColor.withAlphaComponent(0.14),
+                .paragraphStyle: paragraph
+            ])
+        }
         if item.kind == "loading" {
             return NSAttributedString(string: "      " + item.text + "\n\n", attributes: [
                 .font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.secondaryLabelColor
