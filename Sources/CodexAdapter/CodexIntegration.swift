@@ -76,7 +76,7 @@ public actor CodexIntegration: AgentIntegration {
     public func descriptor() async -> AgentResult<AgentDescriptor> {
         guard await client.transport.isRunning else { return .unavailable }
         let version = await client.transport.serverUserAgent ?? ""
-        guard version.contains("/" + ArchiveSummaryRunner.protocolVersion + " ") else { return .rejected(.incompatibleContract) }
+        guard CodexProtocolCompatibility.accepts(userAgent: version) else { return .rejected(.incompatibleContract) }
         let epoch = await client.transport.accountEpoch
         return .success(AgentDescriptor(context: .init(connection: .originalCodex, accountRevision: epoch), identityMode: .appOwnedHome,
             capabilities: [.interactiveSessions, .scheduledExecution, .isolatedGeneration, .history, .archive, .streaming,

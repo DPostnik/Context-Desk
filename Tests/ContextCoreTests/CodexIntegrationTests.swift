@@ -5,7 +5,7 @@ import ContextCore
 import AgentContract
 @testable import ContextDesk
 
-private func contractFixture(version: String = "0.158.0-alpha.2.1", disconnect: Bool = false, changeDuring: String = "") throws -> (URL, URL) {
+private func contractFixture(version: String = "0.159.0", disconnect: Bool = false, changeDuring: String = "") throws -> (URL, URL) {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     let executable = root.appendingPathComponent("engine.py")
@@ -37,8 +37,9 @@ private func contractFixture(version: String = "0.158.0-alpha.2.1", disconnect: 
     return (root, executable)
 }
 
-@Test func contractRuntimeRejectsUnverifiedVersionsBeforeSessionDispatch() async throws {
-    let (root, executable) = try contractFixture(version: "999.0")
+@Test(arguments: ["999.0", "0.159.1", "0.159.0-alpha.1", "0.159.00", "999.0 metadata/0.159.0"])
+func contractRuntimeRejectsUnverifiedVersionsBeforeSessionDispatch(version: String) async throws {
+    let (root, executable) = try contractFixture(version: version)
     defer { try? FileManager.default.removeItem(at: root) }
     let integration: any AgentIntegration = CodexIntegration()
     if case .rejected(.incompatibleContract) = await integration.connect(.init(executable: executable, home: root)) {} else { Issue.record("Unverified version accepted") }
@@ -166,4 +167,15 @@ func obsoleteMetadataIsTypedRejection(method: String) async throws {
     }
     #expect(try await wire.request("test/calls").array.compactMap(\.string).filter { $0 == method }.count == 1)
     await adapter.disconnect()
+}
+
+@Test(arguments: ["0.158.0-alpha.2.1", "0.159.0"])
+func contractRuntimeAcceptsVerifiedVersions(version: String) async throws {
+    let (root, executable) = try contractFixture(version: version)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let app = AgentClient(integration: CodexIntegration())
+    _ = try await app.start(.init(executable: executable, home: root))
+    #expect(try await app.account().authenticated)
+    #expect(try await app.models().contains { $0.id == "fixture" })
+    await app.stop()
 }

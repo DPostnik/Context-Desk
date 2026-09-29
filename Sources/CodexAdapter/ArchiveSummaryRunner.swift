@@ -9,7 +9,7 @@ public struct SummaryRunFailure: LocalizedError, Sendable {
 
 /// One isolated, ephemeral model turn. Never resumes or compacts the source chat.
 public actor ArchiveSummaryRunner {
-    public static let protocolVersion = "0.158.0-alpha.2.1"
+    public static let protocolVersion = CodexProtocolCompatibility.currentVersion
     private var active: CodexConnection?
     public init() {}
     public func stop() async { await active?.stop() }
@@ -62,9 +62,10 @@ public actor ArchiveSummaryRunner {
             try await connection.start(executable: executable, home: home,
                 extraArguments: providerArguments + Self.isolationArguments)
             let agent = await connection.serverUserAgent ?? ""
-            guard agent.contains("/" + Self.protocolVersion + " ") else {
-                throw ClientFailure(L10n.text("Версия Codex не проверена для подготовки итогов: требуется \(Self.protocolVersion)",
-                                             "Codex version is not verified for summaries: requires \(Self.protocolVersion)"))
+            guard CodexProtocolCompatibility.accepts(userAgent: agent) else {
+                let supported = CodexProtocolCompatibility.supportedVersions.joined(separator: ", ")
+                throw ClientFailure(L10n.text("Версия Codex не проверена для подготовки итогов. Поддерживаются: \(supported)",
+                                             "Codex version is not verified for summaries. Supported: \(supported)"))
             }
             let config = try await connection.request("config/read", params: .object(["includeLayers": .bool(false)]))
             guard case .object = config["config"] else {

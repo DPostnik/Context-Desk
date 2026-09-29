@@ -90,7 +90,7 @@ private func history(_ text: String = "Prepare a weekly report") -> JSONValue {
     #expect(try await AppStore(file: file).loadArchiveSummaries().isEmpty)
 }
 
-private func fixture(_ root: URL, mode: String = "success") throws -> URL {
+private func fixture(_ root: URL, mode: String = "success", version: String = "0.159.0") throws -> URL {
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     try JSONEncoder().encode(history()).write(to: root.appendingPathComponent("source.json"))
     try Data(mode.utf8).write(to: root.appendingPathComponent("mode"))
@@ -108,7 +108,7 @@ private func fixture(_ root: URL, mode: String = "success") throws -> URL {
         method=m['method']; p=m.get('params',{})
         with (root/'calls.jsonl').open('a') as f: f.write(json.dumps({'method':method,'params':p})+'\n')
         result={}
-        if method=='initialize': result={'userAgent':'context_desk/0.158.0-alpha.2.1 (test)'}
+        if method=='initialize': result={'userAgent':'context_desk/VERSION (test)'}
         if method=='config/read': result={'config':{'mcp_servers':{'configured':{}}}}
         if method=='thread/read': result={'thread':json.loads((root/'source.json').read_text())}
         if method=='thread/start':
@@ -144,16 +144,16 @@ private func fixture(_ root: URL, mode: String = "success") throws -> URL {
             emit({'method':'turn/completed','params':{'threadId':'summary','turn':{'id':'generated','status':'completed','error':None}}})
             continue
         emit({'id':m['id'],'result':result})
-    """#.utf8).write(to: executable)
+    """#.replacingOccurrences(of: "VERSION", with: version).utf8).write(to: executable)
     try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
     return executable
 }
 
-@Test(arguments: ["success", "route", "tools", "disconnect", "approval"])
-func summaryRunnerRoutesAndFailsClosed(mode: String) async throws {
+@Test(arguments: ["success", "route", "tools", "disconnect", "approval"], ["0.158.0-alpha.2.1", "0.159.0"])
+func summaryRunnerRoutesAndFailsClosed(mode: String, version: String) async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
-    let executable = try fixture(root, mode: mode)
+    let executable = try fixture(root, mode: mode, version: version)
     let source = try CodexDecoding.summarySource(thread: history())
     let recipe = try ArchiveSummaryRecipe(directory: skills.appendingPathComponent("archive-summary"))
     do {
@@ -356,4 +356,23 @@ func chatTitleRunnerPreservesRouteAndIsolation(mode: String) async throws {
         #expect(!message.hasPrefix(title))
         print("SYNTHETIC CHAT TITLE: \(title)")
     }
+}
+
+@Test func summaryRejectsUnverifiedEngineBeforeDispatch() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let executable = try fixture(root, version: "0.159.1")
+    do {
+        _ = try await ArchiveSummaryRunner().title(firstMessage: "Synthetic title", model: "fixture",
+            route: .direct, executable: executable, home: root,
+            workspace: root.appendingPathComponent("work"), providerArguments: [])
+        Issue.record("Unverified summary engine accepted")
+    } catch let failure as SummaryRunFailure {
+        #expect(!failure.uncertain)
+        #expect(failure.message.contains("0.158.0-alpha.2.1"))
+        #expect(failure.message.contains("0.159.0"))
+    }
+    let calls = try String(contentsOf: root.appendingPathComponent("calls.jsonl"), encoding: .utf8)
+    #expect(!calls.contains("thread/start"))
+    #expect(!calls.contains("turn/start"))
 }
