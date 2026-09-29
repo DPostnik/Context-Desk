@@ -4,7 +4,7 @@
 
 Chrome DevTools MCP 1.10.1 provides the browser executor. Context Desk adds compact
 card extraction, readiness checks, verified pagination and private checkpoints.
-Install Node.js 22.12 or later and Google Chrome, then run from the repository:
+Install Node.js 22.12 or later, then run from the repository:
 
 ```sh
 python3 BrowserRuntime/install.py
@@ -14,11 +14,18 @@ For an app-only installation, open Terminal, type `python3 `, drag `install.py`
 from this folder into Terminal and press Return. The installer needs Node on PATH;
 alternatively pass `--node /absolute/path/to/node`. It downloads the pinned archive,
 verifies its SHA-512 and all extracted files, and runs no npm installation scripts.
+It also installs pinned Chrome for Testing (154.0.8037.57) in the app-owned browser
+directory, checking the pinned archive SHA-256. ARM64 and Intel Macs are
+supported. Chrome for Testing does not auto-update: a new release requires an
+updated installer/lock and rerunning installation. Regular Chrome is never a fallback.
 
 In Settings → Browser, enable Use Chrome DevTools and select Apply browser setting
-after current tasks finish. The agent opens a separate Chrome profile on first use.
-Chrome starts separately in manual debugging mode, then the adapter attaches.
-Sign in manually there. Google still decides whether to accept sign-in. Chrome
+after current tasks finish. The agent opens the separate Chrome for Testing app
+on first use, in manual debugging mode, then the adapter attaches.
+The Apply button remains disabled during chat or background tasks; wait for them
+to finish or stop the relevant chat task before reconnecting. No actions are replayed.
+Sign in manually in the new testing-profile. Existing agent profile data is left
+in place, but is not migrated; site sign-ins and Google account sync are not guaranteed. Google still decides whether to accept sign-in. Chrome
 stays open across adapter reconnects; close its window yourself when finished.
 This does not copy your normal Chrome or Codex credentials.
 The component is disabled by default. Turning it off also requires Apply or restart.
@@ -36,7 +43,7 @@ An uncertain transport failure still requires reconnecting the adapter.
 
 Исполнитель браузера — Chrome DevTools MCP 1.10.1. Context Desk добавляет компактное
 чтение карточек, проверку загрузки и переходов, а также локальные контрольные точки.
-Установи Node.js 22.12 или новее и Google Chrome, затем выполни из папки проекта:
+Установи Node.js 22.12 или новее, затем выполни из папки проекта:
 
 ```sh
 python3 BrowserRuntime/install.py
@@ -46,11 +53,20 @@ python3 BrowserRuntime/install.py
 `install.py` из этой папки и нажми Return. Установщик ищет Node в PATH; можно указать
 `--node /полный/путь/к/node`. Он скачивает закреплённый архив, проверяет SHA-512
 и извлечённые файлы. Скрипты установки npm не выполняются.
+Также устанавливается закреплённый Chrome for Testing (154.0.8037.57) в папку
+браузера приложения с проверкой закреплённой SHA-256 архива. Поддерживаются ARM64
+и Intel Mac. Автообновления нет: для новой версии нужны обновлённый установщик
+и файл версий, затем повторная установка. Обычный Chrome не используется как запасной.
 
 В настройках → Браузер включи «Использовать Chrome DevTools» и нажми «Применить
 настройку браузера» после завершения текущих задач. При первом обращении агента
-откроется отдельный профиль Chrome в режиме ручной отладки; адаптер подключится
-после запуска. Войди на сайты вручную. Решение о разрешении входа принимает Google.
+откроется отдельное приложение Chrome for Testing в режиме ручной отладки;
+адаптер подключится после запуска. Кнопка применения недоступна во время задач
+в чатах и фоновой обработки: дождись завершения или останови нужную задачу
+в её чате перед переподключением. Действия не повторяются.
+Войди на сайты заново в testing-profile. Старый профиль агента остаётся на месте,
+но не переносится. Вход на сайты и синхронизация Google не гарантируются.
+Решение о разрешении входа принимает Google.
 Chrome остаётся открытым при переподключении адаптера; закрой его окно, когда закончишь. Данные входа
 обычного Chrome и Codex не копируются. По умолчанию компонент выключен. Отключение
 тоже применяется кнопкой или после перезапуска.

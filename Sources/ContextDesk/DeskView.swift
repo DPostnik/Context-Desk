@@ -828,7 +828,7 @@ struct SettingsView: View {
             Section(L10n.text("Браузер", "Browser")) {
                 Toggle(L10n.text("Использовать Chrome DevTools", "Use Chrome DevTools"),
                        isOn: Binding(get: { model.state.browserEnabled == true }, set: { model.selectBrowserEnabled($0) }))
-                Text(L10n.text("Отдельный профиль Chrome для задач агента. Входи на сайты вручную. Браузер остаётся открытым после переподключения; разрешения проектов сохраняются.", "A separate Chrome profile for agent tasks. Sign in manually. The browser stays open after reconnecting; project permissions are preserved."))
+                Text(L10n.text("Отдельное приложение Chrome for Testing для задач агента. Войди на сайты заново: профиль обычного Chrome не переносится. Браузер остаётся открытым после переподключения.", "A separate Chrome for Testing app for agent tasks. Sign in again: your regular Chrome profile is not transferred. The browser stays open after reconnecting."))
                     .font(.callout).foregroundStyle(.secondary)
                 Button(L10n.text("Инструкция по установке", "Installation instructions")) {
                     if let resources = Bundle.main.resourceURL {
@@ -838,6 +838,10 @@ struct SettingsView: View {
                 Button(model.connecting ? L10n.text("Подключение…", "Connecting…") : L10n.text("Применить настройку браузера", "Apply browser setting")) {
                     Task { await model.connect() }
                 }.disabled(model.anyBusy || model.connecting)
+                if model.anyBusy {
+                    Text(L10n.text("Кнопка недоступна, пока выполняются задачи в чатах или фоновая обработка. Дождись их завершения либо останови нужную задачу в её чате, затем примени настройку. Текущие действия браузера автоматически не повторяются.", "This button is unavailable while chats or background tasks are running. Wait for them to finish or stop the relevant task in its chat, then apply the setting. Browser actions are not automatically replayed."))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Text(L10n.text("Применяется при переподключении Codex после завершения текущих задач. Браузер открывается при первом обращении агента.", "Takes effect when Codex reconnects after current tasks finish. The browser opens on the agent’s first browser request."))
                     .font(.caption).foregroundStyle(.secondary)
             }

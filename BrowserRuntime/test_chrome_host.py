@@ -25,6 +25,19 @@ class ChromeHostTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             chrome_command(self.owner['executable'], self.host.profile, 0)
 
+    def test_regular_chrome_and_legacy_profile_are_never_adopted(self):
+        legacy = dict(self.owner, executable='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
+        self.assertFalse(self.host.matches(legacy))
+        self.assertNotEqual(self.host.profile, self.host.root / 'profile')
+        self.assertNotEqual(self.host.record, self.host.root / 'chrome-owner.json')
+        self.assertTrue(all('Google Chrome for Testing.app' in p for p in self.host.executables()))
+
+    def test_missing_testing_browser_does_not_fall_back_to_regular_chrome(self):
+        with patch('chrome_host.os.access', return_value=False), patch('chrome_host.subprocess.Popen') as launch:
+            with self.assertRaisesRegex(ChromeLaunchError, 'Chrome for Testing'):
+                self.host.ensure()
+        launch.assert_not_called()
+
     def test_process_identity_and_profile(self):
         command = ' '.join(chrome_command(self.owner['executable'], self.host.profile, 9233))
         with patch.object(self.host, 'process_field', side_effect=lambda pid, field: 'birth' if field == 'lstart' else command):
@@ -84,6 +97,7 @@ class ChromeHostTests(unittest.TestCase):
         child.poll.return_value = None
         with patch.object(self.host, 'process_field', side_effect=lambda pid, field: 'Z' if field == 'stat' else 'birth'), \
              patch('chrome_host.os.access', return_value=True), \
+             patch('chrome_host.verify_chrome'), \
              patch('chrome_host.subprocess.Popen', return_value=child) as launch, \
              patch.object(self.host, 'endpoint', return_value='http://127.0.0.1:9999'):
             self.assertEqual(self.host.ensure(), 'http://127.0.0.1:9999')

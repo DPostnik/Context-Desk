@@ -1,4 +1,4 @@
-"""Launch a dedicated normal Chrome, then expose only its verified local endpoint.
+"""Launch the pinned Chrome for Testing, then expose only its verified local endpoint.
 
 Chrome outlives MCP reconnects so manual sign-in and user tabs are preserved.
 No default profile, credential copying, WebDriver flags or auto-connect discovery.
@@ -12,6 +12,8 @@ import threading
 import time
 import urllib.request
 from urllib.parse import urlparse
+
+from install import chrome_app, verify_chrome
 
 
 class ChromeLaunchError(RuntimeError):
@@ -34,8 +36,8 @@ def chrome_command(executable, profile, port):
 class ChromeHost:
     def __init__(self, root, language='en'):
         self.root = Path(root).resolve()
-        self.profile = self.root / 'profile'
-        self.record = self.root / 'chrome-owner.json'
+        self.profile = self.root / 'testing-profile'
+        self.record = self.root / 'testing-chrome-owner.json'
         self.language = language
         self.child = None
         self.owner = None
@@ -79,8 +81,7 @@ class ChromeHost:
 
     @staticmethod
     def executables():
-        return [str(base / 'Google Chrome.app/Contents/MacOS/Google Chrome')
-                for base in (Path('/Applications'), Path.home() / 'Applications')]
+        return [str(chrome_app() / 'Contents/MacOS/Google Chrome for Testing')]
 
     @staticmethod
     def owns_listener(pid, port):
@@ -142,7 +143,9 @@ class ChromeHost:
                 raise self.error('Запуск браузера отменён.', 'Browser startup was cancelled.')
             executable = next((p for p in self.executables() if os.access(p, os.X_OK)), None)
             if not executable:
-                raise self.error('Установи Google Chrome в папку Applications.', 'Install Google Chrome in Applications.')
+                raise self.error('Установи Chrome for Testing по инструкции в настройках браузера.',
+                                 'Install Chrome for Testing using the browser settings instructions.')
+            verify_chrome(chrome_app())
             with socket.socket() as reservation:
                 reservation.bind(('127.0.0.1', 0))
                 port = reservation.getsockname()[1]

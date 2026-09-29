@@ -6,14 +6,80 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import platform
+import plistlib
 import shutil
 import subprocess
 import tarfile
 import tempfile
 import urllib.request
+import zipfile
 
 ROOT = Path.home() / 'Library/Application Support/Context Desk/browser'
 LOCK = json.loads(Path(__file__).with_name('runtime.lock.json').read_text())
+
+
+def chrome_platform():
+    value = {'arm64': 'mac-arm64', 'x86_64': 'mac-x64'}.get(platform.machine())
+    if platform.system() != 'Darwin' or value is None:
+        raise ValueError('Нужен macOS ARM64 или x64 / macOS ARM64 or x64 is required')
+    return value
+
+
+def chrome_app():
+    # The executable is shared by isolated fixture profiles; user data is not.
+    return (ROOT / 'chrome-for-testing' / LOCK['chromeForTesting']['version'] /
+            ('chrome-' + chrome_platform()) / 'Google Chrome for Testing.app')
+
+
+def verify_chrome(app):
+    with (app / 'Contents/Info.plist').open('rb') as stream:
+        info = plistlib.load(stream)
+    if (info.get('CFBundleIdentifier') != 'com.google.chrome.for.testing' or
+            info.get('CFBundleShortVersionString') != LOCK['chromeForTesting']['version']):
+        raise ValueError('Неверная версия Chrome for Testing / Unexpected Chrome for Testing version')
+    if not os.access(app / 'Contents/MacOS/Google Chrome for Testing', os.X_OK):
+        raise ValueError('Chrome for Testing не запускается / Chrome for Testing is not executable')
+
+
+def install_chrome():
+    app = chrome_app()
+    destination = app.parent.parent
+    if destination.exists():
+        verify_chrome(app)
+        return
+    destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    release = LOCK['chromeForTesting']
+    arch = chrome_platform()
+    url = ('https://storage.googleapis.com/chrome-for-testing-public/' +
+           release['version'] + '/' + arch + '/chrome-' + arch + '.zip')
+    with tempfile.TemporaryDirectory(dir=destination.parent) as temporary:
+        staging = Path(temporary)
+        archive = staging / 'chrome.zip'
+        digest = hashlib.sha256()
+        with urllib.request.urlopen(url, timeout=60) as response, archive.open('wb') as output:
+            total = 0
+            while True:
+                chunk = response.read(1024 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > 400 * 1024 * 1024:
+                    raise ValueError('Архив слишком большой / Archive is too large')
+                digest.update(chunk)
+                output.write(chunk)
+        if digest.hexdigest() != release['sha256'][arch]:
+            raise ValueError('Контрольная сумма Chrome не совпала / Chrome checksum mismatch')
+        # Only the exact pinned archive reaches ditto (which preserves
+        # bundle symlinks and executable modes). Never extract arbitrary input.
+        with zipfile.ZipFile(archive) as zipped:
+            if any(Path(name).is_absolute() or '..' in Path(name).parts for name in zipped.namelist()):
+                raise ValueError('Недопустимый путь в архиве / Unsafe archive path')
+        extracted = staging / 'release'
+        subprocess.run(['/usr/bin/ditto', '-x', '-k', str(archive), str(extracted)], check=True)
+        verify_chrome(extracted / app.relative_to(destination))
+        extracted.rename(destination)
+    print('Chrome for Testing ' + release['version'] + ': ' + str(app))
 
 
 def verify(root):
@@ -66,6 +132,7 @@ def install(destination, node):
             verify(staging)
             staging.rename(runtime)
     verify(runtime)
+    install_chrome()
     config = destination / 'runtime.json'
     temporary = destination / 'runtime.json.tmp'
     temporary.write_text(json.dumps({'version': LOCK['version'], 'node': str(node)}, indent=2) + '\n')
