@@ -140,6 +140,43 @@ private let remoteTestDevice = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
     #expect(client.state == .connected && !sockets[1].closed)
 }
 
+@Test @MainActor func realtimeWiFiCellularHandoffReconcilesWithoutCommandReplay() async throws {
+    var sockets: [ScriptedRemoteSocket] = []; var reads = 0
+    let client = RemoteRealtime(role: "phone", device: "phone", credentials: { credentials() }, ready: { reads += 1 },
+        factory: { _ in let socket = ScriptedRemoteSocket(); sockets.append(socket); return socket }, monitorNetwork: false)
+    client.start(); defer { client.stop() }
+    client.networkChanged(available: true, route: "wifi:en0")
+    try await eventually { client.state == .connected }
+    try sockets[0].push(event: "presence_state", payload: ["mac":["metas":[["role":"mac","device":remoteTestDevice,"phx_ref":"one"]]]])
+    try await eventually { !client.presence.macs.isEmpty }
+    client.networkChanged(available: true, route: "cellular:pdp_ip0")
+    #expect(sockets[0].closed && client.presence.macs.isEmpty)
+    try await eventually { reads == 2 && client.state == .connected }
+    client.networkChanged(available: true, route: "cellular:pdp_ip0")
+    try await Task.sleep(for: .milliseconds(30))
+    #expect(sockets.count == 2 && !sockets[1].closed)
+    client.networkChanged(available: true, route: "wifi:en0")
+    try await eventually { reads == 3 && client.state == .connected }
+    #expect(sockets.flatMap(\.sent).allSatisfy { ["phx_join", "presence"].contains($0["event"] as? String ?? "") })
+    client.stop()
+    client.networkChanged(available: true, route: "cellular:pdp_ip0")
+    #expect(client.state == .stopped && sockets.count == 3)
+}
+
+@Test @MainActor func realtimeNetworkReturnWakesBackoff() async throws {
+    var sockets: [ScriptedRemoteSocket] = []; var reads = 0
+    let client = RemoteRealtime(role: "phone", device: "phone", credentials: { credentials() }, ready: { reads += 1 },
+        factory: { _ in let socket = ScriptedRemoteSocket(); sockets.append(socket); return socket }, monitorNetwork: false)
+    client.start(); defer { client.stop() }
+    client.networkChanged(available: true, route: "wifi:en0")
+    try await eventually { client.state == .connected }
+    client.networkChanged(available: false, route: "")
+    try await Task.sleep(for: .milliseconds(30))
+    #expect(client.state == .offline && sockets.count == 1)
+    client.networkChanged(available: true, route: "cellular:pdp_ip0")
+    try await eventually { reads == 2 && client.state == .connected }
+}
+
 @Test @MainActor func realtimeAuthenticationFailureStopsInsteadOfRetrying() async throws {
     var attempts = 0
     let client = RemoteRealtime(role: "phone", device: "phone", credentials: {

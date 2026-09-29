@@ -147,6 +147,8 @@ public struct RemotePresence: Equatable, Sendable {
     private var socket: (any RemoteSocket)?
     private var monitor: NWPathMonitor?
     private var online = true
+    private var networkRoute: String?
+    private var networkRevision = 0
     private var generation = UUID()
     private var ref = 0
     private var heartbeatRef: String?
@@ -182,23 +184,33 @@ public struct RemotePresence: Equatable, Sendable {
         guard worker == nil else { return }
         let ticket = UUID(); generation = ticket
         online = !monitorNetwork
+        networkRoute = nil
         if monitorNetwork {
             let monitor = NWPathMonitor(); self.monitor = monitor
             monitor.pathUpdateHandler = { [weak self] path in
                 let available = path.status == .satisfied
+                let route = path.availableInterfaces.filter { path.usesInterfaceType($0.type) }
+                    .map { "\($0.type):\($0.name)" }.sorted().joined(separator: ",")
                 Task { @MainActor in
                     guard let self, self.generation == ticket else { return }
-                    let changed = self.online != available
-                    self.online = available
-                    if changed {
-                        self.socket?.close(); self.retrySleep?.cancel()
-                        if !available { self.setState(.offline) }
-                    }
+                    self.networkChanged(available: available, route: route)
                 }
             }
             monitor.start(queue: DispatchQueue(label: "ContextDesk.remote.network"))
         }
         worker = Task { [weak self] in await self?.run(ticket: ticket) }
+    }
+    /// A satisfied path can change from Wi-Fi to cellular without becoming offline.
+    /// Only the transport is replaced; durable commands are never resubmitted here.
+    func networkChanged(available: Bool, route: String) {
+        guard worker != nil else { return }
+        let changed = online != available || (networkRoute != nil && networkRoute != route)
+        online = available; networkRoute = route
+        guard changed else { return }
+        networkRevision += 1
+        socket?.close(); retrySleep?.cancel()
+        peers = [:]; updatePresence()
+        setState(available ? .retrying : .offline)
     }
     public func stop() {
         generation = UUID(); worker?.cancel(); worker = nil; retrySleep?.cancel(); retrySleep = nil
@@ -214,12 +226,14 @@ public struct RemotePresence: Equatable, Sendable {
         var attempt = 0
         defer { if generation == ticket { worker = nil; monitor?.cancel(); monitor = nil } }
         while generation == ticket, !Task.isCancelled {
+            let revision = networkRevision
             do {
                 guard online else { throw URLError(.notConnectedToInternet) }
                 setState(.connecting)
                 let auth = try await credentials()
                 try Task.checkCancellation()
                 guard generation == ticket else { return }
+                guard revision == networkRevision, online else { continue }
                 let connection = factory(auth.url); socket = connection
                 let began = ContinuousClock.now
                 do { try await connected(connection, auth: auth, ticket: ticket) }
@@ -233,6 +247,7 @@ public struct RemotePresence: Equatable, Sendable {
                 let cause = injectedError ?? error; injectedError = nil
                 if let terminal = Self.terminalState(for: cause) { setState(terminal); onError(cause); return }
                 setState(online ? .retrying : .offline)
+                if online, revision != networkRevision { attempt = 0; continue }
                 onError(cause)
                 let delay = Self.retryDelay(attempt: attempt); attempt = min(attempt + 1, 6)
                 let sleep = Task { try await Task.sleep(for: .seconds(delay)) }; retrySleep = sleep
