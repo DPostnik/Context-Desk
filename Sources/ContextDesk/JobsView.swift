@@ -160,7 +160,7 @@ struct JobsView: View {
                                 Text((try? routine.prompt()) ?? L10n.text("Сохранённая рутина недоступна", "Saved routine unavailable")).font(.caption).textSelection(.enabled)
                             }
                         }
-                        if run.status == .uncertain { Text(L10n.text("Проверь результат перед новым запуском. Автоматического повтора не было; расписание приостановлено.", "Check the outcome before running again. No automatic retry was made; the schedule is paused.")).font(.caption).foregroundStyle(.orange) }
+                        if run.status == .uncertain { Text(L10n.text("Результат этого запуска не подтверждён. Автоматического повтора не было; настройки расписания не изменились. Перед ручным повтором проверь результат.", "This run's outcome is unconfirmed. No automatic retry was made; schedule settings are unchanged. Check the outcome before retrying manually.")).font(.caption).foregroundStyle(.orange) }
                     }
                 }
             }.padding(24).frame(maxWidth: .infinity, alignment: .leading)

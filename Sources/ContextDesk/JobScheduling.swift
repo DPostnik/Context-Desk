@@ -24,9 +24,9 @@ import ContextCore
             }
         }
     }
-    func tickJobs(now: Date = Date()) async {
+    func tickJobs(now: Date = Date(), controlDirectory: URL = Locations.root.appendingPathComponent("schedule-control")) async {
         guard schedulerReady, !schedulerStopping else { return }
-        await processScheduleControl()
+        await processScheduleControl(directory: controlDirectory)
         guard schedulerReady, !schedulerStopping else { return }
         for job in jobLedger.jobs where job.enabled && job.nextRun.map({ $0 <= now }) == true {
             // Offline Codex work remains due; no network call has been made and no run is claimed.

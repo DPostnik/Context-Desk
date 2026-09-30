@@ -159,7 +159,8 @@ public actor JobStore {
             guard value.version == 1 else { throw JobSchedule.invalid }
             for index in value.runs.indices where value.runs[index].status.active {
                 value.runs[index].status = .uncertain; value.runs[index].finished = Date()
-                if let job = value.jobs.firstIndex(where: { $0.id == value.runs[index].jobID }) { value.jobs[job].enabled = false }
+                // The occurrence was consumed before dispatch. Keep the user's schedule
+                // and its next occurrence; recovering this run must not replay it.
             }
             try commit(value)
             return value
@@ -224,7 +225,7 @@ public actor JobStore {
         var value = try load()
         if let i = value.runs.firstIndex(where: { $0.id == id && $0.status.active }) {
             value.runs[i].status = status; value.runs[i].output = output; value.runs[i].finished = Date()
-            if status != .completed, let j = value.jobs.firstIndex(where: { $0.id == value.runs[i].jobID }) { value.jobs[j].enabled = false }
+            // A run's outcome does not change the user's recurring schedule.
         }
         try commit(value); return value
     }

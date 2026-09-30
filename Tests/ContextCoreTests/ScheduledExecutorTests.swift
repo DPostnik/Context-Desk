@@ -107,7 +107,7 @@ private func makeRequest(_ runner: any AgentScheduledExecutor, root: URL) async 
     await model.launchJob(job.id)
     for task in Array(model.jobTasks.values) { await task.value }
     #expect(model.jobLedger.runs.first?.status == .blocked)
-    #expect(model.jobLedger.jobs.first?.enabled == false)
+    #expect(model.jobLedger.jobs.first?.enabled == true)
     #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("sent").path))
     await model.stopScheduler()
 }
@@ -155,6 +155,7 @@ private func makeRequest(_ runner: any AgentScheduledExecutor, root: URL) async 
     var job = ManagedJob(); job.name = "test"; job.prompt = "test"; job.engine = engine; job.projectID = project.id
     job.acceptsExternalPolicy = true; job.enabled = true
     #expect(await model.saveJob(job))
+    let next = try #require(model.jobLedger.jobs.first?.nextRun)
     await model.launchJob(job.id)
     for task in Array(model.jobTasks.values) { await task.value }
     if engine == .codex {
@@ -176,8 +177,9 @@ private func makeRequest(_ runner: any AgentScheduledExecutor, root: URL) async 
     await model.launchJob(job.id)
     for task in Array(model.jobTasks.values) { await task.value }
     #expect(model.jobLedger.runs.first?.status == .uncertain)
-    #expect(model.jobLedger.jobs.first?.enabled == false)
-    await model.tickJobs(now: Date().addingTimeInterval(864000))
+    #expect(model.jobLedger.jobs.first?.enabled == true)
+    #expect(model.jobLedger.jobs.first?.nextRun == next)
+    await model.tickJobs(now: next.addingTimeInterval(-1), controlDirectory: root.appendingPathComponent("schedule-control"))
     #expect(model.jobLedger.runs.count == 2)
     try FileManager.default.removeItem(at: root.appendingPathComponent("malformed"))
     try? FileManager.default.removeItem(at: root.appendingPathComponent("sent"))
@@ -205,6 +207,8 @@ private func makeRequest(_ runner: any AgentScheduledExecutor, root: URL) async 
         for task in Array(model.jobTasks.values) { await task.value }
     }
     #expect(model.jobLedger.runs.first?.status == (engine == .codex ? .interrupted : .uncertain))
+    #expect(model.jobLedger.jobs.first?.enabled == true)
+    #expect(model.jobLedger.jobs.first?.nextRun == next)
     #expect(model.jobExecutors.isEmpty)
     await model.stopScheduler(); await transport.stop()
 }

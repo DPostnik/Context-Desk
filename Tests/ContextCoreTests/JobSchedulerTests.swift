@@ -47,9 +47,10 @@ private func jobFixture() -> ManagedJob {
     let restored = try await JobStore(file: file).load()
     #expect(restored.runs.first?.status == .uncertain)
     #expect(restored.runs.first?.threadID == "test-thread")
-    #expect(restored.jobs.first?.enabled == false)
+    #expect(restored.jobs.first?.enabled == true)
+    #expect(restored.jobs.first?.nextRun == now.addingTimeInterval(90000))
 }
-@Test func schedulerOwnershipOneShotManualAndFailurePause() async throws {
+@Test func schedulerOwnershipOneShotAndManualFailure() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let file = root.appendingPathComponent("jobs.json"), store = JobStore(file: root.appendingPathComponent("jobs.json"))
@@ -70,8 +71,90 @@ private func jobFixture() -> ManagedJob {
     let manual = try #require(await store.claim(imported.id, manual: true, now: now))
     #expect(try await store.load().jobs.first { $0.id == imported.id }?.nextRun != nil)
     _ = try await store.finish(manual.1.id, status: .failed)
-    #expect(try await store.load().jobs.first { $0.id == imported.id }?.enabled == false)
+    #expect(try await store.load().jobs.first { $0.id == imported.id }?.enabled == true)
     await store.release()
+}
+
+@Test(arguments: [JobRunStatus.completed, .failed, .interrupted, .uncertain, .blocked], [false, true])
+func schedulerRunOutcomesPreserveRecurringSchedule(status: JobRunStatus, manual: Bool) async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let file = root.appendingPathComponent("jobs.json"), store = JobStore(file: file)
+    var job = jobFixture()
+    job.schedule = JobSchedule(rule: "FREQ=DAILY;BYHOUR=10;BYMINUTE=15", timeZone: "Europe/Warsaw")
+    let due = instant("2026-09-29T08:15:00Z")
+    _ = try await store.save(job, now: due.addingTimeInterval(-60))
+    let (_, run) = try #require(await store.claim(job.id, manual: manual, now: due.addingTimeInterval(manual ? -30 : 0)))
+    let scheduled = try #require(await store.load().jobs.first)
+    let next = try #require(scheduled.nextRun)
+    #expect(next == (manual ? due : instant("2026-09-30T08:15:00Z")))
+    let finished = try await store.finish(run.id, status: status, output: "Recorded result")
+    #expect(finished.jobs.first == scheduled)
+    #expect(finished.runs.first?.status == status)
+    #expect(finished.runs.first?.output == "Recorded result")
+    #expect(finished.runs.first?.finished != nil)
+    await store.release()
+    let reopened = JobStore(file: file)
+    #expect(try await reopened.load().jobs.first == scheduled)
+    #expect(try await reopened.claim(job.id, manual: false, now: next.addingTimeInterval(-1)) == nil)
+    let (_, subsequent) = try #require(await reopened.claim(job.id, manual: false, now: next))
+    #expect(subsequent.id != run.id)
+    #expect(try await reopened.claim(job.id, manual: false, now: next) == nil)
+    #expect(try await reopened.load().runs.first { $0.id == run.id }?.status == status)
+    await reopened.release()
+}
+
+@Test(arguments: [JobRunStatus.starting, .running])
+func schedulerRecoveryPreservesNextOccurrenceWithoutReplaying(activeStatus: JobRunStatus) async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let file = root.appendingPathComponent("jobs.json"), store = JobStore(file: file)
+    let job = jobFixture(), now = instant("2026-09-29T08:00:00Z")
+    _ = try await store.save(job, now: now)
+    let due = now.addingTimeInterval(3600)
+    let (_, run) = try #require(await store.claim(job.id, manual: false, now: due))
+    if activeStatus == .running { _ = try await store.attach(run.id, thread: "recovered-thread", turn: "recovered-turn") }
+    let scheduled = try #require(await store.load().jobs.first)
+    let next = try #require(scheduled.nextRun)
+    await store.release()
+    let reopened = JobStore(file: file)
+    let recovered = try await reopened.load()
+    #expect(recovered.jobs.first == scheduled)
+    #expect(recovered.runs.count == 1)
+    #expect(recovered.runs.first?.id == run.id)
+    #expect(recovered.runs.first?.status == .uncertain)
+    #expect(recovered.runs.first?.finished != nil)
+    // Delayed completion cannot replace the uncertain receipt or change the schedule.
+    #expect(try await reopened.finish(run.id, status: .failed).jobs.first == scheduled)
+    #expect(try await reopened.claim(job.id, manual: false, now: due) == nil)
+    await reopened.release()
+    #expect(try await reopened.load().runs.first?.finished == recovered.runs.first?.finished)
+    let (_, subsequent) = try #require(await reopened.claim(job.id, manual: false, now: next))
+    #expect(subsequent.id != run.id)
+    #expect(try await reopened.load().runs.first { $0.id == run.id }?.status == .uncertain)
+    await reopened.release()
+}
+
+@Test func schedulerExplicitPauseSurvivesManualFailureAndRecovery() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let file = root.appendingPathComponent("jobs.json"), store = JobStore(file: file)
+    let now = instant("2026-09-29T08:00:00Z")
+    var job = jobFixture()
+    _ = try await store.save(job, now: now)
+    job.enabled = false
+    let paused = try #require(await store.save(job, now: now).jobs.first)
+    #expect(paused.nextRun == nil)
+    let (_, manual) = try #require(await store.claim(job.id, manual: true, now: now))
+    #expect(try await store.finish(manual.id, status: .failed).jobs.first == paused)
+    let (_, unfinished) = try #require(await store.claim(job.id, manual: true, now: now))
+    await store.release()
+    let reopened = JobStore(file: file)
+    let recovered = try await reopened.load()
+    #expect(recovered.jobs.first == paused)
+    #expect(recovered.runs.first { $0.id == unfinished.id }?.status == .uncertain)
+    #expect(try await reopened.claim(job.id, manual: false, now: now.addingTimeInterval(86400)) == nil)
+    await reopened.release()
 }
 @Test func schedulerPersistenceFailureCannotClaim() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -189,7 +272,7 @@ private func jobFixture() -> ManagedJob {
     await store.release()
 }
 
-@Test @MainActor func scheduledCodexUnconfirmedSendPausesWithoutRetry() async throws {
+@Test @MainActor func scheduledCodexUnconfirmedSendKeepsScheduleWithoutRetry() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -202,7 +285,7 @@ private func jobFixture() -> ManagedJob {
         m=json.loads(line)
         if 'id' not in m: continue
         method=m['method']; result={'userAgent':'codex/0.158.0-alpha.2.1 fixture'}
-        if method=='thread/start': result={'thread':{'id':'uncertain-thread'}}
+        if method=='thread/start': result={'thread':{'id':'uncertain-thread-'+str(starts)}}
         if method=='turn/start':
             starts+=1
             # A malformed acknowledgement leaves delivery unconfirmed.
@@ -217,12 +300,24 @@ private func jobFixture() -> ManagedJob {
     let project = Project(path: root.path); model.state.projects = [project]; model.connected = true; model.authenticated = true; model.schedulerReady = true
     var job = jobFixture(); job.projectID = project.id
     #expect(await model.saveJob(job))
-    await model.launchJob(job.id)
+    let control = root.appendingPathComponent("schedule-control")
+    let due = try #require(model.jobLedger.jobs.first?.nextRun)
+    await model.tickJobs(now: due, controlDirectory: control)
     for task in Array(model.jobTasks.values) { await task.value }
     #expect(model.jobLedger.runs.first?.status == .uncertain)
-    #expect(model.jobLedger.jobs.first?.enabled == false)
-    await model.tickJobs(now: Date().addingTimeInterval(86400))
+    #expect(model.jobLedger.jobs.first?.enabled == true)
+    let first = try #require(model.jobLedger.runs.first?.id)
+    let next = try #require(model.jobLedger.jobs.first?.nextRun)
+    #expect(next == due.addingTimeInterval(3600))
+    await model.tickJobs(now: due, controlDirectory: control)
+    await model.tickJobs(now: next.addingTimeInterval(-1), controlDirectory: control)
     #expect(try await connection.request("test/count")["starts"].int == 1)
+    await model.tickJobs(now: next, controlDirectory: control)
+    for task in Array(model.jobTasks.values) { await task.value }
+    #expect(try await connection.request("test/count")["starts"].int == 2)
+    #expect(model.jobLedger.runs.count == 2)
+    #expect(model.jobLedger.runs.first?.id != first)
+    #expect(model.jobLedger.runs.first { $0.id == first }?.status == .uncertain)
     await model.stopScheduler(); await connection.stop()
 }
 
