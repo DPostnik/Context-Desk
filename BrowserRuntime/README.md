@@ -139,3 +139,27 @@ This does not change scheduled jobs or establish model-token savings.
 Development: `python3 -B BrowserRuntime/workflow_smoke.py` compares generic and
 static traversal against an isolated two-page local fixture. See
 `BrowserRuntime/WORKFLOW_PLAN.md` in the repository for staged rollout and measurement limits.
+
+## Multiple MCP clients / Несколько MCP-клиентов
+
+English: every chat and subagent can initialize and list tools while the browser
+is busy. `browser_open` acquires the exclusive executor lease for that client's
+session. Other clients receive a busy result before dispatch; they are not queued
+or retried automatically. Confirmed close or client disconnect stops the owned
+upstream transport before releasing the lease. Disconnect leaves Chrome and tabs
+intact; another client creates a fresh tab/token and never adopts the old one.
+Unknown outcomes retain their durable action IDs and are never replayed. An old
+running adapter can keep its lifetime lock until it disconnects; catalogs remain
+available in new adapters. Quit Context Desk with Cmd+Q and reopen the rebuilt
+app after active work finishes to replace all old adapters.
+
+Русский: каждый чат и subagent получает каталог инструментов, даже когда браузер
+занят. `browser_open` получает исключительную блокировку на время своей сессии.
+Остальные клиенты получают ответ о занятости до отправки действия; автоматической
+очереди и повторов нет. Подтверждённое закрытие или отключение клиента останавливает
+его дочерний транспорт перед освобождением блокировки. При отключении Chrome и
+вкладки сохраняются; другой клиент создаёт новую вкладку и session, не присваивая
+старую. ID действий с неизвестным исходом сохраняются, действия не повторяются.
+Старый адаптер может держать блокировку до отключения, но новые адаптеры уже
+получают каталог. После завершения активных задач выйди из Context Desk через
+Cmd+Q и открой собранное приложение, чтобы заменить все старые адаптеры.

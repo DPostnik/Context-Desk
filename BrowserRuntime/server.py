@@ -359,6 +359,75 @@ class Browser:
             self.transport.close()
 
 
+class LeasedBrowser(Browser):
+    """One session owns the shared executor; idle MCP clients own no lease.
+
+    Keep the lease through uncertain failures. Release only after the owned
+    upstream transport has stopped; never close/adopt an abandoned tab on behalf
+    of another client. The main dispatch thread alone releases the lease.
+    """
+    def __init__(self, root, **kwargs):
+        super().__init__(root, **kwargs)
+        self.lease = None
+        self.cleanup_lock = threading.RLock()
+
+    def stop(self):
+        self.stopped.set()
+        with self.cleanup_lock:
+            super().stop()
+
+    def acquire(self):
+        if self.lease is not None:
+            return
+        require(not self.failed and not self.stopped.is_set(), 'executor_stopped_outcome_may_be_unknown')
+        lock = (self.root / 'executor.lock').open('a')
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            lock.close()
+            raise Rejected(tr(
+                'Браузер занят другой сессией. Действие не отправлено. Дождись её закрытия или отключения.',
+                'The browser is owned by another session. No action was sent. Wait for it to close or disconnect.'))
+        except BaseException:
+            lock.close()
+            raise
+        self.lease = lock
+
+    def release(self):
+        # Closing the owned child is a prerequisite for handing off Chrome.
+        # On cleanup failure retain the lease until process exit (fail closed).
+        with self.cleanup_lock:
+            if self.transport:
+                self.transport.close()
+                self.transport = None
+            self.chrome = None
+            if self.lease is not None:
+                self.lease.close()
+                self.lease = None
+
+    def open(self, url):
+        web_url(url)
+        self.acquire()
+        try:
+            return super().open(url)
+        except Exception:
+            if not self.failed and self.session is None:
+                self.release()
+            raise
+
+    def close_session(self, token):
+        result = super().close_session(token)
+        self.release()
+        return result
+
+    def disconnect(self):
+        self.stop()
+        if self.session:
+            self.checkpoint.update(state='disconnected', outcomeUnknown=self.failed)
+            self.persist()
+        self.release()
+
+
 def catalog():
     string = {'type': 'string'}
     token = {'session': string}
@@ -414,9 +483,7 @@ def main():
     LANGUAGE = args.language
     os.umask(0o077)
     args.root.mkdir(parents=True, exist_ok=True, mode=0o700)
-    lock = (args.root / 'executor.lock').open('a')
-    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    browser = Browser(args.root)
+    browser = LeasedBrowser(args.root)
     inbox = queue.Queue(maxsize=32)
     stopped = threading.Event()
     initialized = False
@@ -508,7 +575,7 @@ def main():
                 sys.stdout.flush()
     finally:
         halt()
-        lock.close()
+        browser.disconnect()
 
 
 if __name__ == '__main__':
