@@ -200,6 +200,25 @@ iOS app icon. Connection age, approvals and the latest command state remain visi
 The simulator-only `-mobile-preview` and `-preview-chat` launch arguments use
 synthetic content without cloud access for visual checks.
 
+### Project chat disclosure (2026-09-30)
+
+Each project initially shows five chats in the host's existing order (pending
+approvals first, then most recently updated). Show more adds five rows at a time;
+Show fewer returns to five. Disclosure is independent for each project/device
+and stays in place during live snapshot updates and navigation. Search covers
+all synchronized chats, including hidden rows, without changing disclosure state.
+The section shows its chat count and warns when hidden chats need an approval.
+Labels are available in Russian and English.
+
+Navigation uses chat identifiers to open the current model on demand. Row equality
+compares only displayed title, preview and activity/approval status, so unrelated
+snapshot changes do not require rebuilding unchanged row bodies. This is a UI
+change, not network pagination: the existing cap remains 20 chats total per Mac,
+with one shared Realtime connection. Hidden chats continue to synchronize; a
+100-chat mobile feed and bandwidth/CPU improvements have not been measured or
+implemented. Simulator-only `-preview-project-list` supplies two larger project
+lists and an empty project for disclosure/search checks without cloud access.
+
 Mobile push notifications are requested but not delivered. Current Personal Team
 signing has no APNs entitlement. Apple Developer Program signing, APNs registration
 and a server sender must be configured before testing locked-device delivery.

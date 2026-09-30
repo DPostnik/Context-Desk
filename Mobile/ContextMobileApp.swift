@@ -255,19 +255,8 @@ struct MobileRoot: View {
                                 ConnectionStatus(model: model, device: device)
                             }
                             ForEach(device.snapshot.projects) { project in
-                                let chats = device.snapshot.chats.filter {
-                                    $0.project == project.id && (search.isEmpty || $0.title.localizedCaseInsensitiveContains(search))
-                                }
-                                if !chats.isEmpty || search.isEmpty {
-                                    Section(project.name) {
-                                        ForEach(chats) { chat in
-                                            NavigationLink {
-                                                MobileChatView(model: model, deviceID: device.id, chatID: chat.id)
-                                            } label: { ChatRow(chat: chat) }
-                                        }
-                                        if chats.isEmpty { Text(L10n.text("Пока нет чатов", "No chats yet")).foregroundStyle(.secondary) }
-                                    }
-                                }
+                                MobileProjectSection(project: project, deviceID: device.id,
+                                    chats: device.snapshot.chats.filter { $0.project == project.id }, search: search)
                             }
                         }
                     }
@@ -327,6 +316,9 @@ struct MobileRoot: View {
             .navigationDestination(item: $destination) { target in
                 MobileChatView(model: model, deviceID: target.device, chatID: target.chat)
             }
+            .navigationDestination(for: MobileChatDestination.self) { target in
+                MobileChatView(model: model, deviceID: target.device, chatID: target.chat)
+            }
             #if targetEnvironment(simulator)
             .navigationDestination(isPresented: .constant(ProcessInfo.processInfo.arguments.contains("-preview-chat") && model.signedIn)) {
                 if let device = model.devices.first, let chat = device.snapshot.chats.first {
@@ -339,6 +331,65 @@ struct MobileRoot: View {
 }
 
 struct MobileChatDestination: Hashable { let device: String; let chat: String }
+
+/// Disclosure only changes presentation. The shared snapshot and live updates stay intact.
+struct MobileProjectSection: View {
+    let project: RemoteProject
+    let deviceID: String
+    let chats: [RemoteChat]
+    let search: String
+    @State private var visibleCount = 5
+    private let pageSize = 5
+
+    var body: some View {
+        let matches = search.isEmpty ? chats : chats.filter { $0.title.localizedCaseInsensitiveContains(search) }
+        let limit = search.isEmpty ? visibleCount : matches.count
+        let remaining = max(0, matches.count - limit)
+        let hiddenApprovals = matches.dropFirst(limit).filter { !$0.approvals.isEmpty }.count
+        if !matches.isEmpty || search.isEmpty {
+            Section {
+                ForEach(matches.prefix(limit)) { chat in
+                    NavigationLink(value: MobileChatDestination(device: deviceID, chat: chat.id)) {
+                        ChatRow(chat: chat).equatable()
+                    }.accessibilityIdentifier("chat-row-" + chat.id)
+                }
+                if matches.isEmpty { Text(L10n.text("Пока нет чатов", "No chats yet")).foregroundStyle(.secondary) }
+                if remaining > 0 {
+                    Button {
+                        visibleCount += pageSize
+                    } label: {
+                        HStack {
+                            Label(L10n.text("Показать ещё", "Show more"), systemImage: "chevron.down")
+                            Spacer()
+                            Text(L10n.text("Осталось: \(remaining)", "Remaining: \(remaining)"))
+                                .foregroundStyle(.secondary)
+                        }
+                    }.accessibilityIdentifier("more-chats-" + project.id)
+                }
+                if search.isEmpty && visibleCount > pageSize && chats.count > pageSize {
+                    Button {
+                        visibleCount = pageSize
+                    } label: {
+                        Label(L10n.text("Свернуть", "Show fewer"), systemImage: "chevron.up")
+                    }.accessibilityIdentifier("fewer-chats-" + project.id)
+                }
+            } header: {
+                HStack {
+                    Text(project.name)
+                    Spacer()
+                    Text(matches.count.formatted())
+                }
+            } footer: {
+                if hiddenApprovals > 0 {
+                    Label(L10n.text("Скрытые чаты ждут ответа: \(hiddenApprovals)", "Hidden chats needing your attention: \(hiddenApprovals)"),
+                          systemImage: "hand.raised")
+                        .foregroundStyle(.orange)
+                        .accessibilityIdentifier("hidden-approvals-" + project.id)
+                }
+            }
+        }
+    }
+}
 
 struct MobileNewChatView: View {
     @ObservedObject var model: MobileModel
@@ -396,21 +447,28 @@ struct MobileNewChatView: View {
     }
 }
 
-struct ChatRow: View {
-    let chat: RemoteChat
+struct ChatRow: View, Equatable {
+    let title: String
+    let preview: String?
+    let running: Bool
+    let needsApproval: Bool
+    init(chat: RemoteChat) {
+        title = chat.title; preview = chat.messages.last?.text
+        running = chat.running; needsApproval = !chat.approvals.isEmpty
+    }
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: chat.approvals.isEmpty ? "bubble.left.and.bubble.right" : "hand.raised")
-                .font(.title3).foregroundStyle(chat.approvals.isEmpty ? Color.accentColor : .orange)
+            Image(systemName: needsApproval ? "hand.raised" : "bubble.left.and.bubble.right")
+                .font(.title3).foregroundStyle(needsApproval ? .orange : Color.accentColor)
                 .frame(width: 40, height: 40).background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
             VStack(alignment: .leading, spacing: 6) {
-                Text(chat.title).font(.headline).lineLimit(2)
-                Text(chat.messages.last?.text ?? L10n.text("Пока нет сообщений", "No messages yet"))
+                Text(title).font(.headline).lineLimit(2)
+                Text(preview ?? L10n.text("Пока нет сообщений", "No messages yet"))
                     .font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
-                if chat.running || !chat.approvals.isEmpty {
-                    Label(chat.approvals.isEmpty ? L10n.text("Работает", "Working") : L10n.text("Нужен ответ", "Needs your attention"),
-                          systemImage: chat.approvals.isEmpty ? "circle.dotted" : "exclamationmark.circle")
-                        .font(.caption.weight(.medium)).foregroundStyle(chat.approvals.isEmpty ? Color.accentColor : .orange)
+                if running || needsApproval {
+                    Label(needsApproval ? L10n.text("Нужен ответ", "Needs your attention") : L10n.text("Работает", "Working"),
+                          systemImage: needsApproval ? "exclamationmark.circle" : "circle.dotted")
+                        .font(.caption.weight(.medium)).foregroundStyle(needsApproval ? .orange : Color.accentColor)
                 }
             }
         }.padding(.vertical, 7)
@@ -889,7 +947,20 @@ extension MobileModel {
                 storage: RemoteSessionStorage(read: { _ in Data(#"{"access_token":"fixture","refresh_token":"fixture","expires_at":4102444800,"user":{"id":"dddddddd-dddd-dddd-dddd-dddddddddddd"}}"#.utf8) }, write: { _, _ in }))
         }
         chat.settings = RemoteChatSettings(options: RemoteChatOptions(model: "fixture-a"), projectAccess: .standard, canEdit: chat.approvals.isEmpty)
-        devices = [RemoteDevice(id: "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee", owner: "dddddddd-dddd-dddd-dddd-dddddddddddd", snapshot: RemoteSnapshot(projects: projects, chats: [chat]))]
+        var chats = [chat]
+        if ProcessInfo.processInfo.arguments.contains("-preview-project-list") {
+            var second = project; second.id = "second-project"; second.name = "Second project"
+            var empty = project; empty.id = "empty-project"; empty.name = "Empty project"
+            projects = [project, second, empty]
+            chats = [project, second].flatMap { item in
+                (1...12).map { index in
+                    RemoteChat(id: item.id + "-\(index)", project: item.id, title: "\(item.name) chat \(index)", running: true,
+                        messages: [RemoteMessage(id: "list-message", role: "assistant", text: "Live preview \(index)")],
+                        approvals: index == 12 ? [RemoteApproval(id: "list-approval", details: "Fixture", canAllow: true)] : [])
+                }
+            }
+        }
+        devices = [RemoteDevice(id: "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee", owner: "dddddddd-dddd-dddd-dddd-dddddddddddd", snapshot: RemoteSnapshot(projects: projects, chats: chats))]
         connectionState = ProcessInfo.processInfo.arguments.contains("-preview-offline") ? .offline : .connected
         onlineMacs = Set(devices.map(\.id))
         signedIn = true

@@ -2,6 +2,62 @@ import XCTest
 import UIKit
 
 final class ScrollTests: XCTestCase {
+    @MainActor func testProjectChatDisclosureAndHiddenSearchInBothLanguages() throws {
+        let project = "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"
+        for (language, more, fewer, remaining, attention) in [
+            ("ru", "Показать ещё", "Свернуть", "Осталось: 7", "Скрытые чаты ждут ответа: 1"),
+            ("en", "Show more", "Show fewer", "Remaining: 7", "Hidden chats needing your attention: 1")
+        ] {
+            let app = XCUIApplication()
+            app.launchArguments = ["-mobile-preview", "-preview-project-list", "-interfaceLanguage", language]
+            app.launch()
+            let expand = app.buttons["more-chats-" + project]
+            XCTAssertTrue(expand.waitForExistence(timeout: 10))
+            func reveal(_ element: XCUIElement, up: Bool = true) {
+                for _ in 0..<12 where !element.isHittable {
+                    if up { app.swipeUp() } else { app.swipeDown() }
+                }
+                XCTAssertTrue(element.isHittable)
+            }
+            reveal(expand)
+            XCTAssertTrue(expand.label.contains(more))
+            XCTAssertTrue(expand.label.contains(remaining))
+            XCTAssertFalse(app.buttons["chat-row-" + project + "-6"].exists)
+            XCTAssertEqual(app.staticTexts["hidden-approvals-" + project].label, attention)
+            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            screenshot.name = "Five project chats " + language; screenshot.lifetime = .keepAlways; add(screenshot)
+            expand.tap()
+            XCTAssertTrue(app.buttons["chat-row-" + project + "-6"].waitForExistence(timeout: 5))
+            reveal(expand)
+            XCTAssertFalse(app.buttons["chat-row-" + project + "-11"].exists, "Disclosure adds one page of five")
+            let second = app.buttons["more-chats-second-project"]
+            reveal(second)
+            XCTAssertTrue(second.label.contains(remaining), "Expanding one project must not expand another")
+            XCTAssertFalse(app.buttons["chat-row-second-project-6"].exists)
+            let collapse = app.buttons["fewer-chats-" + project]
+            reveal(collapse, up: false)
+            XCTAssertTrue(collapse.label.contains(fewer))
+            collapse.tap()
+            XCTAssertFalse(app.buttons["chat-row-" + project + "-6"].exists)
+
+            let search = app.searchFields.firstMatch
+            reveal(search, up: false)
+            search.tap(); search.typeText("chat 12")
+            let hidden = app.buttons["chat-row-" + project + "-12"]
+            XCTAssertTrue(hidden.waitForExistence(timeout: 5), "Search includes undisclosed chats")
+            XCTAssertTrue(app.buttons["chat-row-second-project-12"].exists)
+            XCTAssertFalse(expand.exists)
+            hidden.tap()
+            XCTAssertTrue(app.staticTexts["message-text-list-message"].waitForExistence(timeout: 5), "Disclosed/search rows open the live chat")
+            app.navigationBars.buttons.firstMatch.tap()
+            XCTAssertTrue(search.waitForExistence(timeout: 5))
+            search.tap(); search.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 7))
+            XCTAssertTrue(expand.waitForExistence(timeout: 5))
+            XCTAssertTrue(expand.label.contains(remaining), "Clearing search restores the collapsed limit")
+            app.terminate()
+        }
+    }
+
     @MainActor func testChatModelAndAccessChoicesInBothLanguages() throws {
         for (language, full, ask, pending) in [("ru", "Полный доступ", "С подтверждениями", "Настройки ожидают Mac"),
                                               ("en", "Full access", "Ask for approval", "Settings waiting for Mac")] {
