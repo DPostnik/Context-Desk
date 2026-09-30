@@ -34,7 +34,7 @@ Browser data lives in `~/Library/Application Support/Context Desk/browser/`.
 `records/` contains private page checkpoints, action IDs and call/byte/time metrics.
 Records persist until you delete them; they may contain job or other page data.
 No automatic action replay or automatic continuation after reconnect is performed.
-One task owns the work tab at a time. Other tasks must wait for it to close.
+Each task owns its own work tab. The shared executor serializes operations across tasks.
 After Chrome exits, call `browser_open` explicitly to start a new task with the
 same profile. Old session tokens are invalidated; actions are never replayed.
 An uncertain transport failure still requires reconnecting the adapter.
@@ -76,7 +76,7 @@ Chrome остаётся открытым при переподключении �
 вызовов, объёма ответов и времени. Записи хранятся до ручного удаления и могут
 содержать данные вакансий или других страниц. Действия не повторяются автоматически;
 после переподключения задача не продолжается сама. Рабочей вкладкой владеет одна
-задача; остальные ждут её закрытия.
+задача; операции разных задач выполняются последовательно.
 После закрытия Chrome явно вызови `browser_open`, чтобы начать новую задачу
 с тем же профилем. Старые session становятся недействительными; действия
 не повторяются. При неопределённом сбое связи нужно переподключить адаптер.
@@ -142,24 +142,46 @@ static traversal against an isolated two-page local fixture. See
 
 ## Multiple MCP clients / Несколько MCP-клиентов
 
-English: every chat and subagent can initialize and list tools while the browser
-is busy. `browser_open` acquires the exclusive executor lease for that client's
-session. Other clients receive a busy result before dispatch; they are not queued
-or retried automatically. Confirmed close or client disconnect stops the owned
-upstream transport before releasing the lease. Disconnect leaves Chrome and tabs
-intact; another client creates a fresh tab/token and never adopts the old one.
-Unknown outcomes retain their durable action IDs and are never replayed. An old
-running adapter can keep its lifetime lock until it disconnects; catalogs remain
-available in new adapters. Quit Context Desk with Cmd+Q and reopen the rebuilt
-app after active work finishes to replace all old adapters.
+English: each chat/subagent keeps its own session, tab and project workspace. A
+private shared executor serializes complete tool operations, including their
+preconditions and verification. Idle sessions do not block other chats; closing a
+tab is no longer required to let another chat work. Catalogs remain available
+without starting Chrome. Disconnect stops only that client's upstream transport,
+leaves its tab intact and never transfers its token to another client. The
+executor exits after all clients disconnect; Chrome and user tabs are preserved.
 
-Русский: каждый чат и subagent получает каталог инструментов, даже когда браузер
-занят. `browser_open` получает исключительную блокировку на время своей сессии.
-Остальные клиенты получают ответ о занятости до отправки действия; автоматической
-очереди и повторов нет. Подтверждённое закрытие или отключение клиента останавливает
-его дочерний транспорт перед освобождением блокировки. При отключении Chrome и
-вкладки сохраняются; другой клиент создаёт новую вкладку и session, не присваивая
-старую. ID действий с неизвестным исходом сохраняются, действия не повторяются.
-Старый адаптер может держать блокировку до отключения, но новые адаптеры уже
-получают каталог. После завершения активных задач выйди из Context Desk через
-Cmd+Q и открой собранное приложение, чтобы заменить все старые адаптеры.
+A lost response, cancellation during dispatch or executor crash never causes a
+reconnect-and-replay. A durable in-flight fence blocks new browser operations
+when the previous outcome is unknown. Review the result, then close the dedicated
+Chrome; only its confirmed exit allows fresh sessions (reconnect a stopped
+client). Action-ID records remain and still prohibit replay. Queued requests from
+disconnected clients are discarded before dispatch. Permissions and upload roots
+remain separate for each client's project; no union of project access is created.
+
+Русский: каждый чат и subagent сохраняет свою session, вкладку и каталог проекта.
+Общий локальный исполнитель выполняет операции последовательно, вместе с их
+предварительными проверками и подтверждением. Простаивающая сессия больше не
+блокирует другие чаты; закрывать вкладку для передачи браузера не требуется.
+Каталог доступен без запуска Chrome. Отключение останавливает только дочерний
+транспорт своего клиента, сохраняя вкладку; её token не передаётся другому чату.
+Исполнитель завершается после отключения всех клиентов, сохраняя Chrome и вкладки.
+
+Потеря ответа, отмена выполняемой операции или падение исполнителя не приводят к
+переподключению с повтором. Запись незавершённой операции блокирует новые действия,
+если исход неизвестен. Проверь результат и закрой выделенный Chrome; только
+подтверждённое завершение Chrome разрешает новые сессии (остановленному клиенту
+нужно переподключение). Записи actionID сохраняются и запрещают повтор. Запросы
+отключённых клиентов в очереди отбрасываются до отправки. Разрешения и каталоги
+загрузки остаются отдельными для каждого проекта, без объединения доступа.
+
+Activation / Активация: after active tasks finish, quit Context Desk with Cmd+Q
+and reopen the rebuilt app. An old adapter may still hold the legacy lock; it is
+never killed automatically. После завершения активных задач выйди через Cmd+Q и
+открой собранное приложение. Старый адаптер может держать прежнюю блокировку;
+автоматически он не завершается.
+
+Development: `python3 -B BrowserRuntime/multi_client_smoke.py` exercises two real
+MCP front ends and the auto-started executor against isolated local Chrome pages.
+Set `BROWSER_RUNTIME_UNDER_TEST` to the bundled BrowserRuntime directory to test
+built resources. Offline `test_multi_client.py` covers queueing, ownership,
+disconnect/cancellation, protocol identity, crash fences and no replay.

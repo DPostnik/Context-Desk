@@ -38,6 +38,35 @@ class BrowserTests(unittest.TestCase):
     def tearDown(self):
         self.directory.cleanup()
 
+    def test_close_waits_for_inventory_without_replaying_action(self):
+        inventories = iter(['## Pages\n7: https://example.test/', '## Pages\n1: about:blank'])
+        def rpc(name, args):
+            self.calls.append((name, args))
+            return {'content': [{'type': 'text', 'text': next(inventories) if name == 'list_pages' else 'closed'}]}
+        self.browser.injected = rpc
+        self.assertEqual(self.browser.close_session('owner'), {'closed': True})
+        self.assertEqual([n for n, _ in self.calls].count('close_page'), 1)
+        self.assertEqual([n for n, _ in self.calls].count('list_pages'), 2)
+        self.assertIsNone(self.browser.session)
+
+    def test_unconfirmed_close_stops_executor_without_replay(self):
+        def rpc(name, args):
+            self.calls.append((name, args))
+            return {'content': [{'type': 'text', 'text': '## Pages\n7: https://example.test/'}]}
+        self.browser.injected = rpc
+        with self.assertRaisesRegex(Rejected, 'owned_page_close_not_confirmed'):
+            self.browser.close_session('owner', confirmation_timeout=0)
+        self.assertEqual(self.browser.checkpoint['state'], 'close_uncertain')
+        with self.assertRaises(Rejected):
+            self.browser.close_session('owner')
+        self.assertEqual([n for n, _ in self.calls].count('close_page'), 1)
+
+    def test_close_rejects_unconfirmed_inventory(self):
+        with self.assertRaisesRegex(Rejected, 'page_inventory_not_confirmed'):
+            self.browser.close_session('owner')
+        self.assertTrue(self.browser.failed)
+        self.assertEqual(self.browser.checkpoint['state'], 'close_uncertain')
+
     def test_scope_and_url_mismatch_prevent_dispatch(self):
         for token, url in [('other', 'https://example.test/'), ('owner', 'https://elsewhere.test/')]:
             with self.assertRaises(Rejected):
