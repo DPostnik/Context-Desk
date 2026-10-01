@@ -92,7 +92,8 @@ Chrome остаётся открытым при переподключении �
 - `browser_action` supports scoped native form/navigation actions. Supply an
   exact observed `expectedURL` and globally unique `actionID`. Its result is not
   a submission receipt. Use `browser_verify` for a visible text/URL postcondition.
-- `browser_snapshot` is the explicit full-snapshot fallback. `browser_status`
+- `browser_snapshot` defaults to a bounded DOM read. Set `mode=interactive`
+  explicitly for upstream action UIDs. `browser_status`
   reports RPC latency, bytes and counts; these exclude model processing and do
   not claim model tokens, physical memory or an end-to-end performance gain.
 - Checkpoints are private evidence, not an automatic resume queue. Project
@@ -185,3 +186,49 @@ MCP front ends and the auto-started executor against isolated local Chrome pages
 Set `BROWSER_RUNTIME_UNDER_TEST` to the bundled BrowserRuntime directory to test
 built resources. Offline `test_multi_client.py` covers queueing, ownership,
 disconnect/cancellation, protocol identity, crash fences and no replay.
+
+## Bounded page reading / Ограниченное чтение страницы
+
+English: `browser_snapshot` defaults to `mode=read`: one DOM evaluation with no
+DOM-stability wait, iframe traversal or accessibility-tree construction. Use
+`selector` to read a profile section. It visits at most 4,000 nodes and emits at
+most 24,000 text characters and 100 control descriptions, with a cooperative
+100 ms traversal budget. Visible open shadow roots are included; iframe contents,
+closed shadow roots and form values are omitted. `complete=false` always states
+that this is partial page evidence; `truncated`/`reason` explain additional limits.
+This read does not create UIDs. For actions requiring native UIDs, explicitly call
+`browser_snapshot` with `mode=interactive` and no selector. That mode retains the
+full upstream accessibility snapshot, including frames, and may still be slow.
+There is no automatic fallback or retry between the modes. The transport deadline,
+session ownership, serialization and unknown-outcome fence remain in force.
+
+Русский: `browser_snapshot` по умолчанию использует `mode=read`: один DOM-запрос без
+ожидания стабильности DOM, обхода iframe и построения дерева доступности. `selector`
+позволяет прочитать отдельную часть профиля. Ограничения: 4 000 узлов, 24 000 символов
+текста, 100 описаний элементов управления и проверяемый в цикле бюджет 100 мс.
+Видимые открытые shadow roots читаются; содержимое iframe, закрытых shadow roots и
+значения форм пропускаются. `complete=false` всегда обозначает неполный охват;
+`truncated` и `reason` поясняют дополнительные ограничения. UID не создаются.
+Для действий с нативными UID явно вызови `browser_snapshot` с `mode=interactive`,
+без selector. Этот режим сохраняет полное дерево доступности, включая iframe,
+и может работать медленно. Автоматического переключения режимов и повторов нет.
+Срок ожидания транспорта, владение сессиями, последовательное выполнение и
+блокировка неизвестного исхода сохраняются.
+
+Development: `snapshot_smoke.py` uses an isolated Chrome and local profile with a
+busy cross-site iframe, continuously changing DOM, large text and shadow DOM.
+`--reproduce-legacy` compares the bounded read with the original 25-second AX
+snapshot timeout. Set `BROWSER_RUNTIME_UNDER_TEST` to test bundled resources.
+
+An old untyped unknown-outcome fence is never guessed to be a read. An explicitly
+approved one-shot read-recovery receipt can identify its exact SHA-256 and mtime.
+The executor consumes it only on startup after acquiring the existing lock,
+archives the fence and approval, and dispatches no operation. Changed fences and
+known mutating tool names cannot consume it. Action-ID records remain unchanged.
+
+Старую запись неизвестного исхода без имени операции нельзя автоматически считать
+чтением. Разовое явное разрешение на восстановление чтения привязывается к точным
+SHA-256 и времени изменения записи. Исполнитель применяет его только при запуске
+после получения прежней блокировки, сохраняет запись и разрешение в архив и не
+отправляет никаких операций. Изменившаяся запись или известное изменяющее действие
+не подходят под разрешение. Записи actionID остаются неизменными.

@@ -1,5 +1,6 @@
 """Real front ends + executor processes; fake Chrome never touches user state."""
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -99,6 +100,8 @@ class MultiClientTests(unittest.TestCase):
         return client
 
     def call(self, client, tool, **arguments):
+        if tool == 'browser_snapshot':
+            arguments.setdefault('mode', 'interactive')
         self.sequence += 1
         return client.rpc('tools/call', {'name': tool, 'arguments': arguments}, str(self.sequence), time.monotonic_ns() + 8_000_000_000)
 
@@ -110,6 +113,22 @@ class MultiClientTests(unittest.TestCase):
     def trace(self):
         path = self.root / 'dispatch.jsonl'
         return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+    def test_startup_consumes_exact_read_approval_without_replaying(self):
+        fence = self.root / 'executor-in-flight.json'
+        fence.write_text('{"client":7,"request":2,"state":"outcome_unknown"}')
+        approval = {'schema': 1, 'confirmedTool': 'browser_snapshot',
+            'reason': 'operator_confirmed_read_failure',
+            'fenceSHA256': hashlib.sha256(fence.read_bytes()).hexdigest(),
+            'fenceModifiedNS': fence.stat().st_mtime_ns}
+        (self.root / 'approved-read-recovery.json').write_text(json.dumps(approval))
+        self.start_executor()
+        client = self.client()
+        self.assertEqual(self.trace(), [])
+        self.assertFalse(fence.exists())
+        self.assertEqual(len(list((self.root / 'records').glob('read-recovery-*.json'))), 1)
+        self.opened(client)
+        self.assertEqual(sum(r['name'] == 'new_page' and r['phase'] == 'start' for r in self.trace()), 1)
 
     def test_catalogs_and_legacy_lock_in_both_languages(self):
         with (self.root / 'executor.lock').open('a') as lock:

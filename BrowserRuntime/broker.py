@@ -25,7 +25,7 @@ LIMIT = 8_000_000
 
 def revision():
     digest = hashlib.sha256()
-    for name in ('broker.py', 'server.py', 'transport.py', 'chrome_host.py', 'runtime.lock.json'):
+    for name in ('broker.py', 'server.py', 'transport.py', 'chrome_host.py', 'page_read.js', 'runtime.lock.json'):
         digest.update(Path(__file__).with_name(name).read_bytes())
     return digest.hexdigest()
 
@@ -207,6 +207,43 @@ class Executor:
         self.path = endpoint(self.root)
         self.identity = BUILD_REVISION
 
+    def apply_approved_read_recovery(self):
+        """Called only at startup, after acquiring the legacy executor lock.
+
+        An operator may explicitly identify an old, otherwise untyped fence as
+        a failed snapshot read. Approval is bound to exact bytes AND mtime;
+        neither another failure nor a known mutating tool can consume it.
+        This archives evidence and retires a fence; it never dispatches a tool.
+        """
+        import server
+        approval_path = self.root / 'approved-read-recovery.json'
+        if not self.fence.exists() or not approval_path.exists():
+            return False
+        try:
+            raw = self.fence.read_bytes()
+            modified = self.fence.stat().st_mtime_ns
+            fence = json.loads(raw)
+            approval = json.loads(approval_path.read_text())
+            if (not isinstance(fence, dict) or not isinstance(approval, dict)
+                    or approval.get('schema') != 1
+                    or approval.get('confirmedTool') != 'browser_snapshot'
+                    or approval.get('reason') != 'operator_confirmed_read_failure'
+                    or approval.get('fenceSHA256') != hashlib.sha256(raw).hexdigest()
+                    or approval.get('fenceModifiedNS') != modified
+                    or fence.get('tool') not in (None, 'browser_snapshot')
+                    or fence.get('state') != 'outcome_unknown'):
+                return False
+        except (OSError, ValueError):
+            return False
+        records = self.root / 'records'
+        records.mkdir(exist_ok=True, mode=0o700)
+        evidence = records / ('read-recovery-' + approval['fenceSHA256'] + '-' + str(modified) + '.json')
+        server.save(evidence, {'fence': fence, 'approval': approval,
+                               'state': 'operator_confirmed_read_failure_retired', 'replayed': False})
+        self.fence.unlink()
+        approval_path.unlink()
+        return True
+
     def quarantine(self):
         """A stale fence is retired only after the recorded Chrome has exited."""
         if not self.fence.exists():
@@ -299,7 +336,8 @@ class Executor:
                 server.require(not self.quarantine(), server.tr(
                     'Исход прошлой операции неизвестен. Действия остановлены без повтора. После проверки результата закрой выделенный Chrome; затем начни новую сессию.',
                     'A previous operation has an unknown outcome. Actions are stopped without replay. After reviewing the result, close the dedicated Chrome, then start a new session.'))
-                server.save(self.fence, {'client': id(client), 'request': message['id'], 'state': 'outcome_unknown'})
+                server.save(self.fence, {'client': id(client), 'request': message['id'],
+                    'tool': message.get('name'), 'state': 'outcome_unknown'})
                 try:
                     result = server.dispatch(browser, message.get('name'), message.get('arguments'))
                     browser.persist()
@@ -326,6 +364,7 @@ class Executor:
         with (self.root / 'executor.lock').open('a') as lock:
             # Also excludes old adapters. Never remove or replace this lock file.
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.apply_approved_read_recovery()
             self.path.unlink(missing_ok=True)
             self.listener = socket.socket(socket.AF_UNIX)
             self.listener.bind(str(self.path))
