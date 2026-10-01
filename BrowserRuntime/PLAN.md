@@ -109,3 +109,31 @@ this change safely invalidates the token and allows a fresh explicit task.
 See [the staged workflow plan](WORKFLOW_PLAN.md) for the current audit,
 compact metadata/pagination implementation, opt-in static traversal, matched
 fixtures and pending workflow adoption. Scheduled jobs remain read-only.
+
+
+## Independent chat browsers — 2026-10-01
+
+Implemented persistent host-owned session bindings and per-thread MCP configuration.
+Each chat gets its own Chrome process/profile, executor, operation queue, action
+records and uncertainty fence. Runtime installation remains shared. The default
+limit is two open managed browsers (configurable 1–8); admission never evicts a
+browser or replays a rejected action. Native chat controls verify process identity,
+synchronize explicit close with dispatch and persist close intent before signaling.
+Disabled browser settings override saved thread configuration on resume.
+
+Validation: signed scoped and main-workspace builds passed; 224 scoped and 242
+workspace Swift tests passed with live installed Codex 0.159.2 checks enabled.
+75 Python tests passed. The final bundled fixture verified two Chrome PIDs/ports,
+concurrent native input, cookie and token isolation, independent progress during
+blocked navigation (0.120 s for the other browser), disconnect fencing, retained
+profile and explicit close isolation. Real Codex routing/restart checks use a
+scratch home and one deterministic loopback HTTP 400 turn to persist the thread;
+no remote model inference, credentials or production browser state are used.
+The empty-thread and reserved-provider fixture setup failures were corrected
+before the passing final runs. RU/EN copy and signed runtime bytes were checked.
+
+Limits: inherited native subagents still use their parent's environment; automatic
+per-subagent allocation is deferred. System input requires separate desktops for
+full isolation. At capacity, opens are rejected before dispatch rather than held
+indefinitely in a queue. No automatic eviction, credential sharing, manual UI
+click-through, or memory/performance improvement claim is included.

@@ -90,10 +90,12 @@ class Wire:
 
 class RemoteBrowser:
     """MCP-facing client; never reconnects or resends after tool dispatch."""
-    def __init__(self, root, workspace, language):
+    def __init__(self, root, workspace, language, installation_root=None, max_browsers=2):
         self.root = Path(root).resolve()
         self.workspace = str(Path(workspace).resolve(strict=True))
         self.language = language
+        self.installation_root = Path(installation_root).resolve() if installation_root is not None else None
+        self.max_browsers = max_browsers
         self.wire = None
         self.failed = False
         self.terminal = False
@@ -121,7 +123,7 @@ class RemoteBrowser:
             except (FileNotFoundError, ConnectionRefusedError):
                 connection.close()
                 child = subprocess.Popen([sys.executable, '-B', str(Path(__file__).resolve()),
-                    '--root', str(self.root)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                    '--root', str(self.root), '--max-browsers', str(self.max_browsers)] + (['--installation-root', str(self.installation_root)] if self.installation_root else []), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL, start_new_session=True, close_fds=True)
                 # Reap only the child we created, without owning its lifetime.
                 threading.Thread(target=child.wait, daemon=True).start()
@@ -144,7 +146,8 @@ class RemoteBrowser:
             if self.stopped.is_set():
                 wire.close()
                 raise EOFError('browser_start_cancelled_before_dispatch')
-            wire.send({'hello': PROTOCOL, 'revision': BUILD_REVISION, 'workspace': self.workspace, 'language': self.language})
+            wire.send({'hello': PROTOCOL, 'revision': BUILD_REVISION, 'workspace': self.workspace,
+                       'language': self.language, 'maxBrowsers': self.max_browsers})
             reply = wire.receive(deadline, self.stopped)
             if reply.get('hello') != PROTOCOL or reply.get('revision') != BUILD_REVISION:
                 wire.close()
@@ -193,10 +196,12 @@ class Client:
 
 
 class Executor:
-    def __init__(self, root, browser_factory=None):
+    def __init__(self, root, browser_factory=None, installation_root=None, max_browsers=2):
         import server
         self.root = Path(root).resolve()
         self.factory = browser_factory or server.Browser
+        self.installation_root = installation_root
+        self.max_browsers = max_browsers
         self.jobs = queue.Queue(maxsize=32)
         self.clients = set()
         self.clients_lock = threading.Lock()
@@ -271,10 +276,17 @@ class Executor:
             language = hello.get('language')
             if language not in ('ru', 'en') or not isinstance(hello.get('workspace'), str):
                 return
+            limit = hello.get('maxBrowsers', 2)
+            if type(limit) is not int or not 1 <= limit <= 8:
+                return
             workspace = Path(hello['workspace']).resolve(strict=True)
             if not workspace.is_dir() or workspace.parent == workspace:
                 return
-            client = Client(wire, self.factory(self.root, workspace=workspace), language)
+            options = {'workspace': workspace}
+            if self.installation_root is not None:
+                options['installation_root'] = self.installation_root
+                options['max_browsers'] = limit
+            client = Client(wire, self.factory(self.root, **options), language)
             with self.clients_lock:
                 if len(self.clients) >= 32 or self.stopped.is_set():
                     return
@@ -333,18 +345,22 @@ class Executor:
             try:
                 if client.closed.is_set() or self.stopped.is_set():
                     continue
-                server.require(not self.quarantine(), server.tr(
-                    'Исход прошлой операции неизвестен. Действия остановлены без повтора. После проверки результата закрой выделенный Chrome; затем начни новую сессию.',
-                    'A previous operation has an unknown outcome. Actions are stopped without replay. After reviewing the result, close the dedicated Chrome, then start a new session.'))
-                server.save(self.fence, {'client': id(client), 'request': message['id'],
-                    'tool': message.get('name'), 'state': 'outcome_unknown'})
-                try:
-                    result = server.dispatch(browser, message.get('name'), message.get('arguments'))
-                    browser.persist()
-                    response['result'] = result
-                finally:
-                    if not browser.failed:
-                        self.fence.unlink(missing_ok=True)
+                with (self.root / 'operation.lock').open('a') as operation_lock:
+                    fcntl.flock(operation_lock, fcntl.LOCK_EX)
+                    if client.closed.is_set() or self.stopped.is_set():
+                        continue
+                    server.require(not self.quarantine(), server.tr(
+                        'Исход прошлой операции неизвестен. Действия остановлены без повтора. После проверки результата закрой выделенный Chrome; затем начни новую сессию.',
+                        'A previous operation has an unknown outcome. Actions are stopped without replay. After reviewing the result, close the dedicated Chrome, then start a new session.'))
+                    server.save(self.fence, {'client': id(client), 'request': message['id'],
+                        'tool': message.get('name'), 'state': 'outcome_unknown'})
+                    try:
+                        result = server.dispatch(browser, message.get('name'), message.get('arguments'))
+                        browser.persist()
+                        response['result'] = result
+                    finally:
+                        if not browser.failed:
+                            self.fence.unlink(missing_ok=True)
             except Exception as error:
                 response.update(error=str(error)[:2000], failed=browser.failed, outcomeUnknown=browser.failed or self.fence.exists())
             finally:
@@ -404,9 +420,11 @@ def main():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--root', required=True, type=Path)
+    parser.add_argument('--installation-root', type=Path)
+    parser.add_argument('--max-browsers', type=int, choices=range(1, 9), default=2)
     args = parser.parse_args()
     os.umask(0o077)
-    executor = Executor(args.root)
+    executor = Executor(args.root, installation_root=args.installation_root, max_browsers=args.max_browsers)
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: executor.stopped.set())
     executor.run()

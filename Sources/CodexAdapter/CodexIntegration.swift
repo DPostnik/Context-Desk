@@ -63,8 +63,10 @@ public actor CodexIntegration: AgentIntegration {
             guard Set(configuration.optimizers.map(\.id)).count == configuration.optimizers.count else { return .rejected(.invalidInput) }
             await disconnect()
             let arguments = try configuration.optimizers.flatMap { try CodexOptimizerConfiguration.arguments(id: $0.id, endpoint: $0.endpoint) }
-            let browser = try BrowserConfiguration.arguments(enabled: configuration.browserEnabled, resources: configuration.resources)
-            try await client.start(executable: configuration.executable ?? Locations.codexExecutable(), home: configuration.home, extraArguments: arguments + browser)
+            _ = try BrowserConfiguration.arguments(enabled: configuration.browserEnabled, resources: configuration.resources)
+            try await client.start(executable: configuration.executable ?? Locations.codexExecutable(), home: configuration.home,
+                                   extraArguments: arguments,
+                                   browserResources: configuration.browserEnabled ? configuration.resources : nil)
             providerArguments = arguments
             routes = Set([.direct] + configuration.optimizers.map { .optimizer(id: $0.id) })
             let result = await descriptor()

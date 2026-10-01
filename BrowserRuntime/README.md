@@ -34,7 +34,8 @@ Browser data lives in `~/Library/Application Support/Context Desk/browser/`.
 `records/` contains private page checkpoints, action IDs and call/byte/time metrics.
 Records persist until you delete them; they may contain job or other page data.
 No automatic action replay or automatic continuation after reconnect is performed.
-Each task owns its own work tab. The shared executor serializes operations across tasks.
+Each chat has its own persistent profile, Chrome process and executor. Operations
+are serialized within one environment and run concurrently across environments.
 After Chrome exits, call `browser_open` explicitly to start a new task with the
 same profile. Old session tokens are invalidated; actions are never replayed.
 An uncertain transport failure still requires reconnecting the adapter.
@@ -76,7 +77,8 @@ Chrome остаётся открытым при переподключении �
 вызовов, объёма ответов и времени. Записи хранятся до ручного удаления и могут
 содержать данные вакансий или других страниц. Действия не повторяются автоматически;
 после переподключения задача не продолжается сама. Рабочей вкладкой владеет одна
-задача; операции разных задач выполняются последовательно.
+задача. У каждого чата свой профиль, процесс Chrome и исполнитель; операции
+разных сред выполняются параллельно.
 После закрытия Chrome явно вызови `browser_open`, чтобы начать новую задачу
 с тем же профилем. Старые session становятся недействительными; действия
 не повторяются. При неопределённом сбое связи нужно переподключить адаптер.
@@ -141,51 +143,76 @@ Development: `python3 -B BrowserRuntime/workflow_smoke.py` compares generic and
 static traversal against an isolated two-page local fixture. See
 `BrowserRuntime/WORKFLOW_PLAN.md` in the repository for staged rollout and measurement limits.
 
-## Multiple MCP clients / Несколько MCP-клиентов
+## Parallel chat browsers / Параллельные браузеры чатов
 
-English: each chat/subagent keeps its own session, tab and project workspace. A
-private shared executor serializes complete tool operations, including their
-preconditions and verification. Idle sessions do not block other chats; closing a
-tab is no longer required to let another chat work. Catalogs remain available
-without starting Chrome. Disconnect stops only that client's upstream transport,
-leaves its tab intact and never transfers its token to another client. The
-executor exits after all clients disconnect; Chrome and user tabs are preserved.
+English: each Context Desk Codex chat receives a host-generated environment UUID
+through its thread-specific MCP configuration. The saved native thread binding
+survives reconnects and app restarts. Browser files are under
+`environments/<UUID>/`; installation files remain shared. The old `testing-profile`
+is left untouched and is not copied into new profiles. Sign in manually in each
+new profile. Turning the browser setting off explicitly disables the saved MCP
+configuration when a thread is resumed.
 
-A lost response, cancellation during dispatch or executor crash never causes a
-reconnect-and-replay. A durable in-flight fence blocks new browser operations
-when the previous outcome is unknown. Review the result, then close the dedicated
-Chrome; only its confirmed exit allows fresh sessions (reconnect a stopped
-client). Action-ID records remain and still prohibit replay. Queued requests from
-disconnected clients are discarded before dispatch. Permissions and upload roots
-remain separate for each client's project; no union of project access is created.
+Each environment has its own Chrome process, debugging port, MCP executor, queue,
+records, action IDs and uncertainty fence. A pending operation or unknown result
+in one environment does not block another. There is no automatic action replay.
+Individual clients within an environment retain separate tokens and project file
+permissions. Subagents that inherit the parent's MCP configuration still share
+that environment; automatic per-subagent profile allocation is not implemented.
+The independent unit in this release is a Context Desk chat.
 
-Русский: каждый чат и subagent сохраняет свою session, вкладку и каталог проекта.
-Общий локальный исполнитель выполняет операции последовательно, вместе с их
-предварительными проверками и подтверждением. Простаивающая сессия больше не
-блокирует другие чаты; закрывать вкладку для передачи браузера не требуется.
-Каталог доступен без запуска Chrome. Отключение останавливает только дочерний
-транспорт своего клиента, сохраняя вкладку; её token не передаётся другому чату.
-Исполнитель завершается после отключения всех клиентов, сохраняя Chrome и вкладки.
+Settings → Browser controls the maximum number of open managed environment
+browsers (default 2, range 1–8). Apply after current tasks finish. Admission is
+serialized only during startup. At the limit, a new open is rejected before any
+page action; it is not queued or replayed. Existing browsers are never evicted.
+Quit an unused browser with Cmd+Q or use the chat's Browser → Close browser menu.
+Closing only a tab/window may leave Chrome running. Previously opened legacy
+browsers are not included in this environment limit.
 
-Потеря ответа, отмена выполняемой операции или падение исполнителя не приводят к
-переподключению с повтором. Запись незавершённой операции блокирует новые действия,
-если исход неизвестен. Проверь результат и закрой выделенный Chrome; только
-подтверждённое завершение Chrome разрешает новые сессии (остановленному клиенту
-нужно переподключение). Записи actionID сохраняются и запрещают повтор. Запросы
-отключённых клиентов в очереди отбрасываются до отправки. Разрешения и каталоги
-загрузки остаются отдельными для каждого проекта, без объединения доступа.
+The chat Browser menu checks status, shows the exact owned Chrome process or
+explicitly closes it while the chat is idle. Process identity is verified before
+control. An unfinished operation blocks programmatic close; review it and quit
+that Chrome manually. A durable close intent prevents resending an uncertain
+close command. Profiles remain after close. The next explicit `browser_open`
+starts a new session; old tokens are not transferred. Native OS dialogs and
+system mouse/keyboard input still share the macOS desktop.
 
-Activation / Активация: after active tasks finish, quit Context Desk with Cmd+Q
-and reopen the rebuilt app. An old adapter may still hold the legacy lock; it is
-never killed automatically. После завершения активных задач выйди через Cmd+Q и
-открой собранное приложение. Старый адаптер может держать прежнюю блокировку;
-автоматически он не завершается.
+Русский: каждому чату Codex в Context Desk приложение назначает собственную
+браузерную среду. Привязка к сессии сохраняется после переподключения и перезапуска.
+У каждого чата отдельные профиль, процесс Chrome, исполнитель, очередь и журнал
+действий. Зависание или неопределённый результат в одной среде не блокируют другую.
+Действия автоматически не повторяются. Старый профиль остаётся на месте и не
+копируется; войди на сайты вручную в каждом новом профиле. Отключение браузера
+явно отключает сохранённую конфигурацию при возобновлении чата.
 
-Development: `python3 -B BrowserRuntime/multi_client_smoke.py` exercises two real
-MCP front ends and the auto-started executor against isolated local Chrome pages.
-Set `BROWSER_RUNTIME_UNDER_TEST` to the bundled BrowserRuntime directory to test
-built resources. Offline `test_multi_client.py` covers queueing, ownership,
-disconnect/cancellation, protocol identity, crash fences and no replay.
+В настройках браузера выбери лимит открытых браузеров: по умолчанию 2, допустимо
+от 1 до 8. Примени настройку после завершения задач. При достижении лимита новый
+запуск отклоняется до действия со страницей, без очереди и автоматического повтора.
+Чужие браузеры не закрываются. Заверши неиспользуемый Chrome через Cmd+Q или меню
+«Браузер → Закрыть браузер» в его чате. Закрытие только вкладки или окна может
+оставить процесс работающим. Прежний общий браузер в этот лимит не входит.
+
+Меню браузера в чате позволяет проверить состояние, показать нужный процесс и
+явно закрыть его, когда чат не выполняет задачу. Принадлежность процесса проверяется.
+При незавершённой операции проверь результат и закрой этот Chrome вручную. Команда
+закрытия с неопределённым результатом не отправляется повторно. Профиль сохраняется;
+следующий явный `browser_open` создаёт новый сеанс. Старые токены не переносятся.
+Субагенты с унаследованной конфигурацией пока разделяют среду родителя; отдельные
+профили для них автоматически не создаются. Системные диалоги, мышь и клавиатура
+macOS остаются общими.
+
+Activation: finish active tasks, quit Context Desk with Cmd+Q and reopen the rebuilt
+app. No running adapter or browser is killed automatically.
+Активация: заверши текущие задачи, выйди из Context Desk через Cmd+Q и открой новую
+сборку. Работающие адаптеры и браузеры автоматически не завершаются.
+
+Development: `parallel_smoke.py` verifies two real Chrome processes with separate
+profiles, concurrent native form input, independent progress during a blocked
+navigation, cookie isolation, disconnect fencing, reconnect persistence and
+explicit close isolation. Use `BROWSER_RUNTIME_UNDER_TEST` to check bundled
+resources. `multi_client_smoke.py` remains a within-environment ownership check.
+Live Swift compatibility tests use temporary unauthenticated Codex homes and no
+model turns to verify distinct per-thread MCP launches and resume routing.
 
 ## Bounded page reading / Ограниченное чтение страницы
 

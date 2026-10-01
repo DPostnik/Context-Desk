@@ -1,4 +1,4 @@
-import CodexAdapter
+@testable import CodexAdapter
 import Foundation
 import Testing
 import TOMLDecoder
@@ -53,4 +53,16 @@ import TOMLDecoder
             #expect(error.localizedDescription.contains(language == .russian ? "Компонент браузера" : "browser component"))
         }
     }
+}
+
+@Test func browserNativeSessionsNeverShareBindingsAndCorruptionFailsClosed() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let a = try BrowserEnvironmentStore.environment(session: "thread-a", root: root)
+    let b = try BrowserEnvironmentStore.environment(session: "thread-b", root: root)
+    #expect(a != b)
+    #expect(try BrowserEnvironmentStore.environment(session: "thread-a", root: root) == a)
+    let file = BrowserEnvironmentStore.bindingPath(session: "thread-a", root: root)
+    try Data("broken".utf8).write(to: file)
+    #expect(throws: (any Error).self) { try BrowserEnvironmentStore.environment(session: "thread-a", root: root) }
 }

@@ -12,6 +12,8 @@ public actor CodexClient {
     var requestGeneration: UUID?
     var seenRequestIDs = Set<JSONValue>()
     var knownSessions = Set<AgentSessionReference>()
+    private var browserResources: URL?
+    private var browserRoot = BrowserConfiguration.directory
     var interactions: [UUID: (pending: CodexPendingInteraction, generation: UUID, token: UUID)] = [:]
 
     public init() {
@@ -25,7 +27,10 @@ public actor CodexClient {
         let pair = AsyncStream<CodexEvent>.makeStream(); events = pair.stream; eventSink = pair.continuation
     }
 
-    public func start(executable: URL, home: URL, extraArguments: [String] = []) async throws {
+    public func start(executable: URL, home: URL, extraArguments: [String] = [],
+                      browserResources: URL? = nil, browserRoot: URL = BrowserConfiguration.directory) async throws {
+        self.browserResources = browserResources
+        self.browserRoot = browserRoot
         observeEvents()
         try await transport.start(executable: executable, home: home, extraArguments: extraArguments)
     }
@@ -60,6 +65,8 @@ public actor CodexClient {
 
     public func createSession(projectPath: String, access: AccessMode, model: String, route: RequestRoute) async throws -> AgentSessionReference {
         var params = access.threadParameters
+        let environment = browserResources == nil ? nil : UUID()
+        params["config"] = try BrowserConfiguration.threadConfiguration(resources: browserResources, root: browserRoot, environment: environment)
         params["cwd"] = .string(projectPath)
         params["modelProvider"] = .string(route.providerID)
         params["developerInstructions"] = .string(AgentAutonomy.instructions())
@@ -69,12 +76,16 @@ public actor CodexClient {
             throw ClientFailure(L10n.text("Не получен ID разговора", "No conversation ID received"))
         }
         let session = AgentSessionReference(connection: .originalCodex, nativeID: id)
+        if let environment { try BrowserEnvironmentStore.bind(environment, session: id, root: browserRoot) }
         knownSessions.insert(session)
         return session
     }
     public func resume(_ session: AgentSessionReference, projectPath: String, access: AccessMode, route: RequestRoute) async throws {
         var params = access.threadParameters
-        params["threadId"] = .string(try nativeID(session))
+        let id = try nativeID(session)
+        let environment = browserResources == nil ? nil : try BrowserEnvironmentStore.environment(session: id, root: browserRoot)
+        params["config"] = try BrowserConfiguration.threadConfiguration(resources: browserResources, root: browserRoot, environment: environment)
+        params["threadId"] = .string(id)
         params["cwd"] = .string(projectPath)
         params["modelProvider"] = .string(route.providerID)
         params["developerInstructions"] = .string(AgentAutonomy.instructions())

@@ -124,3 +124,41 @@ private func commandFixture() throws -> (URL, URL) {
     }
     await client.stop()
 }
+
+@Test func browserBindingSurvivesReconnectAndDisableOverridesPersistedConfig() async throws {
+    let (root, executable) = try commandFixture()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let resources = root.appendingPathComponent("Resources")
+    let scripts = resources.appendingPathComponent("BrowserRuntime")
+    let browserRoot = root.appendingPathComponent("browser")
+    try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: browserRoot, withIntermediateDirectories: true)
+    try Data().write(to: scripts.appendingPathComponent("server.py"))
+    try Data().write(to: browserRoot.appendingPathComponent("runtime.json"))
+    let wire = CodexConnection()
+    let first = CodexClient(transport: wire)
+    try await first.start(executable: executable, home: root, browserResources: resources, browserRoot: browserRoot)
+    let session = try await first.createSession(projectPath: root.path, access: .standard, model: "", route: .direct)
+    let calls = try await wire.request("test/calls").array
+    let config = try #require(calls.first { $0["method"].string == "thread/start" })["params"]["config"]
+    let args = config["mcp_servers.context_desk_browser"]["args"].array
+    #expect(args.contains(.string("--environment")))
+    #expect(config["mcp_servers.context_desk_browser"]["required"].bool == true)
+    await first.stop()
+    // New client object, same saved native session: resolve from disk.
+    let resumedWire = CodexConnection(), resumed: CodexClient
+    resumed = CodexClient(transport: resumedWire)
+    try await resumed.start(executable: executable, home: root, browserResources: resources, browserRoot: browserRoot)
+    try await resumed.resume(session, projectPath: root.path, access: .standard, route: .direct)
+    let resumeCalls = try await resumedWire.request("test/calls").array
+    #expect(resumeCalls.first { $0["method"].string == "thread/resume" }?["params"]["config"] == config)
+    await resumed.stop()
+    // Disabled setting must explicitly override configuration saved by Codex.
+    let disabledWire = CodexConnection(), disabled: CodexClient
+    disabled = CodexClient(transport: disabledWire)
+    try await disabled.start(executable: executable, home: root)
+    try await disabled.resume(session, projectPath: root.path, access: .standard, route: .direct)
+    let disabledCalls = try await disabledWire.request("test/calls").array
+    #expect(disabledCalls.first { $0["method"].string == "thread/resume" }?["params"]["config"]["mcp_servers.context_desk_browser"]["enabled"].bool == false)
+    await disabled.stop()
+}

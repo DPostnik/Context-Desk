@@ -30,7 +30,7 @@ def serve_fake():
             def rpc(name, arguments):
                 with (Path(root) / 'dispatch.jsonl').open('a') as stream:
                     stream.write(json.dumps({'name': name, 'args': arguments,
-                        'workspace': str(self.workspace), 'phase': 'start'}) + '\n')
+                        'workspace': str(self.workspace), 'limit': self.max_browsers, 'phase': 'start'}) + '\n')
                 if name == 'new_page':
                     counter[0] += 1
                     pages[counter[0]] = arguments['url']
@@ -60,7 +60,7 @@ def serve_fake():
                     stream.write(json.dumps({'name': name, 'phase': 'end'}) + '\n')
                 return {'content': [{'type': 'text', 'text': text}]}
             super().__init__(root, rpc=rpc, **kwargs)
-    executor = broker.Executor(Path(sys.argv[2]), browser_factory=FakeBrowser)
+    executor = broker.Executor(Path(sys.argv[2]), browser_factory=FakeBrowser, installation_root=Path(sys.argv[2]))
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: executor.stopped.set())
     executor.run()
@@ -91,8 +91,9 @@ class MultiClientTests(unittest.TestCase):
             self.assertLess(time.monotonic(), deadline)
             time.sleep(0.02)
 
-    def client(self, language='en', workspace=None):
-        command = [sys.executable, '-B', str(RUNTIME / 'server.py'), '--root', str(self.root), '--language', language]
+    def client(self, language='en', workspace=None, limit=2):
+        command = [sys.executable, '-B', str(RUNTIME / 'server.py'), '--root', str(self.root), '--language', language,
+                   '--max-browsers', str(limit)]
         client = StdioRPC(command, cwd=str(workspace) if workspace else None).start()
         self.clients.append(client)
         info = client.initialize_mcp(expected_server_version=server.VERSION)
@@ -184,6 +185,13 @@ class MultiClientTests(unittest.TestCase):
         self.assertEqual(errors, [])
         phases = [row['phase'] for row in self.trace() if row['name'] == 'take_snapshot']
         self.assertEqual(phases, ['start', 'end', 'start', 'end'])
+
+    def test_reconnecting_client_applies_new_limit_even_with_existing_executor(self):
+        self.start_executor()
+        for limit in (2, 4):
+            self.opened(self.client(limit=limit))
+        starts = [row for row in self.trace() if row['name'] == 'new_page' and row['phase'] == 'start']
+        self.assertEqual([row['limit'] for row in starts], [2, 4])
 
     def test_disconnect_while_queued_never_dispatches_or_consumes_action_id(self):
         self.start_executor()

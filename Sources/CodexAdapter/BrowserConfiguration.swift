@@ -4,6 +4,7 @@ import ContextCore
 /// App-owned MCP launch settings. Never edits either Codex home or project policy.
 public enum BrowserConfiguration {
     public static var directory: URL { Locations.root.appendingPathComponent("browser", isDirectory: true) }
+    public static let parallelLimitKey = "parallelBrowserLimit"
 
     public static func isInstalled(at root: URL = directory) -> Bool {
         FileManager.default.fileExists(atPath: root.appendingPathComponent("runtime.json").path)
@@ -37,5 +38,27 @@ public enum BrowserConfiguration {
             "\(prefix).startup_timeout_sec=30",
             "\(prefix).tool_timeout_sec=90"
         ].flatMap { ["-c", $0] }
+    }
+
+    static func threadConfiguration(resources: URL?, root: URL, environment: UUID?) throws -> JSONValue {
+        guard let resources, let environment else {
+            // A disabled table still needs a valid transport. Override saved
+            // thread configuration explicitly without launching any process.
+            return .object(["mcp_servers.context_desk_browser": .object([
+                "command": .string("/usr/bin/false"), "args": .array([]),
+                "enabled": .bool(false), "required": .bool(false)
+            ])])
+        }
+        _ = try arguments(enabled: true, resources: resources, root: root)
+        return .object(["mcp_servers.context_desk_browser": .object([
+            "command": .string("/usr/bin/python3"),
+            "args": .array([resources.appendingPathComponent("BrowserRuntime/server.py").path,
+                            "--root", root.path, "--environment", environment.uuidString.lowercased(),
+                            "--max-browsers", String((1...8).contains(UserDefaults.standard.integer(forKey: parallelLimitKey))
+                                ? UserDefaults.standard.integer(forKey: parallelLimitKey) : 2),
+                            "--language", L10n.language.rawValue].map(JSONValue.string)),
+            "enabled": .bool(true), "required": .bool(true),
+            "startup_timeout_sec": .number(30), "tool_timeout_sec": .number(90)
+        ])])
     }
 }

@@ -498,6 +498,11 @@ struct ChatView: View {
                 }
                 Spacer()
                 if let chat = model.selectedChat {
+                    if model.state.browserEnabled == true, let session = chat.nativeSession,
+                       session.connection == .originalCodex {
+                        ChatBrowserControls(session: session.nativeID, busy: model.isBusy(threadID: chat.id))
+                            .id(session.nativeID)
+                    }
                     Button(L10n.text("Передать контекст…", "Hand off context…")) {
                         Task { handoff = await model.prepareHandoff(chat) }
                     }.disabled(model.loadingChat || model.creatingHandoff)
@@ -782,6 +787,7 @@ struct SettingsView: View {
     @ObservedObject var model: DeskModel
     let keepAwake: KeepAwake
     @AppStorage(AppLanguage.preferenceKey) private var selectedLanguage = L10n.language.rawValue
+    @AppStorage("parallelBrowserLimit") private var parallelBrowserLimit = 2
     var body: some View {
         Form {
             KeepAwakeSettings(controller: keepAwake)
@@ -828,8 +834,13 @@ struct SettingsView: View {
             Section(L10n.text("Браузер", "Browser")) {
                 Toggle(L10n.text("Использовать Chrome DevTools", "Use Chrome DevTools"),
                        isOn: Binding(get: { model.state.browserEnabled == true }, set: { model.selectBrowserEnabled($0) }))
-                Text(L10n.text("Отдельное приложение Chrome for Testing для задач агента. Войди на сайты заново: профиль обычного Chrome не переносится. Браузер остаётся открытым после переподключения.", "A separate Chrome for Testing app for agent tasks. Sign in again: your regular Chrome profile is not transferred. The browser stays open after reconnecting."))
+                Text(L10n.text("У каждого чата свой Chrome for Testing и сохранённый профиль. Чаты работают параллельно. Войди на сайты отдельно в каждом профиле; существующие профили не копируются. Браузеры остаются открытыми после переподключения.", "Each chat has its own Chrome for Testing and saved profile. Chats work in parallel. Sign in separately in each profile; existing profiles are not copied. Browsers stay open after reconnecting."))
                     .font(.callout).foregroundStyle(.secondary)
+                Picker(L10n.text("Одновременно открытых браузеров", "Simultaneously open browsers"), selection: $parallelBrowserLimit) {
+                    ForEach(1...8, id: \.self) { Text(String($0)).tag($0) }
+                }
+                Text(L10n.text("По умолчанию — 2. При достижении лимита заверши неиспользуемый Chrome через Cmd+Q. Новый лимит применяется после переподключения; открытые браузеры автоматически не закрываются.", "Default: 2. At the limit, quit an unused Chrome with Cmd+Q. Apply the new limit by reconnecting; open browsers are never closed automatically."))
+                    .font(.caption).foregroundStyle(.secondary)
                 Button(L10n.text("Инструкция по установке", "Installation instructions")) {
                     if let resources = Bundle.main.resourceURL {
                         NSWorkspace.shared.open(resources.appendingPathComponent("BrowserRuntime/README.md"))

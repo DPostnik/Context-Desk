@@ -70,8 +70,10 @@ def web_url(value):
 
 
 class Browser:
-    def __init__(self, root, rpc=None, *, workspace=None):
+    def __init__(self, root, rpc=None, *, workspace=None, installation_root=None, max_browsers=2):
         self.root = Path(root)
+        self.installation_root = Path(installation_root) if installation_root is not None else self.root
+        self.max_browsers = max_browsers
         # The host launches this MCP process in the thread's project directory.
         # Keep that scope separate from browser storage; never accept roots from
         # page content or browser_action arguments, or grant filesystem-wide access.
@@ -98,12 +100,12 @@ class Browser:
     def start(self):
         if self.transport or self.injected:
             return
-        config = json.loads((self.root / 'runtime.json').read_text())
+        config = json.loads((self.installation_root / 'runtime.json').read_text())
         require(config['version'] == LOCK['version'], 'runtime_version_mismatch')
-        entry = verify(self.root / ('chrome-devtools-' + LOCK['version']))
+        entry = verify(self.installation_root / ('chrome-devtools-' + LOCK['version']))
         node = Path(config['node'])
         require(node.is_absolute() and os.access(node, os.X_OK), 'node_unavailable')
-        self.chrome = ChromeHost(self.root, language=LANGUAGE)
+        self.chrome = ChromeHost(self.root, language=LANGUAGE, max_browsers=self.max_browsers)
         endpoint = self.chrome.ensure(cancelled=self.stopped)
         env = {key: value for key, value in os.environ.items() if key in ('PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL')}
         env.update(CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS='1', CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS='1')
@@ -451,12 +453,25 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--root', type=Path, default=ROOT)
     parser.add_argument('--language', choices=['ru', 'en'], default='en')
+    parser.add_argument('--environment', type=uuid.UUID)
+    parser.add_argument('--max-browsers', type=int, choices=range(1, 9), default=2)
     args = parser.parse_args()
     LANGUAGE = args.language
     os.umask(0o077)
     args.root.mkdir(parents=True, exist_ok=True, mode=0o700)
     from broker import RemoteBrowser
-    browser = RemoteBrowser(args.root, Path.cwd(), LANGUAGE)
+    installation_root = args.root.resolve()
+    root = installation_root
+    if args.environment:
+        # Only a host launch argument selects storage; tool arguments never do.
+        for part in ('environments', str(args.environment)):
+            root = root / part
+            require(not root.is_symlink(), tr('Каталог среды браузера не должен быть символической ссылкой.',
+                                             'The browser environment directory must not be a symbolic link.'))
+            root.mkdir(mode=0o700, exist_ok=True)
+    browser = RemoteBrowser(root, Path.cwd(), LANGUAGE,
+                            installation_root=installation_root if args.environment else None,
+                            max_browsers=args.max_browsers)
     inbox = queue.Queue(maxsize=32)
     stopped = threading.Event()
     initialized = False
