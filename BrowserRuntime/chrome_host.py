@@ -1,7 +1,8 @@
 """Launch the pinned Chrome for Testing, then expose only its verified local endpoint.
 
 Chrome outlives MCP reconnects so manual sign-in and user tabs are preserved.
-No default profile, credential copying, WebDriver flags or auto-connect discovery.
+No default profile, WebDriver flags or auto-connect discovery. Explicit cookie
+import runs in the native host; this helper never receives cookie values.
 """
 import json
 import fcntl
@@ -226,6 +227,24 @@ class ChromeHost:
                                  'The browser is performing an operation. No control action was sent.')
             return self.control_owned(close)
 
+    def prepare_cookie_import(self):
+        """Caller holds operation.lock throughout preparation, write and verification.
+
+        Never attach to a live browser for import: it could overwrite refreshed
+        cookies in an active tab. A persisted uncertain write is retired only
+        after definite exit of the recorded Chrome, as in the executor.
+        """
+        old = json.loads(self.record.read_text()) if self.record.exists() else None
+        if old is not None and not self.process_gone(old):
+            return {'code': 'destination_running'}
+        fence = self.root / 'executor-in-flight.json'
+        if fence.exists():
+            if old is None or not self.process_gone(old):
+                return {'code': 'uncertain'}
+            fence.unlink()
+        endpoint = self.ensure()
+        return {'webSocketURL': endpoint.replace('http://', 'ws://', 1) + self.owner['browserPath']}
+
     def control_owned(self, close):
         owner = json.loads(self.record.read_text())
         if self.process_gone(owner):
@@ -265,11 +284,15 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--root', required=True, type=Path)
     parser.add_argument('--language', choices=('ru', 'en'), default='en')
-    parser.add_argument('--close', action='store_true')
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--close', action='store_true')
+    mode.add_argument('--prepare-cookie-import', action='store_true')
+    parser.add_argument('--max-browsers', type=int, choices=range(1, 9), default=2)
     args = parser.parse_args()
     os.umask(0o077)
     try:
-        print(json.dumps(ChromeHost(args.root, args.language).control(args.close)))
+        host = ChromeHost(args.root, args.language, args.max_browsers)
+        print(json.dumps(host.prepare_cookie_import() if args.prepare_cookie_import else host.control(args.close)))
     except Exception as error:
         print(json.dumps({'error': str(error)}))
         raise SystemExit(1)

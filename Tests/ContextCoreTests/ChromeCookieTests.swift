@@ -1,0 +1,200 @@
+import Foundation
+import Testing
+import CSQLite
+@testable import ContextCore
+
+// OpenSSL-generated vectors; no user profiles or Keychain items are read.
+private let domainCipher = "7631301ed2c90284df3c92295d12077eddf3a39d9f5e797292a851f735783b36e7d42c6816f7db3238d65468cc9683102bf787"
+private let legacyCipher = "763130a114d6303d481cc497ab87aceb9aaafa"
+private func hexData(_ hex: String) -> Data {
+    Data(stride(from: 0, to: hex.count, by: 2).map { offset in
+        let index = hex.index(hex.startIndex, offsetBy: offset)
+        return UInt8(hex[index..<hex.index(index, offsetBy: 2)], radix: 16)!
+    })
+}
+private func temporaryCookies() throws -> URL {
+    let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root.appendingPathComponent("Default/Network"), withIntermediateDirectories: true)
+    try Data(#"{"profile":{"info_cache":{"Default":{"name":"Fixture"},"../escape":{"name":"Bad"}}}}"#.utf8)
+        .write(to: root.appendingPathComponent("Local State"))
+    return root
+}
+private func fixtureDatabase(root: URL, schema: Int = 24, rows: String) throws -> URL {
+    let file = root.appendingPathComponent("Default/Network/Cookies")
+    var db: OpaquePointer?
+    guard sqlite3_open(file.path, &db) == SQLITE_OK else { throw ChromeCookieError.unavailable }
+    defer { sqlite3_close(db) }
+    let sql = """
+    CREATE TABLE meta (key TEXT, value INTEGER);
+    INSERT INTO meta VALUES ('version', \(schema));
+    CREATE TABLE cookies (host_key TEXT, name TEXT, value TEXT, encrypted_value BLOB,
+      path TEXT, expires_utc INTEGER, is_secure INTEGER, is_httponly INTEGER,
+      samesite INTEGER, top_frame_site_key TEXT, has_expires INTEGER);
+    \(rows)
+    """
+    guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else { throw ChromeCookieError.unavailable }
+    return file
+}
+
+@Test func chromeEncryptionMatchesKnownVectorsAndBindsDomain() throws {
+    let key = try ChromeCookieSource.deriveKey(Data("fixture-password".utf8))
+    #expect(key == hexData("5d84e88b8d2628e23102b464d77a5bbd"))
+    #expect(ChromeCookieSource.decrypt(hexData(domainCipher), key: key, host: ".example.test", schema: 24) == "fixture-secret")
+    #expect(ChromeCookieSource.decrypt(hexData(domainCipher), key: key, host: ".other.test", schema: 24) == nil)
+    #expect(ChromeCookieSource.decrypt(hexData(legacyCipher), key: key, host: ".example.test", schema: 23) == "fixture-secret")
+    #expect(ChromeCookieSource.decrypt(hexData(legacyCipher), key: key, host: ".example.test", schema: 24) == nil)
+    #expect(ChromeCookieSource.decrypt(hexData(domainCipher), key: Data(repeating: 0, count: 16), host: ".example.test", schema: 24) == nil)
+}
+
+@Test func chromeSnapshotPreservesScopeFlagsAndSkipsUnsupportedCookies() throws {
+    let root = try temporaryCookies()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let rows = """
+    INSERT INTO cookies VALUES ('.example.test','domain','',X'\(domainCipher)','/private',13344474600000000,1,1,2,'',1);
+    INSERT INTO cookies VALUES ('login.example.test','host','visible',X'','/',0,0,0,-1,'',0);
+    INSERT INTO cookies VALUES ('expired.test','old','old',X'','/',11644473601000000,0,0,1,'',1);
+    INSERT INTO cookies VALUES ('partition.test','part','value',X'','/',0,1,1,0,'https://top.test',0);
+    INSERT INTO cookies VALUES ('future.test','unknown','',X'763230001122','/',0,1,1,0,'',0);
+    INSERT INTO cookies VALUES ('invalid.test','bad',CAST(X'610062' AS TEXT),X'','/',0,0,0,1,'',0);
+    """
+    let file = try fixtureDatabase(root: root, rows: rows)
+    let before = try Data(contentsOf: file)
+    var keyReads = 0
+    let read = try ChromeCookieSource.read(profile: "Default", root: root, now: 1_700_000_000, sourceIsRunning: { false }, key: {
+        keyReads += 1
+        return try ChromeCookieSource.deriveKey(Data("fixture-password".utf8))
+    })
+    #expect(keyReads == 1)
+    #expect(read.cookies.count == 2)
+    #expect(read.expired == 1 && read.partitioned == 1 && read.unsupported == 2)
+    let domain = try #require(read.cookies.first)
+    #expect(domain.parameters["domain"] == .string(".example.test"))
+    #expect(domain.parameters["httpOnly"] == .bool(true))
+    #expect(domain.parameters["secure"] == .bool(true))
+    #expect(domain.parameters["sameSite"] == .string("Strict"))
+    #expect(domain.parameters["path"] == .string("/private"))
+    let host = read.cookies[1]
+    #expect(host.parameters["domain"] == .null && host.parameters["expires"] == .null)
+    #expect(host.parameters["url"] == .string("http://login.example.test/"))
+    #expect(try Data(contentsOf: file) == before)
+    #expect(!FileManager.default.fileExists(atPath: file.path + "-wal"))
+    #expect(try ChromeCookieSource.profiles(root: root).map(\.id) == ["Default"])
+}
+
+@Test func chromeSourceRequiresClosedStableProfileBeforeKeychain() throws {
+    let root = try temporaryCookies()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let file = try fixtureDatabase(root: root, rows: "")
+    var keyReads = 0
+    let key = { keyReads += 1; return Data() }
+    #expect(throws: ChromeCookieError.self) {
+        try ChromeCookieSource.read(profile: "Default", root: root, sourceIsRunning: { true }, key: key)
+    }
+    try Data([1]).write(to: URL(fileURLWithPath: file.path + "-wal"))
+    #expect(throws: ChromeCookieError.self) {
+        try ChromeCookieSource.read(profile: "Default", root: root, sourceIsRunning: { false }, key: key)
+    }
+    #expect(throws: ChromeCookieError.self) {
+        try ChromeCookieSource.read(profile: "../Default", root: root, sourceIsRunning: { false }, key: key)
+    }
+    #expect(keyReads == 0)
+}
+
+@Test func chromeUnknownSchemaAndSymlinkFailClosed() throws {
+    let root = try temporaryCookies(), other = try temporaryCookies()
+    defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(at: other) }
+    let file = try fixtureDatabase(root: root, schema: 25, rows: "")
+    #expect(throws: ChromeCookieError.self) { try ChromeCookieSource.decode(snapshot: file, now: 0, key: { Data() }) }
+    try FileManager.default.removeItem(at: root.appendingPathComponent("Default"))
+    try FileManager.default.createSymbolicLink(at: root.appendingPathComponent("Default"), withDestinationURL: other)
+    #expect(throws: ChromeCookieError.self) { try ChromeCookieSource.profiles(root: root) }
+}
+
+@Test func chromeCookieVerificationChecksValueScopeAndSession() {
+    let cookie = ImportedChromeCookie(host: "example.test", name: "auth", value: "fixture", path: "/", secure: true, httpOnly: true, sameSite: "Lax", expires: nil)
+    var stored = cookie.parameters.object
+    stored["domain"] = .string("example.test"); stored["session"] = .bool(true)
+    #expect(cookie.matches(.object(stored)))
+    for (key, value) in [("domain", JSONValue.string(".example.test")), ("value", .string("changed")), ("session", .bool(false)), ("httpOnly", .bool(false))] {
+        var modified = stored; modified[key] = value
+        #expect(!cookie.matches(.object(modified)))
+    }
+}
+
+@Test func chromeImportLockSerializesOnlyOneEnvironmentAndRejectsSymlinks() throws {
+    let root = try temporaryCookies()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let a = root.appendingPathComponent("environments/" + UUID().uuidString), b = root.appendingPathComponent("environments/" + UUID().uuidString)
+    let first = try CookieImportLock(environment: a, browserRoot: root)
+    defer { first.release() }
+    #expect(throws: ChromeCookieError.self) { try CookieImportLock(environment: a, browserRoot: root) }
+    let second = try CookieImportLock(environment: b, browserRoot: root)
+    second.release()
+    first.release()
+    let again = try CookieImportLock(environment: a, browserRoot: root)
+    again.release()
+    try FileManager.default.removeItem(at: a.appendingPathComponent("operation.lock"))
+    try FileManager.default.createSymbolicLink(at: a.appendingPathComponent("operation.lock"), withDestinationURL: root.appendingPathComponent("Local State"))
+    #expect(throws: ChromeCookieError.self) { try CookieImportLock(environment: a, browserRoot: root) }
+}
+
+@Test func chromeImportErrorsProvideBothLanguagesWithoutSecretValues() {
+    let errors: [ChromeCookieError] = [.sourceRunning, .unavailable, .invalidProfile, .unsupportedSchema, .keychain, .sourceChanged, .tooLarge,
+                                     .browserBusy, .destinationRunning, .uncertain, .connection, .missingEnvironment, .empty]
+    for error in errors {
+        #expect(!error.message(language: .russian).isEmpty)
+        #expect(!error.message(language: .english).isEmpty)
+        #expect(error.message(language: .russian) != error.message(language: .english))
+        #expect(!error.message(language: .english).contains("fixture-secret"))
+    }
+}
+
+private actor CookieWriteProbe {
+    var methods: [String] = []
+    let fail: String?
+    let stored: [JSONValue]
+    init(fail: String?, stored: [JSONValue] = []) { self.fail = fail; self.stored = stored }
+    func call(_ method: String, _ parameters: JSONValue) throws -> JSONValue {
+        methods.append(method)
+        if method == fail { throw ClientFailure("fixture-secret must never appear in UI") }
+        return method == "Storage.getCookies" ? .object(["cookies": .array(stored)]) : .object([:])
+    }
+}
+
+@Test func chromeAmbiguousWriteIsFencedAndNeverReplayed() async throws {
+    let root = try temporaryCookies()
+    defer { try? FileManager.default.removeItem(at: root) }
+    for failedMethod in ["Storage.setCookies", "Storage.getCookies"] {
+        let fence = root.appendingPathComponent(UUID().uuidString)
+        let probe = CookieWriteProbe(fail: failedMethod)
+        do {
+            _ = try await ChromeCookieImporter.writeAndVerify(.init(), fence: fence, call: { try await probe.call($0, $1) })
+            Issue.record("Expected uncertain outcome")
+        } catch {
+            #expect(error is ChromeCookieError)
+            #expect(!error.localizedDescription.contains("fixture-secret"))
+        }
+        #expect(FileManager.default.fileExists(atPath: fence.path))
+        #expect(await probe.methods.filter { $0 == "Storage.setCookies" }.count == 1)
+        do {
+            _ = try await ChromeCookieImporter.writeAndVerify(.init(), fence: fence, call: { try await probe.call($0, $1) })
+            Issue.record("Existing fence must block another write")
+        } catch { #expect(error is ChromeCookieError) }
+        #expect(await probe.methods.filter { $0 == "Storage.setCookies" }.count == 1)
+        let saved = try String(contentsOf: fence, encoding: .utf8)
+        #expect(!saved.contains("fixture-secret"))
+    }
+}
+
+@Test func chromeConfirmedPartialWriteReportsCountsAndClearsFence() async throws {
+    let root = try temporaryCookies()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let cookie = ImportedChromeCookie(host: "example.test", name: "auth", value: "fixture", path: "/", secure: true, httpOnly: true, sameSite: nil, expires: nil)
+    let probe = CookieWriteProbe(fail: nil)
+    var read = ChromeCookieRead(); read.cookies = [cookie]; read.expired = 2
+    let fence = root.appendingPathComponent("fence.json")
+    let result = try await ChromeCookieImporter.writeAndVerify(read, fence: fence, call: { try await probe.call($0, $1) })
+    #expect(result.verified == 0 && result.unverified == 1 && result.skipped == 2)
+    #expect(!FileManager.default.fileExists(atPath: fence.path))
+    #expect(await probe.methods == ["Storage.setCookies", "Storage.getCookies"])
+}

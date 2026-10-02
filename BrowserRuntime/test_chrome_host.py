@@ -70,6 +70,29 @@ class ChromeHostTests(unittest.TestCase):
             self.host.ensure(cancelled=event)
         launch.assert_not_called()
 
+    def test_cookie_import_never_adopts_live_browser_or_retires_unknown_fence(self):
+        self.host.persist(self.owner)
+        fence = self.host.root / 'executor-in-flight.json'
+        fence.write_text('{"state":"outcome_unknown"}')
+        with patch.object(self.host, 'process_gone', return_value=False), patch.object(self.host, 'ensure') as launch:
+            self.assertEqual(self.host.prepare_cookie_import(), {'code': 'destination_running'})
+            launch.assert_not_called()
+            self.assertTrue(fence.exists())
+        self.host.record.unlink()
+        with patch.object(self.host, 'ensure') as launch:
+            self.assertEqual(self.host.prepare_cookie_import(), {'code': 'uncertain'})
+            launch.assert_not_called()
+
+    def test_cookie_import_retires_fence_only_after_confirmed_exit(self):
+        self.host.persist(self.owner)
+        fence = self.host.root / 'executor-in-flight.json'
+        fence.write_text('{"state":"outcome_unknown"}')
+        self.host.owner = dict(self.owner, browserPath='/devtools/browser/fixture')
+        with patch.object(self.host, 'process_gone', return_value=True), patch.object(self.host, 'ensure', return_value='http://127.0.0.1:9233') as launch:
+            self.assertEqual(self.host.prepare_cookie_import(), {'webSocketURL': 'ws://127.0.0.1:9233/devtools/browser/fixture'})
+            self.assertEqual(launch.call_count, 1)
+            self.assertFalse(fence.exists())
+
     def test_foreign_live_process_is_not_adopted(self):
         self.host.persist(self.owner)
         with patch.object(self.host, 'process_field', return_value='foreign'), patch('chrome_host.subprocess.Popen') as launch:

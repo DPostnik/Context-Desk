@@ -9,6 +9,7 @@ struct ChatBrowserControls: View {
     @State private var running: Bool?
     @State private var operating = false
     @State private var error: String?
+    @State private var importingCookies = false
 
     var body: some View {
         Menu {
@@ -19,6 +20,9 @@ struct ChatBrowserControls: View {
             Button(L10n.text("Проверить состояние", "Check status")) { perform() }
             Button(L10n.text("Закрыть браузер", "Close browser")) { perform(close: true) }
                 .disabled(busy)
+            Divider()
+            Button(L10n.text("Импортировать входы из Chrome…", "Import sign-ins from Chrome…")) { importingCookies = true }
+                .disabled(busy)
             Text(L10n.text("Следующее обращение агента откроет новый сеанс с тем же профилем.",
                            "The next explicit browser open starts a new session with the same profile."))
         } label: {
@@ -26,6 +30,9 @@ struct ChatBrowserControls: View {
         }
         .disabled(operating)
         .id(session)
+        .sheet(isPresented: $importingCookies) {
+            ChromeCookieImportView(session: session) { perform() }
+        }
         .alert(L10n.text("Браузер чата", "Chat browser"), isPresented: Binding(
             get: { error != nil }, set: { if !$0 { error = nil } })) {
                 Button(L10n.text("Закрыть", "Dismiss")) { error = nil }

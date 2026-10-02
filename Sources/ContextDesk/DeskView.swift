@@ -834,7 +834,7 @@ struct SettingsView: View {
             Section(L10n.text("Браузер", "Browser")) {
                 Toggle(L10n.text("Использовать Chrome DevTools", "Use Chrome DevTools"),
                        isOn: Binding(get: { model.state.browserEnabled == true }, set: { model.selectBrowserEnabled($0) }))
-                Text(L10n.text("У каждого чата свой Chrome for Testing и сохранённый профиль. Чаты работают параллельно. Войди на сайты отдельно в каждом профиле; существующие профили не копируются. Браузеры остаются открытыми после переподключения.", "Each chat has its own Chrome for Testing and saved profile. Chats work in parallel. Sign in separately in each profile; existing profiles are not copied. Browsers stay open after reconnecting."))
+                Text(L10n.text("У каждого чата свой Chrome for Testing и сохранённый профиль. Чаты работают параллельно. В меню «Браузер» можно импортировать входы из выбранного профиля Chrome или войти на сайты вручную. Браузеры остаются открытыми после переподключения.", "Each chat has its own Chrome for Testing and saved profile. Chats work in parallel. Use the Browser menu to import sign-ins from a selected Chrome profile, or sign in manually. Browsers stay open after reconnecting."))
                     .font(.callout).foregroundStyle(.secondary)
                 Picker(L10n.text("Одновременно открытых браузеров", "Simultaneously open browsers"), selection: $parallelBrowserLimit) {
                     ForEach(1...8, id: \.self) { Text(String($0)).tag($0) }

@@ -24,10 +24,10 @@ after current tasks finish. The agent opens the separate Chrome for Testing app
 on first use, in manual debugging mode, then the adapter attaches.
 The Apply button remains disabled during chat or background tasks; wait for them
 to finish or stop the relevant chat task before reconnecting. No actions are replayed.
-Sign in manually in the new testing-profile. Existing agent profile data is left
+Sign in manually in the new testing-profile, or use Browser → Import sign-ins from Chrome… in the chat. Existing agent profile data is left
 in place, but is not migrated; site sign-ins and Google account sync are not guaranteed. Google still decides whether to accept sign-in. Chrome
 stays open across adapter reconnects; close its window yourself when finished.
-This does not copy your normal Chrome or Codex credentials.
+Existing profiles are never adopted. Website cookies are copied only by an explicit native import; Codex authentication files are never copied.
 The component is disabled by default. Turning it off also requires Apply or restart.
 
 Browser data lives in `~/Library/Application Support/Context Desk/browser/`.
@@ -65,11 +65,10 @@ python3 BrowserRuntime/install.py
 адаптер подключится после запуска. Кнопка применения недоступна во время задач
 в чатах и фоновой обработки: дождись завершения или останови нужную задачу
 в её чате перед переподключением. Действия не повторяются.
-Войди на сайты заново в testing-profile. Старый профиль агента остаётся на месте,
+Войди на сайты в testing-profile или импортируй cookies через меню браузера чата. Старый профиль агента остаётся на месте,
 но не переносится. Вход на сайты и синхронизация Google не гарантируются.
 Решение о разрешении входа принимает Google.
-Chrome остаётся открытым при переподключении адаптера; закрой его окно, когда закончишь. Данные входа
-обычного Chrome и Codex не копируются. По умолчанию компонент выключен. Отключение
+Chrome остаётся открытым при переподключении адаптера; закрой его окно, когда закончишь. Cookies сайтов можно импортировать явно через меню браузера чата. Файлы авторизации Codex не копируются. По умолчанию компонент выключен. Отключение
 тоже применяется кнопкой или после перезапуска.
 
 Данные находятся в `~/Library/Application Support/Context Desk/browser/`.
@@ -103,7 +102,7 @@ Chrome остаётся открытым при переподключении �
 - Upstream MCP is pinned to 2025-11-25; client protocols 2025-06-18 and 2025-11-25
   are explicitly supported. Unknown requests fail closed. Transport
   uncertainty or cancellation stops the executor; reconnect is manual.
-- No interception of normal Chrome, inherited login state, remote debugging
+- No interception of normal Chrome, automatic login inheritance, remote debugging
   attachment to arbitrary browsers, or browsing of other tasks' tabs is exposed.
 
 Run `python3 -m unittest discover -s BrowserRuntime -p 'test_*.py'` for offline
@@ -149,8 +148,8 @@ English: each Context Desk Codex chat receives a host-generated environment UUID
 through its thread-specific MCP configuration. The saved native thread binding
 survives reconnects and app restarts. Browser files are under
 `environments/<UUID>/`; installation files remain shared. The old `testing-profile`
-is left untouched and is not copied into new profiles. Sign in manually in each
-new profile. Turning the browser setting off explicitly disables the saved MCP
+is left untouched and is not copied into new profiles. Sign in manually or use
+the explicit Chrome cookie import in each new chat. Turning the browser setting off explicitly disables the saved MCP
 configuration when a thread is resumed.
 
 Each environment has its own Chrome process, debugging port, MCP executor, queue,
@@ -182,7 +181,7 @@ system mouse/keyboard input still share the macOS desktop.
 У каждого чата отдельные профиль, процесс Chrome, исполнитель, очередь и журнал
 действий. Зависание или неопределённый результат в одной среде не блокируют другую.
 Действия автоматически не повторяются. Старый профиль остаётся на месте и не
-копируется; войди на сайты вручную в каждом новом профиле. Отключение браузера
+копируется; войди на сайты вручную или явно импортируй cookies из Chrome в меню браузера чата. Отключение браузера
 явно отключает сохранённую конфигурацию при возобновлении чата.
 
 В настройках браузера выбери лимит открытых браузеров: по умолчанию 2, допустимо
@@ -259,3 +258,56 @@ SHA-256 и времени изменения записи. Исполнител�
 после получения прежней блокировки, сохраняет запись и разрешение в архив и не
 отправляет никаких операций. Изменившаяся запись или известное изменяющее действие
 не подходят под разрешение. Записи actionID остаются неизменными.
+
+
+## Explicit Chrome cookie import
+
+Browser → Import sign-ins from Chrome… opens a native profile picker. Quit regular
+Google Chrome with Cmd+Q and close this chat's managed browser before importing.
+Select a source profile and click Import; macOS may ask for Chrome Safe Storage
+access in Keychain. Supported website cookies become available to this chat's
+browser and agent. Matching destination cookies are replaced. No passwords,
+Codex/Claude Code authentication files, bookmarks or other profile data are copied.
+
+The importer reads an encrypted snapshot of the selected standard Chrome profile
+and decrypts supported macOS v10 cookies in memory. Only reviewed database schemas
+23/24 are accepted. Domain hashes in schema 24 are verified. Partitioned, expired
+or unsupported cookies are skipped. A running source, pending WAL or symlinked
+source profile blocks import. The source database is never opened by SQLite or
+modified. Imported cookies retain domain/host scope, path, Secure, HttpOnly,
+SameSite and session/expiry semantics. The profile choice, not the secret values,
+is remembered in app preferences.
+
+The native host holds the environment operation lock while preparing the owned
+Chrome, issuing a single CDP Storage.setCookies and verifying Storage.getCookies.
+A durable fence blocks agent operations after an uncertain write; no automatic
+retry occurs. Review Chrome and quit it with Cmd+Q before a fresh attempt. The
+helper receives no cookies. Decrypted values are never written to logs, temporary
+files or agent messages. Chrome owns persistence in the destination profile.
+
+The result counts verified cookies, not authenticated websites. Some sites need
+localStorage, device-bound sessions or a new login. Session cookies retain their
+session lifetime. A new chat needs its own explicit import; there is no shared
+login vault, background sync or automatic seeding.
+
+Русский: в чате открой «Браузер → Импортировать входы из Chrome…». Заверши обычный
+Chrome через Cmd+Q и закрой браузер чата. Выбери профиль и нажми «Импортировать»;
+macOS может запросить доступ к Chrome Safe Storage в Связке ключей. Cookies сайтов
+станут доступны браузеру и агенту этого чата; совпадающие cookies будут заменены.
+Пароли, файлы авторизации Codex / Claude Code и остальные данные профиля не
+переносятся. Исходный профиль не изменяется.
+
+Просроченные, разделённые по сайтам (partitioned) и неподдерживаемые cookies
+пропускаются. Результат показывает количество проверенных cookies, а не число
+выполненных входов: некоторым сайтам нужен повторный вход или другие данные.
+Cookies сеанса сохраняют свой срок жизни. Новому чату нужен отдельный явный импорт.
+При неопределённом результате автоматического повтора нет; проверь браузер и
+заверши его через Cmd+Q перед новой попыткой. Расшифрованные значения cookies не попадают в
+журналы, сообщения агента или временные файлы.
+
+Development: ChromeCookieTests uses synthetic encrypted SQLite fixtures and
+known OpenSSL vectors. ChromeCookieLiveTests is opt-in with
+`CONTEXTDESK_COOKIE_SMOKE=1 zsh scripts/test.sh`; it uses isolated Chrome for
+Testing profiles and a loopback HTTP fixture only, never the user's Chrome data
+or Keychain. It checks cookie transmission, HttpOnly, restart persistence and
+chat isolation.
