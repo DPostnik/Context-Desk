@@ -2,8 +2,8 @@ import Foundation
 
 /// Exact engine builds checked against the adapter contract; never accept a version range.
 enum CodexProtocolCompatibility {
-    static let currentVersion = "0.159.2"
-    static let supportedVersions = ["0.158.0-alpha.2.1", "0.159.0", currentVersion]
+    static let currentVersion = "0.160.0"
+    static let supportedVersions = ["0.158.0-alpha.2.1", "0.159.0", "0.159.2", currentVersion]
 
     static func accepts(userAgent: String) -> Bool {
         // initialize identifies the client first, then the engine version. Ignore later

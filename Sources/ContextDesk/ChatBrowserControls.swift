@@ -5,11 +5,15 @@ import ContextCore
 /// Controls are bound to the saved native session, never the currently focused window.
 struct ChatBrowserControls: View {
     let session: String
+    let project: String
     let busy: Bool
+    let ownerNames: [String: String]
+    let changeProfile: (BrowserProfileAction) async throws -> Void
     @State private var running: Bool?
     @State private var operating = false
     @State private var error: String?
     @State private var importingCookies = false
+    @State private var showingProfiles = false
 
     var body: some View {
         Menu {
@@ -21,7 +25,9 @@ struct ChatBrowserControls: View {
             Button(L10n.text("Закрыть браузер", "Close browser")) { perform(close: true) }
                 .disabled(busy)
             Divider()
-            Button(L10n.text("Импортировать входы из Chrome…", "Import sign-ins from Chrome…")) { importingCookies = true }
+            Button(L10n.text("Профили и управление…", "Profiles and control…")) { showingProfiles = true }
+                .disabled(busy)
+            Button(L10n.text("Импортировать только cookies…", "Import cookies only…")) { importingCookies = true }
                 .disabled(busy)
             Text(L10n.text("Следующее обращение агента откроет новый сеанс с тем же профилем.",
                            "The next explicit browser open starts a new session with the same profile."))
@@ -33,6 +39,9 @@ struct ChatBrowserControls: View {
         .sheet(isPresented: $importingCookies) {
             ChromeCookieImportView(session: session) { perform() }
         }
+        .sheet(isPresented: $showingProfiles) {
+            BrowserProfilesView(session: session, project: project, ownerNames: ownerNames, change: changeProfile)
+        }
         .alert(L10n.text("Браузер чата", "Chat browser"), isPresented: Binding(
             get: { error != nil }, set: { if !$0 { error = nil } })) {
                 Button(L10n.text("Закрыть", "Dismiss")) { error = nil }
@@ -43,7 +52,6 @@ struct ChatBrowserControls: View {
         guard !operating, !close || !busy else { return }
         operating = true
         let nativeID = session
-        let language = L10n.language.rawValue
         let resources = Bundle.main.resourceURL
         Task {
             defer { operating = false }
@@ -55,16 +63,11 @@ struct ChatBrowserControls: View {
                     return
                 }
                 let output = try await Task.detached {
-                    let process = Process(), pipe = Pipe()
-                    process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-                    process.arguments = ["-B", resources.appendingPathComponent("BrowserRuntime/chrome_host.py").path,
-                                         "--root", root.path, "--language", language] + (close ? ["--close"] : [])
-                    process.standardOutput = pipe
-                    process.standardError = FileHandle.nullDevice
-                    try process.run()
-                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                    process.waitUntilExit()
-                    return try JSONDecoder().decode(BrowserControlResult.self, from: data)
+                    let store = BrowserProfileStore()
+                    let reference = AgentSessionReference(connection: .originalCodex, nativeID: nativeID)
+                    let grant = try store.current(session: reference) == nil ? nil : store.ownedGrant(session: reference, allowHuman: true)
+                    return try BrowserProfileControl.status(environment: root,
+                        runtime: resources.appendingPathComponent("BrowserRuntime"), grant: grant, close: close)
                 }.value
                 if let message = output.error { error = message; running = nil; return }
                 running = output.running
@@ -83,10 +86,4 @@ struct ChatBrowserControls: View {
             }
         }
     }
-}
-
-private struct BrowserControlResult: Decodable, Sendable {
-    let running: Bool?
-    let pid: Int32?
-    let error: String?
 }

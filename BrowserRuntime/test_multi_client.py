@@ -91,9 +91,11 @@ class MultiClientTests(unittest.TestCase):
             self.assertLess(time.monotonic(), deadline)
             time.sleep(0.02)
 
-    def client(self, language='en', workspace=None, limit=2):
+    def client(self, language='en', workspace=None, limit=2, lease=None):
         command = [sys.executable, '-B', str(RUNTIME / 'server.py'), '--root', str(self.root), '--language', language,
                    '--max-browsers', str(limit)]
+        if lease is not None:
+            command += ['--profile-lease', lease]
         client = StdioRPC(command, cwd=str(workspace) if workspace else None).start()
         self.clients.append(client)
         info = client.initialize_mcp(expected_server_version=server.VERSION)

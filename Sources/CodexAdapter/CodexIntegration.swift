@@ -13,6 +13,7 @@ public actor CodexIntegration: AgentIntegration {
     private let client: CodexClient
     private var observer: Task<Void, Never>?
     private var routes: Set<AgentRoute> = [.direct]
+    private var browserProfilesEnabled = false
     private var providerArguments: [String] = []
     private var dispatched = Set<UUID>()
     private var turnContexts: [AgentSessionReference: [String: AgentContext]] = [:]
@@ -68,6 +69,7 @@ public actor CodexIntegration: AgentIntegration {
                                    extraArguments: arguments,
                                    browserResources: configuration.browserEnabled ? configuration.resources : nil)
             providerArguments = arguments
+            browserProfilesEnabled = configuration.browserEnabled
             routes = Set([.direct] + configuration.optimizers.map { .optimizer(id: $0.id) })
             let result = await descriptor()
             if case .success(let value) = result { sink.yield(.init(session: nil, payload: .descriptor(value))) }
@@ -81,15 +83,16 @@ public actor CodexIntegration: AgentIntegration {
         guard CodexProtocolCompatibility.accepts(userAgent: version) else { return .rejected(.incompatibleContract) }
         let epoch = await client.transport.accountEpoch
         return .success(AgentDescriptor(context: .init(connection: .originalCodex, accountRevision: epoch), identityMode: .appOwnedHome,
-            capabilities: [.interactiveSessions, .scheduledExecution, .isolatedGeneration, .history, .archive, .streaming,
+            capabilities: Set<AgentCapability>([.interactiveSessions, .scheduledExecution, .isolatedGeneration, .history, .archive, .streaming,
                            .approvals, .userQuestions, .interruption, .authenticationManagement, .modelDiscovery,
-                           .usage, .accountLimits, .workflowRegistration], permissions: .codexProjectPolicy, routes: routes))
+                           .usage, .accountLimits, .workflowRegistration]).union(browserProfilesEnabled ? [.browserProfiles] : []), permissions: .codexProjectPolicy, routes: routes))
     }
     public func disconnect() async {
         interactionContexts.removeAll(); turnContexts.removeAll(); finishedTurns.removeAll()
         for runner in generations.values { await runner.stop() }
         await client.stop()
         routes = [.direct]; providerArguments = []; sessionRoutes.removeAll()
+        browserProfilesEnabled = false
     }
     private func current() async throws -> AgentDescriptor {
         try await descriptor().value()
@@ -175,7 +178,7 @@ public actor CodexIntegration: AgentIntegration {
                     self.sessionRoutes[session] = (request.route, request.model.context)
                     return session
                 }
-                let session = try await self.client.createSession(projectPath: request.projectPath, access: access, model: request.model.model, route: route)
+                let session = try await self.client.createSession(projectPath: request.projectPath, access: access, model: request.model.model, route: route, browserProfile: request.browserProfile)
                 self.sessionRoutes[session] = (request.route, request.model.context)
                 return session
             }

@@ -1,28 +1,45 @@
 import Foundation
 import Darwin
 
-public struct ChromeCookieImportResult: Sendable {
+public struct ChromeCookieImportResult: Codable, Equatable, Sendable {
     public let verified: Int
     public let skipped: Int
     public let unverified: Int
+}
+
+public struct ChromeCookieImportReceipt: Codable, Sendable {
+    public let date: Date
+    public let result: ChromeCookieImportResult
+    public static func last(environment: URL) throws -> Self? {
+        let file = environment.appendingPathComponent("cookie-import-receipt.json")
+        guard FileManager.default.fileExists(atPath: file.path) else { return nil }
+        return try JSONDecoder().decode(Self.self, from: Data(contentsOf: file))
+    }
 }
 
 /// An explicit native UI operation, never an agent tool. All cookie values remain
 /// in memory until Chrome persists them in this chat's existing dedicated profile.
 public enum ChromeCookieImporter {
     public static func run(profile: String, environment: URL, runtime: URL, maxBrowsers: Int,
+                           grant: BrowserProfileGrant? = nil,
                            sourceIsRunning: @Sendable () -> Bool) async throws -> ChromeCookieImportResult {
+        guard let id = UUID(uuidString: environment.lastPathComponent) else { throw ChromeCookieError.missingEnvironment }
+        try BrowserProfileStore().validate(grant, environment: id, allowHuman: true)
         let read = try ChromeCookieSource.read(profile: profile, sourceIsRunning: sourceIsRunning)
-        do { return try await transfer(read, environment: environment, runtime: runtime, maxBrowsers: maxBrowsers) }
+        do { return try await transfer(read, environment: environment, runtime: runtime, maxBrowsers: maxBrowsers, grant: grant) }
         catch let error as ChromeCookieError { throw error }
+        catch let error as BrowserProfileError { throw error }
         catch { throw ChromeCookieError.connection }
     }
 
     static func transfer(_ read: ChromeCookieRead, environment: URL, runtime: URL, maxBrowsers: Int,
+                         grant: BrowserProfileGrant? = nil,
                          browserRoot: URL = BrowserEnvironmentStore.directory) async throws -> ChromeCookieImportResult {
         guard !read.cookies.isEmpty else { throw ChromeCookieError.empty }
         let lock = try CookieImportLock(environment: environment, browserRoot: browserRoot)
         defer { lock.release() }
+        guard let id = UUID(uuidString: environment.lastPathComponent) else { throw ChromeCookieError.missingEnvironment }
+        try BrowserProfileStore(root: browserRoot).validate(grant, environment: id, allowHuman: true)
         try Task.checkCancellation()
         let endpoint = try prepare(environment: environment, runtime: runtime, maxBrowsers: maxBrowsers)
         let connection = try CookieCDP(endpoint: endpoint)
@@ -55,8 +72,12 @@ public enum ChromeCookieImporter {
                 indexed[[cookie.host, cookie.name, cookie.path], default: []].contains { cookie.matches($0) }
             }.count
             // A completed read confirms the actual state, including partial rejection.
+            let result = ChromeCookieImportResult(verified: verified, skipped: read.skipped, unverified: read.cookies.count - verified)
+            let receipt = fence.deletingLastPathComponent().appendingPathComponent("cookie-import-receipt.json")
+            try JSONEncoder().encode(ChromeCookieImportReceipt(date: Date(), result: result)).write(to: receipt, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: receipt.path)
             try FileManager.default.removeItem(at: fence)
-            return ChromeCookieImportResult(verified: verified, skipped: read.skipped, unverified: read.cookies.count - verified)
+            return result
         } catch {
             // Never surface protocol errors: a remote response can contain secrets.
             throw ChromeCookieError.uncertain
@@ -100,7 +121,7 @@ final class CookieImportLock {
             close(descriptor); descriptor = -1; throw ChromeCookieError.browserBusy
         }
     }
-    func release() { if descriptor >= 0 { close(descriptor); descriptor = -1 } }
+    func release() { if descriptor >= 0 { flock(descriptor, LOCK_UN); close(descriptor); descriptor = -1 } }
     deinit { release() }
 }
 

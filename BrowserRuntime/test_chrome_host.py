@@ -1,4 +1,6 @@
 import io
+import base64
+import hashlib
 import json
 from pathlib import Path
 import tempfile
@@ -24,6 +26,38 @@ class ChromeHostTests(unittest.TestCase):
         self.assertIn('--remote-debugging-port=9233', command)
         with self.assertRaises(ValueError):
             chrome_command(self.owner['executable'], self.host.profile, 0)
+
+    def test_graceful_close_sends_one_masked_fixed_command_after_endpoint_recheck(self):
+        owner = dict(self.owner, browserPath='/devtools/browser/fixture')
+        key = base64.b64encode(b'k' * 16).decode()
+        accept = base64.b64encode(hashlib.sha1((key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').encode()).digest())
+        header = b'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ' + accept + b'\r\n\r\n'
+        connection = Mock()
+        connection.recv.side_effect = [header, b'']
+        context = Mock()
+        context.__enter__ = Mock(return_value=connection)
+        context.__exit__ = Mock(return_value=False)
+        with patch('chrome_host.os.urandom', side_effect=[b'k' * 16, b'mask']), patch('chrome_host.socket.create_connection', return_value=context) as connect, \
+             patch.object(self.host, 'matches', return_value=True), patch.object(self.host, 'owns_listener', return_value=True):
+            self.host.graceful_close(owner)
+        connect.assert_called_once_with(('127.0.0.1', owner['port']), timeout=2)
+        self.assertEqual(connection.sendall.call_count, 2)
+        frame = connection.sendall.call_args.args[0]
+        self.assertEqual(frame[0], 0x81)
+        self.assertEqual(frame[1] & 0x80, 0x80)
+        mask, encoded = frame[2:6], frame[6:]
+        self.assertEqual(json.loads(bytes(b ^ mask[i % 4] for i, b in enumerate(encoded))), {'id': 1, 'method': 'Browser.close'})
+
+    def test_graceful_close_rejects_bad_handshake_before_command(self):
+        connection = Mock()
+        connection.recv.return_value = b'HTTP/1.1 200 OK\r\n\r\n'
+        context = Mock()
+        context.__enter__ = Mock(return_value=connection)
+        context.__exit__ = Mock(return_value=False)
+        with patch('chrome_host.socket.create_connection', return_value=context):
+            with self.assertRaises(ChromeLaunchError):
+                self.host.graceful_close(dict(self.owner, browserPath='/devtools/browser/fixture'))
+        self.assertEqual(connection.sendall.call_count, 1)
 
     def test_regular_chrome_and_legacy_profile_are_never_adopted(self):
         legacy = dict(self.owner, executable='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')

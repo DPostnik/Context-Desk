@@ -500,12 +500,21 @@ struct ChatView: View {
                 if let chat = model.selectedChat {
                     if model.state.browserEnabled == true, let session = chat.nativeSession,
                        session.connection == .originalCodex {
-                        ChatBrowserControls(session: session.nativeID, busy: model.isBusy(threadID: chat.id))
+                        ChatBrowserControls(session: session.nativeID, project: model.selectedProject?.path ?? "",
+                                            busy: model.isBusy(threadID: chat.id) || model.isChangingChat(chat.id),
+                                            ownerNames: model.browserProfileOwnerNames) { action in
+                            try await model.changeBrowserProfile(chatID: chat.id, action: action)
+                        }
                             .id(session.nativeID)
                     }
                     Button(L10n.text("Передать контекст…", "Hand off context…")) {
                         Task { handoff = await model.prepareHandoff(chat) }
                     }.disabled(model.loadingChat || model.creatingHandoff)
+                } else if model.state.browserEnabled == true, model.state.defaultConnection == .originalCodex, let project = model.selectedProject {
+                    NewChatBrowserProfilePicker(project: project.path, ownerNames: model.browserProfileOwnerNames, selection: Binding(
+                        get: { model.newChatBrowserProfiles[project.id] },
+                        set: { model.newChatBrowserProfiles[project.id] = $0 }))
+                        .disabled(model.sending)
                 }
             }.padding(.horizontal, 24).padding(.vertical, 12)
                 .overlay(alignment: .bottom) { DeskPalette.border.frame(height: 0.5) }

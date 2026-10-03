@@ -37,6 +37,8 @@ private struct ChatRunState {
     let mobileRemote = MobileRemoteHost()
     private var remoteDeliveryResults: [String: Bool] = [:]
     private var configuringRemoteChats: Set<String> = []
+    @Published var configuringBrowserChats: Set<String> = []
+    @Published var newChatBrowserProfiles: [UUID: UUID] = [:]
     @Published private(set) var plugins: [ProviderPlugin] = []
     @Published private(set) var pluginIssues: [String] = []
     @Published private(set) var pluginStatuses: [String: PluginStatus] = [:]
@@ -120,7 +122,7 @@ private struct ChatRunState {
     @Published private var runs: [String: ChatRunState] = [:]
     @Published private(set) var deletingChatIDs: Set<String> = []
     @Published private(set) var archivingChatIDs: Set<String> = []
-    func isChangingChat(_ id: String) -> Bool { deletingChatIDs.contains(id) || archivingChatIDs.contains(id) || configuringRemoteChats.contains(id) }
+    func isChangingChat(_ id: String) -> Bool { deletingChatIDs.contains(id) || archivingChatIDs.contains(id) || configuringRemoteChats.contains(id) || configuringBrowserChats.contains(id) }
     func isArchived(_ id: String) -> Bool { state.chats.first { $0.id == id }?.isArchived == true }
     var selectedChatIsArchived: Bool { selectedChat?.isArchived == true }
     private var completedTurns: [String: (status: AgentExecutionOutcome, hasError: Bool)] = [:]
@@ -840,8 +842,13 @@ private struct ChatRunState {
             }
             var id = threadID
             if id == nil {
+                let browserProfile = scheduledRun == nil && state.defaultConnection == .originalCodex && state.browserEnabled == true
+                    ? newChatBrowserProfiles[project.id].map { AgentBrowserProfile(id: $0) } : nil
                 let session = try await connection.createSession(projectPath: project.path, access: access,
-                                                                 model: selectedModel, route: route)
+                                                                 model: selectedModel, route: route, browserProfile: browserProfile)
+                if let browserProfile, newChatBrowserProfiles[project.id] == browserProfile.id {
+                    newChatBrowserProfiles.removeValue(forKey: project.id)
+                }
                 let nativeCreated = session.nativeID
                 guard ConversationIdentity.appID(for: nativeCreated, in: state) == nil else { throw ConversationIdentity.invalidStorage }
                 var chat = Chat(session: session, projectID: project.id, title: ChatTitle.placeholder(), model: selectedModel)

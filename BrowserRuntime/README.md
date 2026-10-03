@@ -24,7 +24,7 @@ after current tasks finish. The agent opens the separate Chrome for Testing app
 on first use, in manual debugging mode, then the adapter attaches.
 The Apply button remains disabled during chat or background tasks; wait for them
 to finish or stop the relevant chat task before reconnecting. No actions are replayed.
-Sign in manually in the new testing-profile, or use Browser → Import sign-ins from Chrome… in the chat. Existing agent profile data is left
+Sign in manually in the new testing-profile, or use Browser → Import cookies only… in the chat. Existing agent profile data is left
 in place, but is not migrated; site sign-ins and Google account sync are not guaranteed. Google still decides whether to accept sign-in. Chrome
 stays open across adapter reconnects; close its window yourself when finished.
 Existing profiles are never adopted. Website cookies are copied only by an explicit native import; Codex authentication files are never copied.
@@ -262,7 +262,7 @@ SHA-256 и времени изменения записи. Исполнител�
 
 ## Explicit Chrome cookie import
 
-Browser → Import sign-ins from Chrome… opens a native profile picker. Quit regular
+Browser → Import cookies only… opens a native profile picker. Quit regular
 Google Chrome with Cmd+Q and close this chat's managed browser before importing.
 Select a source profile and click Import; macOS may ask for Chrome Safe Storage
 access in Keychain. Supported website cookies become available to this chat's
@@ -287,10 +287,11 @@ files or agent messages. Chrome owns persistence in the destination profile.
 
 The result counts verified cookies, not authenticated websites. Some sites need
 localStorage, device-bound sessions or a new login. Session cookies retain their
-session lifetime. A new chat needs its own explicit import; there is no shared
-login vault, background sync or automatic seeding.
+session lifetime. A new separate profile needs its own explicit import; a saved
+profile can instead be reused as described below. There is no shared login vault,
+background sync or automatic seeding.
 
-Русский: в чате открой «Браузер → Импортировать входы из Chrome…». Заверши обычный
+Русский: в чате открой «Браузер → Импортировать только cookies…». Заверши обычный
 Chrome через Cmd+Q и закрой браузер чата. Выбери профиль и нажми «Импортировать»;
 macOS может запросить доступ к Chrome Safe Storage в Связке ключей. Cookies сайтов
 станут доступны браузеру и агенту этого чата; совпадающие cookies будут заменены.
@@ -300,7 +301,8 @@ macOS может запросить доступ к Chrome Safe Storage в Св�
 Просроченные, разделённые по сайтам (partitioned) и неподдерживаемые cookies
 пропускаются. Результат показывает количество проверенных cookies, а не число
 выполненных входов: некоторым сайтам нужен повторный вход или другие данные.
-Cookies сеанса сохраняют свой срок жизни. Новому чату нужен отдельный явный импорт.
+Cookies сеанса сохраняют свой срок жизни. Новому отдельному профилю нужен явный
+импорт; сохранённый профиль можно использовать повторно, как описано ниже.
 При неопределённом результате автоматического повтора нет; проверь браузер и
 заверши его через Cmd+Q перед новой попыткой. Расшифрованные значения cookies не попадают в
 журналы, сообщения агента или временные файлы.
@@ -311,3 +313,70 @@ known OpenSSL vectors. ChromeCookieLiveTests is opt-in with
 Testing profiles and a loopback HTTP fixture only, never the user's Chrome data
 or Keychain. It checks cookie transmission, HttpOnly, restart persistence and
 chat isolation.
+
+
+## Reusable profiles and native control
+
+Browser → Profiles and control… saves a name for the current profile. Close its
+Chrome with Browser → Close browser, then Release profile. Before sending the
+first message in a new chat in the same project, select that saved profile from
+the browser menu. A separate new profile remains the default. Existing idle chats
+can also select a saved profile or a new separate profile from the profile sheet.
+Selection is explicit and cannot take a profile away from another chat.
+
+The first release requires confirmed Chrome exit before switching or releasing a
+profile; it does not transfer live tabs. Persistent cookies, localStorage and
+IndexedDB stay in the same directory. Session cookies, tab sessionStorage,
+JavaScript memory and server expiry can still require another login. This feature
+does not copy localStorage/IndexedDB from ordinary Chrome, clone profiles for
+parallel work or migrate Chrome Sync/account avatars. The cookie import receipt
+retains only date/counts and explicitly leaves website authentication unverified.
+
+Take manual control pauses browser dispatch for that profile; Return control to
+chat requires a newly acknowledged provider configuration. These actions require
+an idle chat. Use Show browser to bring its window forward. Independent profiles
+remain usable. A saved profile can only be selected within its canonical project
+path and provider connection. Claude and scheduled jobs do not gain profile
+selection through this release.
+
+Implementation: `profiles.json` schema 1 stores the catalog and bindings hashed
+from full provider/connection/native-session identity. Existing original-Codex
+bindings migrate without relocating their profile. `profiles-required` prevents
+a missing catalog from restoring legacy access. Catalog changes use an OS lock,
+atomic replacement/fsync and the same per-environment operation lock as dispatch.
+Every queued operation rechecks the captured lease generation and project under
+that lock; model arguments cannot choose a profile or transfer ownership.
+A pending/configuring/human/released profile denies agent dispatch. Lost native
+configuration acknowledgement stays configuring until explicit recovery. There
+is no automatic takeover, replay, background synchronization or profile deletion.
+
+Native close records intent once, sends the fixed CDP `Browser.close` command to
+the verified owned endpoint and separately confirms process exit. It does not
+escalate to SIGTERM or resend an uncertain close. Graceful shutdown is required
+for prompt persistence of browser state. The bounded loopback handshake/command
+uses [CDP Browser.close](https://chromedevtools.github.io/devtools-protocol/tot/Browser/#method-close)
+and [RFC 6455](https://datatracker.ietf.org/doc/html/rfc6455); it is not a general
+WebSocket transport or an agent scripting tool.
+
+Русский: открой «Браузер → Профили и управление…» и сохрани название профиля.
+Закрой его через «Браузер → Закрыть браузер», затем нажми «Освободить профиль».
+В новом чате того же проекта выбери сохранённый профиль до первого сообщения.
+По умолчанию создаётся отдельный профиль. Занятый профиль нельзя забрать у другого
+чата; переключение в существующем чате доступно, когда он не выполняет задачу.
+
+Данные сайтов сохраняются в прежнем каталоге. Вкладки не передаются, поэтому вход,
+зависящий от вкладки или срока действия серверной сессии, может потребовать
+повторения. Расширенный импорт из обычного Chrome, параллельные копии и Chrome
+Sync сюда не входят. «Взять управление вручную» останавливает действия агента в
+этом профиле; «Вернуть управление чату» подключает его заново с подтверждением.
+Окно открывается на передний план через «Показать браузер». Другие отдельные
+профили продолжают работать. Возможность доступна для Codex, без изменения задач
+по расписанию и поддержки Claude. При неподтверждённом закрытии или подключении
+автоматического повтора нет.
+
+Development: `CONTEXTDESK_PROFILE_SMOKE=1 zsh scripts/test.sh` exercises real
+Chrome against a loopback site, verifies cookies/localStorage/IndexedDB after
+closed-profile handoff, and checks that a different profile remains signed out.
+Unit/process fixtures cover migration, provider/project scope, exclusive control,
+stale and queued clients, human control and lost configuration acknowledgement.
+No private website account or model inference is part of these checks.

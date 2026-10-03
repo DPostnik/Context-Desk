@@ -25,7 +25,7 @@ LIMIT = 8_000_000
 
 def revision():
     digest = hashlib.sha256()
-    for name in ('broker.py', 'server.py', 'transport.py', 'chrome_host.py', 'page_read.js', 'runtime.lock.json'):
+    for name in ('broker.py', 'server.py', 'transport.py', 'chrome_host.py', 'profiles.py', 'page_read.js', 'runtime.lock.json'):
         digest.update(Path(__file__).with_name(name).read_bytes())
     return digest.hexdigest()
 
@@ -90,12 +90,13 @@ class Wire:
 
 class RemoteBrowser:
     """MCP-facing client; never reconnects or resends after tool dispatch."""
-    def __init__(self, root, workspace, language, installation_root=None, max_browsers=2):
+    def __init__(self, root, workspace, language, installation_root=None, max_browsers=2, profile_lease=None):
         self.root = Path(root).resolve()
         self.workspace = str(Path(workspace).resolve(strict=True))
         self.language = language
         self.installation_root = Path(installation_root).resolve() if installation_root is not None else None
         self.max_browsers = max_browsers
+        self.profile_lease = profile_lease
         self.wire = None
         self.failed = False
         self.terminal = False
@@ -147,7 +148,7 @@ class RemoteBrowser:
                 wire.close()
                 raise EOFError('browser_start_cancelled_before_dispatch')
             wire.send({'hello': PROTOCOL, 'revision': BUILD_REVISION, 'workspace': self.workspace,
-                       'language': self.language, 'maxBrowsers': self.max_browsers})
+                       'language': self.language, 'maxBrowsers': self.max_browsers, 'profileLease': self.profile_lease})
             reply = wire.receive(deadline, self.stopped)
             if reply.get('hello') != PROTOCOL or reply.get('revision') != BUILD_REVISION:
                 wire.close()
@@ -187,8 +188,9 @@ class RemoteBrowser:
 
 
 class Client:
-    def __init__(self, wire, browser, language):
+    def __init__(self, wire, browser, language, profile_lease=None):
         self.wire, self.browser, self.language = wire, browser, language
+        self.profile_lease = profile_lease
         self.closed = threading.Event()
         self.pending = False
         self.last_id = 0
@@ -286,7 +288,7 @@ class Executor:
             if self.installation_root is not None:
                 options['installation_root'] = self.installation_root
                 options['max_browsers'] = limit
-            client = Client(wire, self.factory(self.root, **options), language)
+            client = Client(wire, self.factory(self.root, **options), language, hello.get('profileLease'))
             with self.clients_lock:
                 if len(self.clients) >= 32 or self.stopped.is_set():
                     return
@@ -349,6 +351,8 @@ class Executor:
                     fcntl.flock(operation_lock, fcntl.LOCK_EX)
                     if client.closed.is_set() or self.stopped.is_set():
                         continue
+                    from profiles import validate
+                    validate(self.root, client.profile_lease, browser.workspace, language=client.language)
                     server.require(not self.quarantine(), server.tr(
                         'Исход прошлой операции неизвестен. Действия остановлены без повтора. После проверки результата закрой выделенный Chrome; затем начни новую сессию.',
                         'A previous operation has an unknown outcome. Actions are stopped without replay. After reviewing the result, close the dedicated Chrome, then start a new session.'))

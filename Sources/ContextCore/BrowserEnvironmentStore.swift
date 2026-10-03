@@ -11,13 +11,23 @@ public enum BrowserEnvironmentStore {
     }
 
     public static func existingEnvironment(session: String, root: URL = directory) throws -> URL? {
-        let path = bindingPath(session: session, root: root)
-        guard FileManager.default.fileExists(atPath: path.path) else { return nil }
-        let id = try JSONDecoder().decode(UUID.self, from: Data(contentsOf: path))
+        if let profile = try BrowserProfileStore(root: root).current(session: .init(connection: .originalCodex, nativeID: session)) {
+            return root.appendingPathComponent("environments").appendingPathComponent(profile.id.uuidString.lowercased())
+        }
+        guard let id = try legacyEnvironment(session: session, root: root) else { return nil }
         return root.appendingPathComponent("environments").appendingPathComponent(id.uuidString.lowercased())
     }
 
+    static func legacyEnvironment(session: String, root: URL) throws -> UUID? {
+        let path = bindingPath(session: session, root: root)
+        guard FileManager.default.fileExists(atPath: path.path) else { return nil }
+        return try JSONDecoder().decode(UUID.self, from: Data(contentsOf: path))
+    }
+
     public static func environment(session: String, root: URL) throws -> UUID {
+        if let profile = try BrowserProfileStore(root: root).current(session: .init(connection: .originalCodex, nativeID: session)) {
+            return profile.id
+        }
         let path = bindingPath(session: session, root: root)
         if FileManager.default.fileExists(atPath: path.path) {
             return try JSONDecoder().decode(UUID.self, from: Data(contentsOf: path))

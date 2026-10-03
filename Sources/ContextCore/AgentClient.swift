@@ -64,16 +64,17 @@ public actor AgentClient {
     }
     private func request(prompt: String, session: AgentSessionReference?, projectPath: String, access: AccessMode,
                          model: String, effort: String = "", route: RequestRoute, kind: AgentExecutionRequest.Kind = .interactive,
-                         conversation: ConversationID = ConversationID(), context suppliedContext: AgentContext? = nil) async throws -> AgentExecutionRequest {
+                         conversation: ConversationID = ConversationID(), context suppliedContext: AgentContext? = nil,
+                         browserProfile: AgentBrowserProfile? = nil) async throws -> AgentExecutionRequest {
         let context: AgentContext
         if let suppliedContext { context = suppliedContext } else { context = try await descriptor().context }
         return AgentExecutionRequest(conversation: conversation, session: session, kind: kind, prompt: prompt, projectPath: projectPath,
             permissions: access == .fullAccess ? .unrestricted(approval: .never) : .workspaceWrite(root: projectPath, network: false, approval: .ask),
-            model: .init(context: context, model: model, effort: effort), route: route.agentRoute)
+            model: .init(context: context, model: model, effort: effort), route: route.agentRoute, browserProfile: browserProfile)
     }
     public func createSession(projectPath: String, access: AccessMode, model: String, route: RequestRoute,
-                              context: AgentContext? = nil) async throws -> AgentSessionReference {
-        let request = try await request(prompt: "", session: nil, projectPath: projectPath, access: access, model: model, route: route, context: context)
+                              context: AgentContext? = nil, browserProfile: AgentBrowserProfile? = nil) async throws -> AgentSessionReference {
+        let request = try await request(prompt: "", session: nil, projectPath: projectPath, access: access, model: model, route: route, context: context, browserProfile: browserProfile)
         let session = try await integration.prepare(request).value(); sessionRoutes[session] = route; sessionContexts[session] = request.model.context; return session
     }
     public func resume(_ session: AgentSessionReference, projectPath: String, access: AccessMode, route: RequestRoute) async throws {

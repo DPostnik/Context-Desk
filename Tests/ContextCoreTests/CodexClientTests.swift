@@ -22,7 +22,10 @@ private func commandFixture() throws -> (URL, URL) {
         else:
             calls.append({'method': method, 'params': p})
             if method == 'initialize': result = {'userAgent': 'fixture'}
-            if method == 'thread/start': result = {'thread': {'id': 'native-session'}}
+            if method == 'thread/start': result = {'thread': {'id': (root/'session-id').read_text() if (root/'session-id').exists() else 'native-session'}}
+            if method == 'thread/resume' and (root/'lose-resume').exists():
+                with (root/'resume-dispatches').open('a') as capture: capture.write('sent\n')
+                sys.exit(0)
             if method == 'turn/start': result = {'turn': {'id': 'native-turn'}}
             if method == 'account/read': result = {'account': {'planType': 'fixture-plan'}}
             if method == 'account/login/start':
@@ -161,4 +164,41 @@ private func commandFixture() throws -> (URL, URL) {
     let disabledCalls = try await disabledWire.request("test/calls").array
     #expect(disabledCalls.first { $0["method"].string == "thread/resume" }?["params"]["config"]["mcp_servers.context_desk_browser"]["enabled"].bool == false)
     await disabled.stop()
+}
+
+@Test func codexProfileSelectionUsesSameDirectoryAndLostConfigurationIsNotRetried() async throws {
+    let (rawRoot, executable) = try commandFixture()
+    let root = rawRoot.resolvingSymlinksInPath()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let resources = root.appendingPathComponent("Resources"), browserRoot = root.appendingPathComponent("browser")
+    let scripts = resources.appendingPathComponent("BrowserRuntime")
+    try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: browserRoot, withIntermediateDirectories: true)
+    try Data().write(to: scripts.appendingPathComponent("server.py"))
+    try Data("print('{\"running\":false}')\n".utf8).write(to: scripts.appendingPathComponent("chrome_host.py"))
+    try Data().write(to: browserRoot.appendingPathComponent("runtime.json"))
+    let wire = CodexConnection(), client = CodexClient(transport: wire)
+    try await client.start(executable: executable, home: root, browserResources: resources, browserRoot: browserRoot)
+    let first = try await client.createSession(projectPath: root.path, access: .standard, model: "", route: .direct)
+    let store = BrowserProfileStore(root: browserRoot)
+    let initial = try store.ownedGrant(session: first)
+    try store.rename(session: first, name: "Work")
+    try store.release(session: first, verifyClosed: { _ in })
+    try Data("second-session".utf8).write(to: root.appendingPathComponent("session-id"))
+    let second = try await client.createSession(projectPath: root.path, access: .standard, model: "", route: .direct,
+                                               browserProfile: .init(id: initial.environment))
+    let reused = try store.ownedGrant(session: second)
+    #expect(reused.environment == initial.environment && reused.generation != initial.generation)
+    let calls = try await wire.request("test/calls").array.filter { $0["method"].string == "thread/start" }
+    let args = calls.map { $0["params"]["config"]["mcp_servers.context_desk_browser"]["args"].array }
+    #expect(args.count == 2)
+    #expect(args.allSatisfy { $0.contains(.string(initial.environment.uuidString.lowercased())) })
+    #expect(args[1].contains(.string(reused.generation.uuidString.lowercased())))
+    await #expect(throws: BrowserProfileError.released) { try await client.resume(first, projectPath: root.path, access: .standard, route: .direct) }
+    try store.select(nil, session: second, project: root.path, verifyClosed: { _ in })
+    try Data().write(to: root.appendingPathComponent("lose-resume"))
+    await #expect(throws: (any Error).self) { try await client.resume(second, projectPath: root.path, access: .standard, route: .direct) }
+    await #expect(throws: BrowserProfileError.uncertain) { try await client.resume(second, projectPath: root.path, access: .standard, route: .direct) }
+    #expect(try String(contentsOf: root.appendingPathComponent("resume-dispatches"), encoding: .utf8) == "sent\n")
+    await client.stop()
 }

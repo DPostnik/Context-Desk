@@ -454,6 +454,7 @@ def main():
     parser.add_argument('--root', type=Path, default=ROOT)
     parser.add_argument('--language', choices=['ru', 'en'], default='en')
     parser.add_argument('--environment', type=uuid.UUID)
+    parser.add_argument('--profile-lease', type=uuid.UUID)
     parser.add_argument('--max-browsers', type=int, choices=range(1, 9), default=2)
     args = parser.parse_args()
     LANGUAGE = args.language
@@ -471,7 +472,8 @@ def main():
             root.mkdir(mode=0o700, exist_ok=True)
     browser = RemoteBrowser(root, Path.cwd(), LANGUAGE,
                             installation_root=installation_root if args.environment else None,
-                            max_browsers=args.max_browsers)
+                            max_browsers=args.max_browsers,
+                            profile_lease=str(args.profile_lease) if args.profile_lease else None)
     inbox = queue.Queue(maxsize=32)
     stopped = threading.Event()
     initialized = False

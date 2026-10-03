@@ -12,14 +12,15 @@ struct ChromeCookieImportView: View {
     @State private var importing = false
     @State private var error: String?
     @State private var result: ChromeCookieImportResult?
+    @State private var receipt: ChromeCookieImportReceipt?
     @AppStorage("chromeCookieSourceProfile") private var lastProfile = "Default"
     @AppStorage("parallelBrowserLimit") private var maxBrowsers = 2
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(L10n.text("Импортировать входы из Chrome", "Import sign-ins from Chrome")).font(.title2.bold())
-            Text(L10n.text("Cookies сайтов из выбранного профиля станут доступны браузеру и агенту этого чата. Они сохранятся в его отдельном профиле.",
-                           "Website cookies from the selected profile will be available to this chat’s browser and agent. They will stay in its separate profile."))
+            Text(L10n.text("Импортировать только cookies", "Import cookies only")).font(.title2.bold())
+            Text(L10n.text("Cookies сайтов станут доступны выбранному браузеру и агенту этого чата. Если профиль сохранён, они будут доступны и следующим чатам, которым ты передашь этот профиль.",
+                           "Website cookies will be available to this chat’s selected browser and agent. If you save the profile, later chats you assign to it will also have access."))
             Text(L10n.text("Заверши обычный Google Chrome через Cmd+Q. Если браузер чата открыт, сначала закрой его через меню «Браузер». macOS может запросить доступ к Chrome Safe Storage в Связке ключей.",
                            "Quit regular Google Chrome with Cmd+Q. If this chat’s browser is open, close it from the Browser menu first. macOS may request access to Chrome Safe Storage in Keychain."))
                 .font(.callout)
@@ -33,6 +34,15 @@ struct ChromeCookieImportView: View {
             Text(L10n.text("Импорт заменит совпадающие cookies. Некоторые сайты потребуют входа заново. Пароли и файлы авторизации Codex / Claude Code не переносятся.",
                            "Import replaces matching cookies. Some sites will require signing in again. Passwords and Codex / Claude Code authentication files are not transferred."))
                 .font(.caption).foregroundStyle(.secondary)
+            Text(L10n.text("localStorage, IndexedDB, аккаунт Chrome и значок профиля не переносятся. Проверка cookies не подтверждает вход на сайте.",
+                           "localStorage, IndexedDB, the Chrome account and profile avatar are not transferred. Cookie verification does not confirm website sign-in."))
+                .font(.caption).foregroundStyle(.secondary)
+            if let receipt, result == nil {
+                Text(L10n.text("Последний импорт: ", "Last import: ") + receipt.date.formatted(date: .abbreviated, time: .shortened) + " · " +
+                     L10n.text("Проверено cookies: \(receipt.result.verified). Вход на сайте не проверен.",
+                               "Cookies verified: \(receipt.result.verified). Website sign-in has not been checked."))
+                    .font(.callout)
+            }
             if let result {
                 Text(L10n.text("Проверено cookies: \(result.verified). Пропущено: \(result.skipped). Не подтверждено: \(result.unverified). Открой нужный сайт в браузере чата и проверь вход.",
                                "Cookies verified: \(result.verified). Skipped: \(result.skipped). Unverified: \(result.unverified). Open the site in this chat’s browser to check your sign-in."))
@@ -62,6 +72,9 @@ struct ChromeCookieImportView: View {
             defer { loading = false }
             do {
                 profiles = try await Task.detached { try ChromeCookieSource.profiles() }.value
+                if let environment = try BrowserEnvironmentStore.existingEnvironment(session: session) {
+                    receipt = try ChromeCookieImportReceipt.last(environment: environment)
+                }
                 selection = profiles.contains(where: { $0.id == lastProfile }) ? lastProfile : profiles.first?.id ?? ""
                 if profiles.isEmpty { error = L10n.text("Профили обычного Google Chrome не найдены.", "No regular Google Chrome profiles were found.") }
             } catch {
@@ -83,14 +96,16 @@ struct ChromeCookieImportView: View {
                     throw ChromeCookieError.missingEnvironment
                 }
                 result = try await Task.detached {
-                    try await ChromeCookieImporter.run(profile: profile, environment: root,
-                        runtime: resources.appendingPathComponent("BrowserRuntime"), maxBrowsers: limit,
+                    let store = BrowserProfileStore(), reference = AgentSessionReference(connection: .originalCodex, nativeID: nativeID)
+                    let grant = try store.current(session: reference) == nil ? nil : store.ownedGrant(session: reference, allowHuman: true)
+                    return try await ChromeCookieImporter.run(profile: profile, environment: root,
+                        runtime: resources.appendingPathComponent("BrowserRuntime"), maxBrowsers: limit, grant: grant,
                         sourceIsRunning: { !NSRunningApplication.runningApplications(withBundleIdentifier: "com.google.Chrome").isEmpty })
                 }.value
                 lastProfile = profile
                 onImported()
             } catch {
-                self.error = (error as? ChromeCookieError ?? .unavailable).localizedDescription
+                self.error = (error as? BrowserProfileError)?.localizedDescription ?? (error as? ChromeCookieError ?? .unavailable).localizedDescription
             }
         }
     }

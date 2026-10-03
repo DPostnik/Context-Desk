@@ -40,7 +40,7 @@ public enum BrowserConfiguration {
         ].flatMap { ["-c", $0] }
     }
 
-    static func threadConfiguration(resources: URL?, root: URL, environment: UUID?) throws -> JSONValue {
+    static func threadConfiguration(resources: URL?, root: URL, environment: UUID?, grant: BrowserProfileGrant? = nil) throws -> JSONValue {
         guard let resources, let environment else {
             // A disabled table still needs a valid transport. Override saved
             // thread configuration explicitly without launching any process.
@@ -56,7 +56,8 @@ public enum BrowserConfiguration {
                             "--root", root.path, "--environment", environment.uuidString.lowercased(),
                             "--max-browsers", String((1...8).contains(UserDefaults.standard.integer(forKey: parallelLimitKey))
                                 ? UserDefaults.standard.integer(forKey: parallelLimitKey) : 2),
-                            "--language", L10n.language.rawValue].map(JSONValue.string)),
+                            "--language", L10n.language.rawValue].map(JSONValue.string) +
+                           (grant.map { [.string("--profile-lease"), .string($0.generation.uuidString.lowercased())] } ?? [])),
             "enabled": .bool(true), "required": .bool(true),
             "startup_timeout_sec": .number(30), "tool_timeout_sec": .number(90)
         ])])

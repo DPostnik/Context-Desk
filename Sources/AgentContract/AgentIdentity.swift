@@ -64,6 +64,7 @@ public enum AgentCapability: String, Codable, CaseIterable, Sendable {
     case history, archive, streaming, approvals, userQuestions, interruption
     case authenticationManagement, modelDiscovery, usage, accountLimits
     case toolRegistration, workflowRegistration
+    case browserProfiles
 }
 
 /// These are restrictions, not provider-specific sandbox names.
@@ -112,6 +113,10 @@ public struct AgentDescriptor: Sendable {
         guard request.model.context == context else { return .staleContext }
         if let session = request.session, session.connection != context.connection { return .wrongConnection }
         guard capabilities.contains(request.kind.capability) else { return .unsupported(request.kind.capability) }
+        if request.browserProfile != nil {
+            guard capabilities.contains(.browserProfiles) else { return .unsupported(.browserProfiles) }
+            guard request.kind == .interactive, request.session == nil else { return .invalidInput }
+        }
         guard routes.contains(request.route) else { return .routeUnavailable }
         guard permissions.accepts(request.permissions) else { return .unsupportedPermissions }
         if case .workspaceWrite(let root, _, _) = request.permissions,

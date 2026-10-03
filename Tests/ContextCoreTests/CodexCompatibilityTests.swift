@@ -5,10 +5,10 @@ import Foundation
 import Testing
 
 @Test func codexVersionGateUsesOnlyTheEngineProductToken() {
-    for agent in ["context_desk/0.159.2 (Mac OS; arm64)", "context_desk/0.159.0 (Mac OS; arm64)", "codex/0.158.0-alpha.2.1 fixture"] {
+    for agent in ["context_desk/0.160.0 (Mac OS; arm64)", "context_desk/0.159.2 (Mac OS; arm64)", "context_desk/0.159.0 (Mac OS; arm64)", "codex/0.158.0-alpha.2.1 fixture"] {
         #expect(CodexProtocolCompatibility.accepts(userAgent: agent))
     }
-    for agent in ["", "0.159.0", "/0.159.0", "codex/0.159.1 fixture", "codex/0.159.0-dev fixture",
+    for agent in ["", "0.160.0", "/0.160.0", "codex/0.160.1 fixture", "codex/0.160.0-dev fixture", "codex/0.159.1 fixture", "codex/0.159.0-dev fixture",
                   "codex/999.0 client/0.159.0 fixture"] {
         #expect(!CodexProtocolCompatibility.accepts(userAgent: agent))
     }
@@ -72,15 +72,17 @@ import Testing
     try Data(#"""
     import sys,json,pathlib,argparse
     p=argparse.ArgumentParser()
-    p.add_argument('--root');p.add_argument('--environment');p.add_argument('--language');p.add_argument('--max-browsers')
+    p.add_argument('--root');p.add_argument('--environment');p.add_argument('--language');p.add_argument('--max-browsers');p.add_argument('--profile-lease')
     a=p.parse_args()
-    with (pathlib.Path(a.root)/'launches.jsonl').open('a') as f: f.write(json.dumps({'environment':a.environment})+'\n')
+    with (pathlib.Path(a.root)/'launches.jsonl').open('a') as f: f.write(json.dumps({'environment':a.environment,'lease':a.profile_lease})+'\n')
     for line in sys.stdin:
         m=json.loads(line)
         if 'id' not in m: continue
         r={'protocolVersion':m['params']['protocolVersion'],'capabilities':{'tools':{}},'serverInfo':{'name':'routing-fixture','version':'1'}} if m.get('method')=='initialize' else {'tools':[]}
         print(json.dumps({'jsonrpc':'2.0','id':m['id'],'result':r}),flush=True)
     """#.utf8).write(to: scripts.appendingPathComponent("server.py"))
+    // This fixture has no Chrome; native profile selection still requires an idle check.
+    try Data("print('{\"running\":false}')\n".utf8).write(to: scripts.appendingPathComponent("chrome_host.py"))
     // A deterministic local refusal persists a user turn without remote inference.
     let endpointScript = root.appendingPathComponent("endpoint.py")
     try Data(#"""
@@ -97,12 +99,17 @@ import Testing
     (root/'port').write_text(str(server.server_port))
     server.serve_forever()
     """#.utf8).write(to: endpointScript)
-    let endpoint = Process()
+    let endpoint = Process(), endpointExited = DispatchSemaphore(value: 0)
+    endpoint.terminationHandler = { _ in endpointExited.signal() }
     endpoint.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
     endpoint.arguments = [endpointScript.path, root.path]
     endpoint.standardOutput = FileHandle.nullDevice; endpoint.standardError = FileHandle.nullDevice
     try endpoint.run()
-    defer { if endpoint.isRunning { endpoint.terminate(); endpoint.waitUntilExit() } }
+    defer {
+        if endpoint.isRunning { endpoint.terminate() }
+        let exited = { endpointExited.wait(timeout: .now() + 5) == .success }()
+        #expect(exited)
+    }
     for _ in 0..<100 {
         if FileManager.default.fileExists(atPath: root.appendingPathComponent("port").path) { break }
         try await Task.sleep(for: .milliseconds(50))
@@ -129,8 +136,15 @@ import Testing
                                   access: .standard, model: "gpt-6-astra", effort: "low")
         var completed = false
         for _ in 0..<100 {
-            let history = try await wire.request("thread/read", params: .object([
-                "threadId": .string(first.nativeID), "includeTurns": .bool(true)]))
+            let history: JSONValue
+            do {
+                history = try await wire.request("thread/read", params: .object([
+                    "threadId": .string(first.nativeID), "includeTurns": .bool(true)]))
+            } catch let error as ClientFailure where error.message.contains("rollout") && error.message.contains(" is empty") {
+                // 0.160 can acknowledge turn/start before initial rollout flush.
+                // Poll only this read; the local refusal turn is never resent.
+                try await Task.sleep(for: .milliseconds(50)); continue
+            }
             if history["thread"]["turns"].array.last?["status"].string == "failed" { completed = true; break }
             try await Task.sleep(for: .milliseconds(50))
         }
@@ -139,11 +153,19 @@ import Testing
         await client.stop()
         try await client.start(executable: executable, home: home, extraArguments: overrides, browserResources: resources, browserRoot: browserRoot)
         try await client.resume(first, projectPath: root.path, access: .standard, route: RequestRoute(rawValue: "browser_fixture"))
+        let profiles = BrowserProfileStore(root: browserRoot)
+        try profiles.rename(session: first, name: "Live routing fixture")
+        try profiles.release(session: first, verifyClosed: { _ in })
+        let reused = try await client.createSession(projectPath: root.path, access: .standard, model: "", route: RequestRoute(rawValue: "browser_fixture"),
+                                                    browserProfile: .init(id: a))
+        #expect(try profiles.ownedGrant(session: reused).environment == a)
         let log = try String(contentsOf: browserRoot.appendingPathComponent("launches.jsonl"), encoding: .utf8)
         let identities = try log.split(separator: "\n").map { line in
             try JSONDecoder().decode([String: String].self, from: Data(line.utf8))["environment"]
         }
-        #expect(identities == [a.uuidString.lowercased(), b.uuidString.lowercased(), a.uuidString.lowercased()])
+        #expect(identities == [a.uuidString.lowercased(), b.uuidString.lowercased(), a.uuidString.lowercased(), a.uuidString.lowercased()])
+        let leases = try log.split(separator: "\n").map { try JSONDecoder().decode([String: String].self, from: Data($0.utf8))["lease"] }
+        #expect(leases.count == 4 && leases[0] == leases[2] && leases[0] != leases[3])
         await client.stop()
         try await client.start(executable: executable, home: home, extraArguments: overrides)
         try await client.resume(first, projectPath: root.path, access: .standard, route: RequestRoute(rawValue: "browser_fixture"))

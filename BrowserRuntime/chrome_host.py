@@ -5,6 +5,8 @@ No default profile, WebDriver flags or auto-connect discovery. Explicit cookie
 import runs in the native host; this helper never receives cookie values.
 """
 import json
+import base64
+import hashlib
 import fcntl
 import os
 from pathlib import Path
@@ -269,7 +271,7 @@ class ChromeHost:
         if not self.matches(owner):
             raise self.error('Процесс Chrome изменился. Закрытие отклонено.',
                              'The Chrome process changed. Close was denied.')
-        os.kill(owner['pid'], signal.SIGTERM)
+        self.graceful_close(owner)
         deadline = time.monotonic() + 8
         while time.monotonic() < deadline:
             if self.process_gone(owner):
@@ -277,6 +279,49 @@ class ChromeHost:
             time.sleep(.1)
         raise self.error('Завершение Chrome не подтверждено. Команда закрытия не повторена.',
                          'Chrome exit was not confirmed. The close command was not repeated.')
+
+    def graceful_close(self, owner):
+        """One fixed Browser.close frame to the verified loopback CDP endpoint.
+
+        SIGTERM can lose recently committed browser state on macOS. Use Chrome's
+        graceful shutdown. Never accept a reply/EOF as proof of process exit;
+        control_owned performs that independent check and never resends intent.
+        This is not a general WebSocket or arbitrary JavaScript transport.
+        """
+        path = owner.get('browserPath', '')
+        if not path.startswith('/devtools/browser/') or any(c not in '/-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ' for c in path):
+            raise self.error('Адрес Chrome не подтверждён.', 'The Chrome address was not verified.')
+        key = base64.b64encode(os.urandom(16)).decode('ascii')
+        with socket.create_connection(('127.0.0.1', owner['port']), timeout=2) as connection:
+            request = ('GET ' + path + ' HTTP/1.1\r\nHost: 127.0.0.1:' + str(owner['port']) +
+                       '\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ' + key +
+                       '\r\nSec-WebSocket-Version: 13\r\n\r\n')
+            connection.sendall(request.encode('ascii'))
+            header = b''
+            deadline = time.monotonic() + 2
+            while b'\r\n\r\n' not in header and len(header) < 16_384 and time.monotonic() < deadline:
+                chunk = connection.recv(1024)
+                if not chunk:
+                    break
+                header += chunk
+            lines = header.split(b'\r\n\r\n', 1)[0].decode('ascii').split('\r\n')
+            fields = dict((k.lower(), v.strip()) for k, v in (line.split(':', 1) for line in lines[1:] if ':' in line))
+            accept = base64.b64encode(hashlib.sha1((key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').encode('ascii')).digest()).decode('ascii')
+            if (b'\r\n\r\n' not in header or lines[0] != 'HTTP/1.1 101 WebSocket Protocol Handshake'
+                    and lines[0] != 'HTTP/1.1 101 Switching Protocols'
+                    or fields.get('upgrade', '').lower() != 'websocket'
+                    or 'upgrade' not in fields.get('connection', '').lower().split(',')
+                    or fields.get('sec-websocket-accept') != accept
+                    or not self.matches(owner) or not self.owns_listener(owner['pid'], owner['port'])):
+                raise self.error('Принадлежность Chrome не подтверждена. Закрытие не отправлено.',
+                                 'Chrome ownership was not verified. Close was not sent.')
+            data = b'{"id":1,"method":"Browser.close"}'
+            mask = os.urandom(4)
+            connection.sendall(bytes((0x81, 0x80 | len(data))) + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(data)))
+            try:
+                connection.recv(4096)  # Bounded wait; only process exit confirms success.
+            except (TimeoutError, ConnectionError):
+                pass
 
 
 if __name__ == '__main__':
@@ -287,12 +332,32 @@ if __name__ == '__main__':
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--close', action='store_true')
     mode.add_argument('--prepare-cookie-import', action='store_true')
+    mode.add_argument('--profile-idle', action='store_true')
+    parser.add_argument('--profile-lease')
     parser.add_argument('--max-browsers', type=int, choices=range(1, 9), default=2)
     args = parser.parse_args()
     os.umask(0o077)
     try:
         host = ChromeHost(args.root, args.language, args.max_browsers)
-        print(json.dumps(host.prepare_cookie_import() if args.prepare_cookie_import else host.control(args.close)))
+        if args.profile_idle:
+            # The native caller already holds operation.lock throughout catalog changes.
+            from profiles import idle
+            idle(host)
+            print(json.dumps({'running': False}))
+        elif args.prepare_cookie_import:
+            # Cookie importer holds operation.lock and validates its captured lease.
+            print(json.dumps(host.prepare_cookie_import()))
+        else:
+            from profiles import validate
+            host.root.mkdir(parents=True, exist_ok=True, mode=0o700)
+            with (host.root / 'operation.lock').open('a') as operation_lock:
+                try:
+                    fcntl.flock(operation_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    raise host.error('Браузер выполняет операцию. Действие управления не отправлено.',
+                                     'The browser is performing an operation. No control action was sent.')
+                validate(host.root, args.profile_lease, allow_human=True, language=args.language)
+                print(json.dumps(host.control_owned(args.close) if host.record.exists() else {'running': False}))
     except Exception as error:
         print(json.dumps({'error': str(error)}))
         raise SystemExit(1)

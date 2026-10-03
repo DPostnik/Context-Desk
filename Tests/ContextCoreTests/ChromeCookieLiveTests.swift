@@ -37,12 +37,17 @@ server = http.server.HTTPServer(('127.0.0.1', 0), Handler)
 print(server.server_port, flush=True)
 server.serve_forever()
 """#
-    let server = Process(), output = Pipe()
+    let server = Process(), output = Pipe(), serverExited = DispatchSemaphore(value: 0)
+    server.terminationHandler = { _ in serverExited.signal() }
     server.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
     server.arguments = ["-u", "-c", fixtureScript, root.path]
     server.standardOutput = output; server.standardError = FileHandle.nullDevice
     try server.run()
-    defer { if server.isRunning { server.terminate(); server.waitUntilExit() } }
+    defer {
+        if server.isRunning { server.terminate() }
+        let exited = { serverExited.wait(timeout: .now() + 5) == .success }()
+        #expect(exited)
+    }
     var line = Data()
     while let byte = try output.fileHandleForReading.read(upToCount: 1), !byte.isEmpty, byte != Data([10]), line.count < 8 { line.append(byte) }
     let port = try #require(Int(String(decoding: line, as: UTF8.self)))

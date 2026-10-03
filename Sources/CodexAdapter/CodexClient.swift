@@ -63,10 +63,15 @@ public actor CodexClient {
         _ = try await transport.request("skills/extraRoots/set", params: .object(["extraRoots": .array(directories.map { .string($0.path) })]))
     }
 
-    public func createSession(projectPath: String, access: AccessMode, model: String, route: RequestRoute) async throws -> AgentSessionReference {
+    public func createSession(projectPath: String, access: AccessMode, model: String, route: RequestRoute,
+                              browserProfile: AgentBrowserProfile? = nil) async throws -> AgentSessionReference {
         var params = access.threadParameters
-        let environment = browserResources == nil ? nil : UUID()
-        params["config"] = try BrowserConfiguration.threadConfiguration(resources: browserResources, root: browserRoot, environment: environment)
+        let profiles = BrowserProfileStore(root: browserRoot)
+        guard browserProfile == nil || browserResources != nil else { throw BrowserProfileError.scope }
+        let grant = browserResources == nil ? nil : try profiles.prepareNew(project: projectPath, connection: .originalCodex, selection: browserProfile) { environment in
+            try BrowserProfileControl.verifyClosed(environment: environment, runtime: browserResources!.appendingPathComponent("BrowserRuntime"))
+        }
+        params["config"] = try BrowserConfiguration.threadConfiguration(resources: browserResources, root: browserRoot, environment: grant?.environment, grant: grant)
         params["cwd"] = .string(projectPath)
         params["modelProvider"] = .string(route.providerID)
         params["developerInstructions"] = .string(AgentAutonomy.instructions())
@@ -76,20 +81,22 @@ public actor CodexClient {
             throw ClientFailure(L10n.text("Не получен ID разговора", "No conversation ID received"))
         }
         let session = AgentSessionReference(connection: .originalCodex, nativeID: id)
-        if let environment { try BrowserEnvironmentStore.bind(environment, session: id, root: browserRoot) }
+        if let grant { try profiles.acknowledge(grant, session: session) }
         knownSessions.insert(session)
         return session
     }
     public func resume(_ session: AgentSessionReference, projectPath: String, access: AccessMode, route: RequestRoute) async throws {
         var params = access.threadParameters
         let id = try nativeID(session)
-        let environment = browserResources == nil ? nil : try BrowserEnvironmentStore.environment(session: id, root: browserRoot)
-        params["config"] = try BrowserConfiguration.threadConfiguration(resources: browserResources, root: browserRoot, environment: environment)
+        let profiles = BrowserProfileStore(root: browserRoot)
+        let grant = browserResources == nil ? nil : try profiles.prepare(session: session, project: projectPath)
+        params["config"] = try BrowserConfiguration.threadConfiguration(resources: browserResources, root: browserRoot, environment: grant?.environment, grant: grant)
         params["threadId"] = .string(id)
         params["cwd"] = .string(projectPath)
         params["modelProvider"] = .string(route.providerID)
         params["developerInstructions"] = .string(AgentAutonomy.instructions())
         _ = try await transport.request("thread/resume", params: .object(params))
+        if let grant { try profiles.acknowledge(grant, session: session) }
     }
     /// Acknowledges submission only. Never retries after any transport failure.
     public func send(_ text: String, to session: AgentSessionReference, projectPath: String,

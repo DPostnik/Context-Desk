@@ -46,7 +46,7 @@ class EnvironmentTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             host = ChromeHost(tmp)
             host.record.write_text(json.dumps({'pid': 123, 'birth': 'fixture'}))
-            with patch.object(host, 'process_gone', return_value=False), patch.object(host, 'endpoint', return_value='verified'), patch.object(host, 'matches', return_value=True), patch('chrome_host.os.kill') as kill:
+            with patch.object(host, 'process_gone', return_value=False), patch.object(host, 'endpoint', return_value='verified'), patch.object(host, 'matches', return_value=True), patch.object(host, 'graceful_close') as kill:
                 with patch('chrome_host.time.monotonic', side_effect=[0, 9]):
                     with self.assertRaisesRegex(ChromeLaunchError, 'not confirmed'):
                         host.control(close=True)

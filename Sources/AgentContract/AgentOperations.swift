@@ -11,6 +11,7 @@ public struct AgentExecutionRequest: Sendable {
     public let permissions: AgentPermissionIntent
     public let model: AgentModelSelection
     public let route: AgentRoute
+    public let browserProfile: AgentBrowserProfile?
 
     public enum Kind: Sendable {
         case interactive, scheduled
@@ -18,10 +19,11 @@ public struct AgentExecutionRequest: Sendable {
     }
     public init(id: UUID = UUID(), conversation: ConversationID, session: AgentSessionReference? = nil,
                 kind: Kind, prompt: String, projectPath: String, permissions: AgentPermissionIntent,
-                model: AgentModelSelection, route: AgentRoute) {
+                model: AgentModelSelection, route: AgentRoute, browserProfile: AgentBrowserProfile? = nil) {
         self.id = id; self.conversation = conversation; self.session = session; self.kind = kind
         self.prompt = prompt; self.projectPath = projectPath; self.permissions = permissions
         self.model = model; self.route = route
+        self.browserProfile = browserProfile
     }
 }
 
