@@ -507,9 +507,14 @@ struct ChatView: View {
                         }
                             .id(session.nativeID)
                     }
+                    if model.preparingHandoff {
+                        ProgressView().controlSize(.small)
+                        Text(model.handoffProgress).font(.caption).lineLimit(1)
+                        Button(L10n.text("Отмена", "Cancel")) { Task { await model.cancelHandoffPreparation() } }
+                    }
                     Button(L10n.text("Передать контекст…", "Hand off context…")) {
                         Task { handoff = await model.prepareHandoff(chat) }
-                    }.disabled(model.loadingChat || model.creatingHandoff)
+                    }.disabled(model.loadingChat || model.creatingHandoff || model.preparingHandoff || model.isBusy(threadID: chat.id))
                 } else if model.state.browserEnabled == true, model.state.defaultConnection == .originalCodex, let project = model.selectedProject {
                     NewChatBrowserProfilePicker(project: project.path, ownerNames: model.browserProfileOwnerNames, selection: Binding(
                         get: { model.newChatBrowserProfiles[project.id] },
@@ -655,7 +660,9 @@ struct ChatView: View {
         }
         .background(DeskPalette.canvas)
         .sheet(item: $handoff) { value in
-            HandoffEditor(model: model, handoff: value, projectID: model.projectID, route: model.defaultRoute)
+            HandoffEditor(model: model, handoff: value,
+                projectID: model.state.chats.first(where: { $0.id == value.origin.conversation.value })?.projectID,
+                route: model.state.chats.first(where: { $0.id == value.origin.conversation.value })?.route ?? model.defaultRoute)
         }
     }
 }

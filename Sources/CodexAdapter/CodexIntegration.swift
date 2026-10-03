@@ -266,6 +266,11 @@ public actor CodexIntegration: AgentIntegration {
                     output = .title(try await runner.title(firstMessage: request.historicalInput, model: request.model.model,
                         route: route, executable: executable, home: environment.home, workspace: environment.workspace,
                         providerArguments: providerArguments, willStart: start))
+                case .contextHandoffV1:
+                    output = .handoff(try await runner.handoff(input: request.historicalInput, model: request.model.model,
+                        route: route, executable: executable, home: environment.home, workspace: environment.workspace,
+                        providerArguments: providerArguments, language: AppLanguage(rawValue: request.language) ?? .english,
+                        willStart: start))
                 case .archiveSummaryV1:
                     guard let directory = environment.recipeDirectory else { return .rejected(.invalidInput) }
                     let fragments = try JSONDecoder().decode([AgentSummaryFragment].self, from: Data(request.historicalInput.utf8))

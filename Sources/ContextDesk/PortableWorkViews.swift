@@ -16,6 +16,7 @@ struct HandoffEditor: View {
                 VStack(alignment: .leading, spacing: 12) {
                     Text(L10n.text("Будет создан отдельный чат Codex с черновиком. Проверь его и отправь вручную. Исходный чат, его очередь и запросы разрешений не переносятся.", "A separate Codex chat will be created with a draft. Review and send it manually. The source chat, its queue and approval requests are not transferred.")).font(.callout)
                     Text(L10n.text("Claude Code: интерактивная передача пока недоступна.", "Claude Code: interactive handoff is not yet available.")).font(.caption).foregroundStyle(.secondary)
+                    Text(L10n.text("Контекст подготовлен автоматически по истории чата. Проверь сводку; при необходимости измени цель или детали. Полная переписка по умолчанию не включена.", "Context was prepared automatically from the chat history. Review the summary and adjust the goal or details if needed. The full transcript is excluded by default.")).font(.callout).foregroundStyle(.secondary)
                     Text(L10n.text("Источник", "Source") + ": \(handoff.origin.session.connection.agent.rawValue) · \(handoff.origin.conversation.value)").textSelection(.enabled)
                     Text(L10n.text("Снимок", "Snapshot") + ": \(handoff.origin.capturedAt.formatted()) · \(handoff.origin.revision)").font(.caption).textSelection(.enabled)
                     Text(LocalHistory.notice(handoff.history)).font(.caption).foregroundStyle(.secondary)

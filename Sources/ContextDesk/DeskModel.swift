@@ -84,6 +84,10 @@ private struct ChatRunState {
     @Published var localHistoryNotice: String?
     @Published var routines: [PortableRoutine] = []
     @Published var creatingHandoff = false
+    @Published var preparingHandoff = false
+    @Published var handoffProgress = ""
+    var handoffRunner: AgentGenerationRunner?
+    var handoffCancelled = false
     private var historyBackfillTask: Task<Void, Never>?
     private var historyRefreshTasks: [String: Task<Void, Never>] = [:]
     private var historyEventRevisions: [String: Int] = [:]
@@ -131,7 +135,7 @@ private struct ChatRunState {
     var busy: Bool { runs[currentRunKey]?.running == true }
     var queuePaused: Bool { runs[currentRunKey]?.queuePaused ?? true }
     var priorityMessageID: String? { runs[currentRunKey]?.priorityMessageID }
-    var anyBusy: Bool { creatingHandoff || jobLedger.runs.contains { $0.status.active } || summaryTask != nil || !deletingChatIDs.isEmpty || !archivingChatIDs.isEmpty || runs.values.contains { $0.running || $0.sending } }
+    var anyBusy: Bool { preparingHandoff || creatingHandoff || jobLedger.runs.contains { $0.status.active } || summaryTask != nil || !deletingChatIDs.isEmpty || !archivingChatIDs.isEmpty || runs.values.contains { $0.running || $0.sending } }
     func isBusy(threadID: String) -> Bool { runs[threadID]?.running == true }
     private var turnStarts: [String: Date] = [:]
     private var tokenTotals: [String: TokenCounters] = [:]
@@ -560,14 +564,63 @@ private struct ChatRunState {
         let chats = state.chats
         historyBackfillTask = Task { [weak self] in await self?.backfillHistory(chats) }
     }
+    func cancelHandoffPreparation() async {
+        handoffCancelled = true
+        await handoffRunner?.stop()
+    }
     func prepareHandoff(_ chat: Chat) async -> ContextHandoff? {
+        guard !preparingHandoff, !creatingHandoff else { return nil }
+        preparingHandoff = true; handoffCancelled = false; error = nil
+        handoffProgress = L10n.text("Читаю историю чата…", "Reading chat history…")
+        defer { preparingHandoff = false; handoffRunner = nil; handoffProgress = "" }
         do {
-            guard let source = chat.nativeSession else { throw ConversationIdentity.unavailable }
-            let saved = try await store.loadTranscript(conversationID: chat.id)
-            let snapshot = try saved ?? LocalHistory.snapshot(conversation: chat.conversationID, source: source,
-                items: chatID == chat.id ? items : [], completeness: .partial)
-            return ContextHandoff(snapshot: snapshot)
-        } catch { self.error = error.localizedDescription; return nil }
+            guard let source = chat.nativeSession, !isBusy(threadID: chat.id), !isChangingChat(chat.id),
+                  runs[chat.id]?.sending != true else {
+                throw ClientFailure(L10n.text("Дождись завершения текущего запроса перед передачей контекста.", "Wait for the current request to finish before handing off context."))
+            }
+            guard source.connection == .originalCodex else {
+                throw ClientFailure(L10n.text("Автоматическая подготовка контекста пока доступна только для чатов Codex.", "Automatic context preparation is currently available only for Codex chats."))
+            }
+            let client = connection
+            let descriptor = try await client.descriptor()
+            guard descriptor.capabilities.contains(.isolatedGeneration) else {
+                throw ClientFailure(L10n.text("Этот агент пока не поддерживает автоматическую подготовку контекста. Сейчас она доступна для чатов Codex.", "This agent does not yet support automatic context preparation. It is currently available for Codex chats."))
+            }
+            let language = L10n.language
+            let turns = try await client.history(source)
+            let snapshot = try LocalHistory.snapshot(conversation: chat.conversationID, source: source, turns: turns)
+            let chunks = try HandoffSummary.chunks(snapshot)
+            let runner = AgentGenerationRunner(integration: client.integration)
+            handoffRunner = runner
+            var summary: HandoffSummary?
+            for (index, chunk) in chunks.enumerated() {
+                try Task.checkCancellation()
+                guard !handoffCancelled else { throw CancellationError() }
+                guard try await client.descriptor().context == descriptor.context else { throw ConversationIdentity.unavailable }
+                handoffProgress = L10n.text("Готовлю контекст: часть \(index + 1) из \(chunks.count)…", "Preparing context: part \(index + 1) of \(chunks.count)…", language: language)
+                summary = try await runner.handoff(source: source,
+                    input: HandoffSummary.input(chunk: chunk, previous: summary, completeness: snapshot.completeness),
+                    model: chat.model.isEmpty ? state.model : chat.model, route: chat.route ?? .direct,
+                    environment: .init(executable: summaryExecutable, home: summaryHome,
+                        workspace: summarySkillsDirectory.appendingPathComponent(".handoff-workspace")), language: language)
+            }
+            try Task.checkCancellation()
+            guard !handoffCancelled else { throw CancellationError() }
+            guard state.chats.contains(where: { $0.id == chat.id && $0.nativeSession == source }),
+                  !isBusy(threadID: chat.id), runs[chat.id]?.sending != true, !isChangingChat(chat.id) else {
+                throw ClientFailure(L10n.text("Исходный чат изменился во время подготовки контекста. Запрос не повторён.", "The source chat changed during context preparation. The request was not retried."))
+            }
+            let latest = try LocalHistory.snapshot(conversation: chat.conversationID, source: source, turns: await client.history(source))
+            guard latest.revision == snapshot.revision else {
+                throw ClientFailure(L10n.text("Переписка изменилась во время подготовки контекста. Запусти передачу ещё раз, когда чат закончит работу.", "The conversation changed during context preparation. Start a new handoff when the chat finishes working."))
+            }
+            guard !handoffCancelled else { throw CancellationError() }
+            guard try await client.descriptor().context == descriptor.context else { throw ConversationIdentity.unavailable }
+            return try summary?.applying(to: snapshot, language: language)
+        } catch {
+            if !handoffCancelled && !(error is CancellationError) { self.error = error.localizedDescription }
+            return nil
+        }
     }
     func createHandoffChat(_ handoff: ContextHandoff, project: Project, route: RequestRoute) async -> Bool {
         guard !creatingHandoff else { return false }
@@ -1196,6 +1249,7 @@ private struct ChatRunState {
         for id in Array(titleTasks.keys) { await cancelChatTitle(id) }
         await stopScheduler()
         summaryTask?.cancel()
+        await cancelHandoffPreparation()
         await summaryRunner.stop()
         await summaryTask?.value
         await connection.stop()

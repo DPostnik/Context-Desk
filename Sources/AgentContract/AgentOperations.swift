@@ -30,7 +30,7 @@ public struct AgentExecutionRequest: Sendable {
 /// Deliberately closed recipes; JSON schemas and native tool-disabling flags live in adapters.
 public struct AgentGenerationRequest: Sendable {
     public static let maximumInputBytes = 128 * 1024
-    public enum Recipe: String, Sendable { case chatTitleV1, archiveSummaryV1 }
+    public enum Recipe: String, Sendable { case chatTitleV1, archiveSummaryV1, contextHandoffV1 }
     public let id: UUID
     public let source: AgentSessionReference
     public let recipe: Recipe
@@ -47,6 +47,7 @@ public struct AgentGenerationRequest: Sendable {
 
 public enum AgentGenerationOutput: Sendable {
     case title(String)
+    case handoff(String)
     case summary(AgentSummary, usage: AgentUsage?, seconds: Double)
 }
 

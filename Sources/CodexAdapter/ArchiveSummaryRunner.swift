@@ -50,6 +50,17 @@ public actor ArchiveSummaryRunner {
         return try ChatTitle.validate(output.text)
     }
 
+    public func handoff(input: String, model: String, route: RequestRoute, executable: URL,
+                        home: URL, workspace: URL, providerArguments: [String], language: AppLanguage,
+                        willStart: @Sendable () async throws -> Void) async throws -> String {
+        let output = try await generate(input: input,
+            instructions: HandoffSummary.instructions + "\nWrite all fields in " + (language == .russian ? "Russian." : "English."),
+            schema: HandoffSummary.schema, model: model, route: route, executable: executable, home: home,
+            workspace: workspace, providerArguments: providerArguments, willStart: willStart)
+        do { _ = try HandoffSummary.validate(output.text); return output.text }
+        catch { throw SummaryRunFailure(uncertain: false, message: error.localizedDescription) }
+    }
+
     private func generate(input: String, instructions: String, schema: JSONValue, model: String,
                           route: RequestRoute, executable: URL, home: URL, workspace: URL,
                           providerArguments: [String], willStart: @Sendable () async throws -> Void) async throws -> Output {

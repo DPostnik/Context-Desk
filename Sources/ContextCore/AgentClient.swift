@@ -131,6 +131,17 @@ public actor AgentGenerationRunner {
         }
         return title
     }
+    public func handoff(source: AgentSessionReference, input: String, model: String, route: RequestRoute,
+                        environment: AgentGenerationEnvironment, language: AppLanguage) async throws -> HandoffSummary {
+        let context = try await integration.descriptor().value().context
+        let request = AgentGenerationRequest(source: source, recipe: .contextHandoffV1, historicalInput: input,
+            model: .init(context: context, model: model), route: route.agentRoute, language: language.rawValue)
+        active = request.id; defer { active = nil }
+        guard case .handoff(let output) = try await integration.generate(request, environment: environment, willStart: {}).value() else {
+            throw AgentOperationFailure(rejection: .invalidResponse, failure: nil)
+        }
+        return try HandoffSummary.validate(output)
+    }
     public func summarize(source: AgentSessionReference, chunk: SummarySource.Chunk, model: String, route: RequestRoute,
                           environment: AgentGenerationEnvironment, language: AppLanguage,
                           willStart: @escaping @Sendable () async throws -> Void) async throws -> SummaryPart {
