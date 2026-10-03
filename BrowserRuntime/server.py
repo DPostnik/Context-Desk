@@ -215,7 +215,15 @@ class Browser:
         require(self.session is None, 'browser_busy_close_owned_session_first')
         token = uuid.uuid4().hex
         marker = 'about:blank#context-desk-' + token
-        value = self.native('new_page', {'url': marker, 'background': True})
+        self.start()
+        # macOS can unhide Chrome when CDP creates a tab, even with background=True.
+        # Preserve a hidden browser without overriding a user's visible window.
+        hidden = self.chrome is not None and self.chrome.visibility(self.chrome.owner)
+        try:
+            value = self.native('new_page', {'url': marker, 'background': True})
+        finally:
+            if hidden:
+                self.chrome.visibility(self.chrome.owner, hide=True)
         matches = re.findall(r'^(\d+): ' + re.escape(marker) + r'(?:\s|$)', self.text(value), re.M)
         if len(matches) != 1:
             self.failed = True

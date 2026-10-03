@@ -13,6 +13,7 @@ from pathlib import Path
 import socket
 import subprocess
 import signal
+import sys
 import threading
 import time
 import urllib.request
@@ -163,6 +164,7 @@ class ChromeHost:
             raise self.error('Профиль браузера не должен быть символической ссылкой.', 'The browser profile must not be a symbolic link.')
         self.profile.mkdir(exist_ok=True, mode=0o700)
         owner = None
+        launched = False
         if self.record.exists():
             old = json.loads(self.record.read_text())
             pid = old.get('pid')
@@ -192,6 +194,7 @@ class ChromeHost:
             owner = {'pid': self.child.pid, 'port': port, 'executable': executable,
                      'profile': str(self.profile), 'birth': self.process_field(self.child.pid, 'lstart')}
             self.persist(owner)
+            launched = True
         self.owner = owner
         end = time.monotonic() + seconds
         while time.monotonic() < end and not cancelled.is_set():
@@ -201,10 +204,53 @@ class ChromeHost:
             endpoint = self.endpoint(owner)
             if endpoint:
                 self.persist(owner)
+                if launched:
+                    self.hide_created_browser(owner)
                 return endpoint
             cancelled.wait(0.2)
         raise self.error('Подключение к Chrome не подтверждено. Автоматического перезапуска не было.',
                          'Chrome connection was not confirmed. No automatic restart was attempted.')
+
+    def hide_created_browser(self, owner):
+        """Hide only our fresh child, once. Reattachment preserves manual visibility.
+
+        AppKit via JXA needs neither Accessibility nor Apple Events permission.
+        A visibility failure must not retry or invalidate browser work.
+        """
+        if not self.child or self.child.pid != owner['pid'] or not self.matches(owner):
+            return False
+        return self.visibility(owner, hide=True)
+
+    def visibility(self, owner, hide=False):
+        """Read or restore hidden state of this verified process, never by app name."""
+        if not self.matches(owner):
+            return False
+        script = '''ObjC.import('AppKit');
+function run(args) {
+    const app = $.NSRunningApplication.runningApplicationWithProcessIdentifier(Number(args[0]));
+    if (!app || app.isNil() || ObjC.unwrap(app.bundleIdentifier) !== 'com.google.chrome.for.testing' ||
+        ObjC.unwrap(app.executableURL.path) !== args[1]) return 'false';
+    if (args[2] !== 'hide') return app.hidden ? 'true' : 'false';
+    app.hide;
+    const deadline = Date.now() + 2000;
+    while (!app.hidden && Date.now() < deadline) {
+        $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(0.05));
+    }
+    return app.hidden ? 'true' : 'false';
+}'''
+        try:
+            result = subprocess.run(['/usr/bin/osascript', '-l', 'JavaScript', '-e', script,
+                                     str(owner['pid']), owner['executable'], 'hide' if hide else 'status'],
+                                    capture_output=True, text=True, timeout=5)
+            if result.returncode == 0 and result.stdout.strip() == 'true':
+                return True
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        if not hide:
+            return False
+        print('Не удалось скрыть браузер; он продолжает работать.' if self.language == 'ru'
+              else 'Could not hide the browser; it is still running.', file=sys.stderr)
+        return False
 
     def close_created_for_test(self):
         """Only fixtures call this; never terminate a reattached/user Chrome."""

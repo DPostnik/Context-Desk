@@ -21,6 +21,7 @@ struct ChatBrowserControls: View {
                  running == false ? L10n.text("Браузер закрыт", "Browser is closed") :
                  L10n.text("Состояние не проверено", "Status not checked"))
             Button(L10n.text("Показать браузер", "Show browser")) { perform(show: true) }
+            Button(L10n.text("Скрыть браузер", "Hide browser")) { perform(hide: true) }
             Button(L10n.text("Проверить состояние", "Check status")) { perform() }
             Button(L10n.text("Закрыть браузер", "Close browser")) { perform(close: true) }
                 .disabled(busy)
@@ -48,7 +49,7 @@ struct ChatBrowserControls: View {
             } message: { Text(error ?? "") }
     }
 
-    private func perform(show: Bool = false, close: Bool = false) {
+    private func perform(show: Bool = false, hide: Bool = false, close: Bool = false) {
         guard !operating, !close || !busy else { return }
         operating = true
         let nativeID = session
@@ -71,14 +72,25 @@ struct ChatBrowserControls: View {
                 }.value
                 if let message = output.error { error = message; running = nil; return }
                 running = output.running
-                if show {
+                if show || hide {
                     guard output.running == true, let pid = output.pid,
                           let app = NSRunningApplication(processIdentifier: pid),
                           app.bundleIdentifier == "com.google.chrome.for.testing" else {
                         error = L10n.text("Браузер этого чата сейчас закрыт.", "This chat’s browser is currently closed.")
                         return
                     }
-                    app.activate(options: [])
+                    if hide {
+                        let sent = app.hide()
+                        // AppKit may report false even after the app becomes hidden.
+                        try await Task.sleep(for: .milliseconds(150))
+                        if !sent && !app.isHidden {
+                            error = L10n.text("Не удалось скрыть браузер. Он продолжает работать.",
+                                              "Could not hide the browser. It is still running.")
+                        }
+                    } else {
+                        app.unhide()
+                        app.activate(options: [])
+                    }
                 }
             } catch {
                 self.error = L10n.text("Не удалось проверить браузер: ", "Could not check the browser: ") + error.localizedDescription

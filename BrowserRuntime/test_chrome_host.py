@@ -156,7 +156,38 @@ class ChromeHostTests(unittest.TestCase):
              patch('chrome_host.os.access', return_value=True), \
              patch('chrome_host.verify_chrome'), \
              patch('chrome_host.subprocess.Popen', return_value=child) as launch, \
-             patch.object(self.host, 'endpoint', return_value='http://127.0.0.1:9999'):
+             patch.object(self.host, 'endpoint', return_value='http://127.0.0.1:9999'), \
+             patch.object(self.host, 'hide_created_browser', return_value=True) as hide:
             self.assertEqual(self.host.ensure(), 'http://127.0.0.1:9999')
         self.assertEqual(launch.call_count, 1)
+        hide.assert_called_once_with(self.host.owner)
         self.assertEqual(self.host.owner['pid'], 456)
+
+    def test_reattachment_preserves_user_visibility(self):
+        self.host.persist(self.owner)
+        with patch.object(self.host, 'process_gone', return_value=False), \
+             patch.object(self.host, 'matches', return_value=True), \
+             patch.object(self.host, 'endpoint', return_value='http://127.0.0.1:9233'), \
+             patch.object(self.host, 'hide_created_browser') as hide:
+            self.assertEqual(self.host.ensure(), 'http://127.0.0.1:9233')
+        hide.assert_not_called()
+
+    def test_hide_requires_verified_fresh_child(self):
+        with patch('chrome_host.subprocess.run') as run:
+            self.assertFalse(self.host.hide_created_browser(self.owner))
+            self.host.child = Mock(pid=999)
+            self.assertFalse(self.host.hide_created_browser(self.owner))
+            self.host.child = Mock(pid=123)
+            with patch.object(self.host, 'matches', return_value=False):
+                self.assertFalse(self.host.hide_created_browser(self.owner))
+        run.assert_not_called()
+
+    def test_hide_timeout_is_not_retried(self):
+        import subprocess
+        self.host.child = Mock(pid=123)
+        with patch.object(self.host, 'matches', return_value=True), \
+             patch('chrome_host.subprocess.run', side_effect=subprocess.TimeoutExpired('osascript', 5)) as run, \
+             patch('chrome_host.sys.stderr', new_callable=io.StringIO) as errors:
+            self.assertFalse(self.host.hide_created_browser(self.owner))
+            self.assertIn('still running', errors.getvalue())
+        run.assert_called_once()

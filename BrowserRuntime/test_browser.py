@@ -38,6 +38,24 @@ class BrowserTests(unittest.TestCase):
     def tearDown(self):
         self.directory.cleanup()
 
+    def test_open_preserves_visibility_without_replaying_uncertain_tab_creation(self):
+        for hidden in (False, True):
+            with self.subTest(hidden=hidden):
+                browser = Browser(Path(self.directory.name), rpc=Mock(side_effect=TimeoutError('lost reply')))
+                browser.chrome = Mock(owner={'pid': 123})
+                browser.chrome.process_gone.return_value = False
+                browser.chrome.visibility.return_value = hidden
+                with self.assertRaises(TimeoutError):
+                    browser.open('https://example.test/')
+                browser.injected.assert_called_once()
+                self.assertTrue(browser.failed)
+                self.assertEqual(browser.chrome.visibility.call_count, 2 if hidden else 1)
+                if hidden:
+                    browser.chrome.visibility.assert_called_with({'pid': 123}, hide=True)
+                with self.assertRaises(Rejected):
+                    browser.open('https://example.test/')
+                browser.injected.assert_called_once()
+
     def test_close_waits_for_inventory_without_replaying_action(self):
         inventories = iter(['## Pages\n7: https://example.test/', '## Pages\n1: about:blank'])
         def rpc(name, args):
