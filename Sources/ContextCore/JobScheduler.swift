@@ -77,10 +77,13 @@ public struct ManagedJob: Identifiable, Codable, Equatable, Sendable {
     public var sourceDisabled = false
     /// Missing on legacy jobs: never infer consent from a project access mode.
     public var acceptsExternalPolicy: Bool?
+    /// Explicit per-task permission, propagated to each fresh browser environment.
+    public var browserSessionImport: ChromeSessionImportPolicy?
     /// A frozen revision: editing the library never silently changes scheduled work.
     public var routine: RoutineInvocation?
     public init() {}
     public func validate() throws {
+        try validateBrowserSessionImport()
         if let routine, try routine.prompt() != prompt {
             throw ClientFailure(L10n.text("Инструкции не соответствуют сохранённой версии рутины. Выбери рутину заново.", "Instructions do not match the saved routine revision. Select the routine again."))
         }

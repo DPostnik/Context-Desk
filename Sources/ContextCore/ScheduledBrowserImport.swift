@@ -1,0 +1,39 @@
+import Foundation
+
+extension ManagedJob {
+    public func validateBrowserSessionImport() throws {
+        guard let policy = browserSessionImport else { return }
+        guard engine == .codex,
+              try ChromeSessionImportPolicy(profile: policy.profile, site: policy.site) == policy else {
+            throw ClientFailure(L10n.text("Импорт сессии доступен только для заданий Codex с корректным доменом и профилем Chrome.",
+                                          "Session import requires a Codex task with a valid site domain and Chrome profile."))
+        }
+    }
+
+    /// Keep the saved user prompt/frozen routine intact; derive run instructions from explicit metadata.
+    public func browserExecutionPrompt(language: AppLanguage = L10n.language) throws -> String {
+        try validateBrowserSessionImport()
+        guard let policy = browserSessionImport else { return prompt }
+        return prompt + "\n\n" + L10n.text(
+            "Для этой задачи постоянно разрешён импорт cookies сайта \(policy.site) из выбранного пользователем профиля Chrome. Это разрешение действует в каждом запуске; повторно спрашивать разрешение на этот импорт не нужно. Сначала проверь вход обычным чтением страницы. Только при подтверждённом отсутствии авторизации вызови browser_import_session с session своей вкладки и её текущим expectedURL. После подтверждённого импорта один раз обнови страницу отдельным действием и проверь доступ к защищённому содержимому; количество cookies не подтверждает вход. Не повторяй импорт в этом запуске и не повторяй действия с неизвестным исходом. Если инструмент недоступен, обычный Chrome открыт, Связка ключей требует участия пользователя или вход не восстановлен — укажи конкретный blocker и продолжай независимые этапы исходной задачи. Не закрывай обычный Chrome автоматически. Сетевые ошибки, CAPTCHA и блокировки сайта не являются основанием для импорта. Это разрешение не расширяет права на отправку сообщений, приглашений, заявок или другие внешние действия.",
+            "This task has standing permission to import cookies for \(policy.site) from the user-selected Chrome profile on every run. Do not ask again for permission to perform this import. First check sign-in by reading the page normally. Only after observing missing authentication, call browser_import_session with your own tab's session and current expectedURL. After a confirmed import, reload once with a separate action and verify access to protected content; cookie counts do not confirm sign-in. Do not repeat import in this run or replay actions with unknown outcomes. If the tool is unavailable, regular Chrome is open, Keychain needs user interaction, or sign-in is not restored, report the specific blocker and continue independent stages of the original task. Do not close regular Chrome automatically. Network errors, CAPTCHA and site blocks are not reasons to import. This permission does not expand authority to send messages, invitations, applications or perform other external actions.", language: language)
+    }
+}
+
+public enum ScheduledBrowserImport {
+    /// Runs after the fresh chat is durably attached, before its first model turn.
+    /// Does not access source cookies or Keychain and never changes another profile's permission.
+    public static func install(_ policy: ChromeSessionImportPolicy, session: AgentSessionReference, browserEnabled: Bool,
+                               root: URL = BrowserEnvironmentStore.directory) throws {
+        guard browserEnabled, session.connection == .originalCodex else {
+            throw ClientFailure(L10n.text("Для восстановления входа в задании включи браузер Context Desk и переподключи Codex.",
+                                          "Enable the Context Desk browser and reconnect Codex to restore sign-in for this task."))
+        }
+        let checked = try ChromeSessionImportPolicy(profile: policy.profile, site: policy.site)
+        let store = BrowserProfileStore(root: root)
+        guard let environment = try BrowserEnvironmentStore.existingEnvironment(session: session.nativeID, root: root),
+              try store.current(session: session) != nil else { throw ChromeCookieError.missingEnvironment }
+        let grant = try store.ownedGrant(session: session, allowHuman: false)
+        try ChromeSessionImportPolicy.save(checked, environment: environment, grant: grant, browserRoot: root)
+    }
+}

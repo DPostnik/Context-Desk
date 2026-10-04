@@ -129,6 +129,8 @@ private func makeRequest(_ runner: any AgentScheduledExecutor, root: URL) async 
         if method=='turn/start':
             ledger=json.loads(pathlib.Path('jobs.json').read_text())
             assert ledger['runs'][0]['status']=='running'
+            assert 'browser_import_session' in m['params']['input'][0]['text']
+            assert m['params']['input'][0]['text'].startswith('test')
             pathlib.Path('sent-'+str(len(list(pathlib.Path('.').glob('sent-*'))))).write_text('sent')
             result={} if pathlib.Path('malformed').exists() else {'turn':{'id':'turn'}}
         print(json.dumps({'id':m['id'],'result':result}),flush=True)
@@ -153,6 +155,7 @@ private func makeRequest(_ runner: any AgentScheduledExecutor, root: URL) async 
     model.state.projects = [project]; model.schedulerReady = true; model.connected = true; model.authenticated = true
     model.chatID = "visible"; model.draft = "keep draft"
     var job = ManagedJob(); job.name = "test"; job.prompt = "test"; job.engine = engine; job.projectID = project.id
+    if engine == .codex { job.browserSessionImport = try .init(profile: "Default", site: "linkedin.com") }
     job.acceptsExternalPolicy = true; job.enabled = true
     #expect(await model.saveJob(job))
     let next = try #require(model.jobLedger.jobs.first?.nextRun)

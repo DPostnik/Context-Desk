@@ -12,6 +12,8 @@ public struct ScheduleControlRequest: Codable, Sendable {
     public var prompt: String?
     public var enabled: Bool?
     public var confirmSourceDisabled: Bool?
+    public var browserSessionImport: ChromeSessionImportPolicy?
+    public var clearBrowserSessionImport: Bool?
 }
 
 public struct ScheduleControlReply: Codable, Sendable {
@@ -40,7 +42,14 @@ public enum ScheduleControl {
         ClientFailure(L10n.text("Задание изменилось. Прочитай его заново перед изменением.", "The task changed. Read it again before editing."))
     }
     public static func updated(_ request: ScheduleControlRequest, originalPaused: Bool) throws -> ManagedJob {
-        guard request.operation == "update", var job = request.expected else { throw invalid }
+        guard ["update", "browser-import"].contains(request.operation), var job = request.expected else { throw invalid }
+        if request.operation == "browser-import" {
+            guard (request.browserSessionImport != nil) != (request.clearBrowserSessionImport == true),
+                  request.prompt == nil, request.enabled == nil, request.confirmSourceDisabled == nil else { throw invalid }
+            if let policy = request.browserSessionImport {
+                job.browserSessionImport = try ChromeSessionImportPolicy(profile: policy.profile, site: policy.site)
+            } else { job.browserSessionImport = nil }
+        } else if request.browserSessionImport != nil || request.clearBrowserSessionImport != nil { throw invalid }
         if let prompt = request.prompt { job.prompt = prompt }
         if let enabled = request.enabled { job.enabled = enabled }
         if request.confirmSourceDisabled == true {
@@ -84,11 +93,14 @@ public enum ScheduleControl {
             do {
                 let data = try Data(contentsOf: claim)
                 guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      Set(object.keys).isSubset(of: ["version", "id", "expires", "operation", "expected", "prompt", "enabled", "confirmSourceDisabled"]) else { throw invalid }
+                      Set(object.keys).isSubset(of: ["version", "id", "expires", "operation", "browserSessionImport", "clearBrowserSessionImport", "expected", "prompt", "enabled", "confirmSourceDisabled"]) else { throw invalid }
                 let request = try JSONDecoder().decode(ScheduleControlRequest.self, from: data)
                 guard request.version == 1, request.id == id, request.expires > now,
                       request.expires.timeIntervalSince(now) <= 600,
-                      ["list", "update"].contains(request.operation) else { throw invalid }
+                      ["list", "update", "browser-import"].contains(request.operation) else { throw invalid }
+                if request.operation == "browser-import", !Set(object.keys).isSubset(of: ["version", "id", "expires", "operation", "expected", "browserSessionImport", "clearBrowserSessionImport"]) { throw invalid }
+                if request.operation != "browser-import", request.browserSessionImport != nil || request.clearBrowserSessionImport != nil { throw invalid }
+                if let policy = object["browserSessionImport"] as? [String: Any], Set(policy.keys) != Set(["profile", "site"]) { throw invalid }
                 if request.operation == "list" {
                     guard request.expected == nil, request.prompt == nil, request.enabled == nil,
                           request.confirmSourceDisabled == nil else { throw invalid }

@@ -188,7 +188,7 @@ struct JobEditor: View {
                 Section(L10n.text("Основное", "Basics")) {
                 TextField(L10n.text("Название", "Name"), text: $job.name)
                 Picker(L10n.text("Исполнитель", "Agent"), selection: $job.engine) { ForEach(JobEngine.allCases, id: \.self) { Text($0.title).tag($0) } }
-                    .onChange(of: job.engine) { _, _ in job.model = ""; job.effort = ""; job.route = .direct; job.acceptsExternalPolicy = nil }
+                    .onChange(of: job.engine) { _, _ in job.model = ""; job.effort = ""; job.route = .direct; job.acceptsExternalPolicy = nil; job.browserSessionImport = nil }
                 Picker(L10n.text("Проект", "Project"), selection: $job.projectID) {
                     Text(L10n.text("Выбери проект", "Choose a project")).tag(nil as UUID?)
                     ForEach(model.state.projects) { Text($0.name).tag(Optional($0.id)) }
@@ -222,6 +222,7 @@ struct JobEditor: View {
                     } }
                     TextField(L10n.text("Рассуждение", "Reasoning effort"), text: $job.effort, prompt: Text(L10n.text("По умолчанию", "Default")))
                 }
+                if job.engine == .codex { ScheduledBrowserImportEditor(policy: $job.browserSessionImport) }
                 if job.engine == .claude {
                     if job.route != .direct {
                         Text(model.routeCompatibilityIssue(job.route, agent: .claudeCode) ?? "").foregroundStyle(.orange).font(.caption)

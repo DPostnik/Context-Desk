@@ -18,3 +18,17 @@ Use `scripts/schedule-control.py` with Python 3.9+ when the user requests a chan
 - Each request prints its ID. On timeout use `python3 scripts/schedule-control.py status REQUEST_ID`; do not automatically resubmit an uncertain mutation. Claimed requests never replay after a crash. Unclaimed requests expire after 60 seconds. Inspect current task state before any explicitly authorized recovery.
 
 Check the returned job's prompt, enabled flag, project, schedule/timezone and nextRun before claiming success. A configured task is not proof of a successful run. The scheduler operates while Context Desk is open and the Mac is awake.
+
+## Standing browser session import
+
+For explicit user authorization covering a selected task/site/source Chrome profile,
+use `python3 scripts/browser-import.py --job-id UUID --chrome-profile Default --site linkedin.com`.
+Use `--disable` without profile/site to revoke for future runs. Read the observed
+job first. This stores permission metadata only; it never imports cookies immediately,
+changes the prompt/schedule/model/project permissions, enables a task, or runs it.
+Every new Codex run receives the site permission in its own browser environment
+and conditional sign-in recovery instructions. Regular Chrome must be closed;
+Keychain may need a user grant. Cookie readback is not website sign-in verification.
+Never auto-close Chrome, retry an uncertain import, or expand the site's action scope.
+An old running app rejects `browser-import`; ask for Cmd+Q/reopen of the verified
+build before submitting again. Inspect an uncertain receipt with `status`, never replay.

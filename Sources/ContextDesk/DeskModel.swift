@@ -867,7 +867,7 @@ private struct ChatRunState {
                       selectedModel: currentModel, selectedEffort: effort)
     }
     private func deliver(text: String, project: Project, threadID: String?, localID: String,
-                         selectedModel: String, selectedEffort: String, scheduledRun: UUID? = nil, scheduledRoute: RequestRoute? = nil) async {
+                         selectedModel: String, selectedEffort: String, scheduledRun: UUID? = nil, scheduledRoute: RequestRoute? = nil, scheduledBrowserImport: ChromeSessionImportPolicy? = nil) async {
         let selection = selectionGeneration
         let visible = scheduledRun == nil && threadID == chatID && project.id == projectID
         if visible { items.append(TranscriptItem(id: localID, kind: "user", text: text, phase: L10n.text("Отправляется…", "Sending…"))) }
@@ -935,6 +935,9 @@ private struct ChatRunState {
                 try Task.checkCancellation()
                 guard !schedulerStopping else { throw CancellationError() }
             }
+            if let scheduledBrowserImport, scheduledRun != nil, state.browserEnabled == true {
+                try ScheduledBrowserImport.install(scheduledBrowserImport, session: sessionForChat(id), browserEnabled: state.browserEnabled == true)
+            }
             let submittedTurn = try await connection.send(text, to: sessionForChat(id), projectPath: project.path,
                                                           access: access, model: selectedModel, effort: selectedEffort,
                                                           kind: scheduledRun == nil ? .interactive : .scheduled, conversation: ConversationID(id))
@@ -971,8 +974,14 @@ private struct ChatRunState {
         }
     }
     func deliverScheduled(_ job: ManagedJob, run: JobRun, project: Project) async {
-        await deliver(text: job.prompt, project: project, threadID: nil, localID: "local-user:" + run.id.uuidString,
-                      selectedModel: job.model, selectedEffort: job.effort, scheduledRun: run.id, scheduledRoute: job.route)
+        do {
+            let prompt = try job.browserExecutionPrompt()
+            await deliver(text: prompt, project: project, threadID: nil, localID: "local-user:" + run.id.uuidString,
+                          selectedModel: job.model, selectedEffort: job.effort, scheduledRun: run.id, scheduledRoute: job.route,
+                          scheduledBrowserImport: job.browserSessionImport)
+        } catch {
+            await finishJob(run.id, status: .blocked, output: error.localizedDescription)
+        }
     }
     func finishActiveTurn(threadID: String?, turnID: String?, status: AgentExecutionOutcome, hasError: Bool) {
         guard let threadID, let turnID else { return }
