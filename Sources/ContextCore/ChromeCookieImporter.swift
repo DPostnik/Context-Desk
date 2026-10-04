@@ -17,7 +17,7 @@ public struct ChromeCookieImportReceipt: Codable, Sendable {
     }
 }
 
-/// An explicit native UI operation, never an agent tool. All cookie values remain
+/// Native cookie transfer; the agent path requires a saved site-scoped policy. All cookie values remain
 /// in memory until Chrome persists them in this chat's existing dedicated profile.
 public enum ChromeCookieImporter {
     public static func run(profile: String, environment: URL, runtime: URL, maxBrowsers: Int,
@@ -53,9 +53,14 @@ public enum ChromeCookieImporter {
         }
     }
 
-    static func writeAndVerify(_ read: ChromeCookieRead, fence: URL,
+    static func writeAndVerify(_ read: ChromeCookieRead, fence: URL, executorFence: Bool = false,
                                call: @Sendable (String, JSONValue) async throws -> JSONValue) async throws -> ChromeCookieImportResult {
-        guard !FileManager.default.fileExists(atPath: fence.path) else { throw ChromeCookieError.uncertain }
+        if executorFence {
+            let intent = try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: fence))
+            guard intent["tool"].string == "browser_import_session", intent["state"].string == "outcome_unknown" else { throw ChromeCookieError.uncertain }
+        } else {
+            guard !FileManager.default.fileExists(atPath: fence.path) else { throw ChromeCookieError.uncertain }
+        }
         let intent: JSONValue = .object(["client": .string("native-cookie-import"), "request": .string(UUID().uuidString),
                                         "tool": .string("chrome_cookie_import"), "state": .string("outcome_unknown")])
         try JSONEncoder().encode(intent).write(to: fence, options: .atomic)

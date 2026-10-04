@@ -88,6 +88,14 @@ server.serve_forever()
     let imported = try await ChromeCookieImporter.transfer(read, environment: a, runtime: runtime, maxBrowsers: 2, browserRoot: root)
     #expect(imported.verified == 2 && imported.unverified == 0)
     let first = try connection(a)
+    // Agent path uses the already open destination under the executor's fence.
+    let fence = a.appendingPathComponent("executor-in-flight.json")
+    try Data(#"{"tool":"browser_import_session","state":"outcome_unknown"}"#.utf8).write(to: fence)
+    let agentImport = try await ChromeCookieImporter.writeAndVerify(read, fence: fence, executorFence: true) { method, parameters in
+        try await first.call(method, parameters: parameters)
+    }
+    #expect(agentImport.verified == 2 && agentImport.unverified == 0)
+    #expect(!FileManager.default.fileExists(atPath: fence.path))
     let firstProbe = try await visit(first, run: "first")
     #expect(firstProbe["sent"] == .bool(true) && firstProbe["httpOnly"] == .bool(true) && firstProbe["visible"] == .bool(true))
     first.close()

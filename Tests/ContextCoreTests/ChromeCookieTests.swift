@@ -198,3 +198,68 @@ private actor CookieWriteProbe {
     #expect(!FileManager.default.fileExists(atPath: fence.path))
     #expect(await probe.methods == ["Storage.setCookies", "Storage.getCookies"])
 }
+
+@Test func agentImportFiltersBeforeDecryptingOtherSites() throws {
+    let root = try temporaryCookies()
+    defer { try? FileManager.default.removeItem(at: root) }
+    _ = try fixtureDatabase(root: root, rows: """
+    INSERT INTO cookies VALUES ('.linkedin.com','session','fixture',X'','/',0,1,1,1,'',0);
+    INSERT INTO cookies VALUES ('www.linkedin.com','host','fixture2',X'','/',0,1,1,1,'',0);
+    INSERT INTO cookies VALUES ('evillinkedin.com','other','',X'\(domainCipher)','/',0,1,1,1,'',0);
+    INSERT INTO cookies VALUES ('linkedin.com.evil.test','other','',X'\(domainCipher)','/',0,1,1,1,'',0);
+    INSERT INTO cookies VALUES ('.example.test','other','',X'\(domainCipher)','/',0,1,1,1,'',0);
+    """)
+    let read = try ChromeCookieSource.read(profile: "Default", root: root, site: "linkedin.com", sourceIsRunning: { false }, key: {
+        Issue.record("Unrelated cookies must never be decrypted")
+        throw ChromeCookieError.keychain
+    })
+    #expect(read.cookies.map(\.host) == [".linkedin.com", "www.linkedin.com"])
+    #expect(read.skipped == 0)
+}
+
+@Test func agentImportPolicyRejectsPathsAndPersistsWithoutSecrets() throws {
+    let policy = try ChromeSessionImportPolicy(profile: "Profile 2", site: " LinkedIn.COM ")
+    #expect(policy.site == "linkedin.com")
+    for site in ["", "com", "https://linkedin.com", "../linkedin.com", "linkedin.com:443", "linkedin..com", "*.linkedin.com", "-linkedin.com"] {
+        #expect(throws: ChromeCookieError.self) { try ChromeSessionImportPolicy(profile: "Default", site: site) }
+    }
+    #expect(throws: ChromeCookieError.self) { try ChromeSessionImportPolicy(profile: "../Default", site: "linkedin.com") }
+    let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let environment = root.appendingPathComponent("environments/" + UUID().uuidString.lowercased())
+    try ChromeSessionImportPolicy.save(policy, environment: environment, grant: nil, browserRoot: root)
+    #expect(try ChromeSessionImportPolicy.load(environment: environment) == policy)
+    let file = environment.appendingPathComponent("chrome-session-import.json")
+    #expect((try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? NSNumber)?.intValue == 0o600)
+    try ChromeSessionImportPolicy.save(nil, environment: environment, grant: nil, browserRoot: root)
+    #expect(try ChromeSessionImportPolicy.load(environment: environment) == nil)
+}
+
+@Test func agentImportReusesExecutorFenceAndDoesNotReplay() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let fence = root.appendingPathComponent("executor-in-flight.json")
+    let read = ChromeCookieRead(cookies: [.init(host: ".linkedin.com", name: "session", value: "fixture", path: "/", secure: true, httpOnly: true, sameSite: "Lax", expires: nil)])
+    try Data(#"{"tool":"browser_action","state":"outcome_unknown"}"#.utf8).write(to: fence)
+    await #expect(throws: ChromeCookieError.self) {
+        try await ChromeCookieImporter.writeAndVerify(read, fence: fence, executorFence: true) { _, _ in
+            Issue.record("Must not overwrite another operation's fence")
+            return .null
+        }
+    }
+    try Data(#"{"tool":"browser_import_session","state":"outcome_unknown"}"#.utf8).write(to: fence)
+    await #expect(throws: ChromeCookieError.self) {
+        try await ChromeCookieImporter.writeAndVerify(read, fence: fence, executorFence: true) { method, _ in
+            #expect(method == "Storage.setCookies")
+            throw ChromeCookieError.connection
+        }
+    }
+    #expect(FileManager.default.fileExists(atPath: fence.path))
+    await #expect(throws: ChromeCookieError.self) {
+        try await ChromeCookieImporter.writeAndVerify(read, fence: fence, executorFence: true) { _, _ in
+            Issue.record("Uncertain import must never be replayed")
+            return .null
+        }
+    }
+}

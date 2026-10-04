@@ -100,7 +100,7 @@ public enum ChromeCookieSource {
 
     /// Reads an encrypted database snapshot; never opens the user's database with SQLite.
     public static func read(profile: String, root: URL = directory, now: Double = Date().timeIntervalSince1970,
-                            sourceIsRunning: () -> Bool, key: () throws -> Data = keychainKey) throws -> ChromeCookieRead {
+                            site: String? = nil, sourceIsRunning: () -> Bool, key: () throws -> Data = keychainKey) throws -> ChromeCookieRead {
         guard !sourceIsRunning() else { throw ChromeCookieError.sourceRunning }
         guard profileID(profile), try profiles(root: root).contains(where: { $0.id == profile }) else { throw ChromeCookieError.invalidProfile }
         let choices = try ["\(profile)/Network/Cookies", "\(profile)/Cookies"].map { try checked($0, root: root) }
@@ -121,10 +121,10 @@ public enum ChromeCookieSource {
         let snapshot = temporary.appendingPathComponent("Cookies")
         try bytes.write(to: snapshot, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: snapshot.path)
-        return try decode(snapshot: snapshot, now: now, key: key)
+        return try decode(snapshot: snapshot, now: now, site: site, key: key)
     }
 
-    static func decode(snapshot: URL, now: Double, key: () throws -> Data) throws -> ChromeCookieRead {
+    static func decode(snapshot: URL, now: Double, site: String? = nil, key: () throws -> Data) throws -> ChromeCookieRead {
         var database: OpaquePointer?
         guard sqlite3_open_v2(snapshot.path, &database, SQLITE_OPEN_READONLY, nil) == SQLITE_OK, let db = database else {
             if let database { sqlite3_close(database) }; throw ChromeCookieError.unavailable
@@ -156,6 +156,7 @@ public enum ChromeCookieSource {
             guard let host = text(0), let name = text(1), let path = text(4), let partition = text(9) else {
                 result.unsupported += 1; continue
             }
+            if let site, !ChromeSessionImportPolicy.includes(host: host, site: site) { continue }
             if !partition.isEmpty { result.partitioned += 1; continue }
             let expiry = sqlite3_column_int(row, 10) == 0 ? nil : Optional(Double(sqlite3_column_int64(row, 5)) / 1_000_000 - 11_644_473_600)
             if let expiry, expiry <= now { result.expired += 1; continue }

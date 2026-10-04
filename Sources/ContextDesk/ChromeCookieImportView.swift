@@ -13,6 +13,8 @@ struct ChromeCookieImportView: View {
     @State private var error: String?
     @State private var result: ChromeCookieImportResult?
     @State private var receipt: ChromeCookieImportReceipt?
+    @State private var automaticSite = "linkedin.com"
+    @State private var automaticPolicy: ChromeSessionImportPolicy?
     @AppStorage("chromeCookieSourceProfile") private var lastProfile = "Default"
     @AppStorage("parallelBrowserLimit") private var maxBrowsers = 2
 
@@ -37,6 +39,22 @@ struct ChromeCookieImportView: View {
             Text(L10n.text("localStorage, IndexedDB, аккаунт Chrome и значок профиля не переносятся. Проверка cookies не подтверждает вход на сайте.",
                            "localStorage, IndexedDB, the Chrome account and profile avatar are not transferred. Cookie verification does not confirm website sign-in."))
                 .font(.caption).foregroundStyle(.secondary)
+            Divider()
+            Text(L10n.text("Импорт сессии агентом", "Agent session import")).font(.headline)
+            TextField(L10n.text("Домен сайта, например linkedin.com", "Site domain, for example linkedin.com"), text: $automaticSite)
+                .disabled(importing)
+            Text(L10n.text("Разреши агенту переносить cookies этого сайта и его поддоменов из выбранного профиля Chrome при отсутствии входа. Разрешение действует для этого браузерного профиля, включая чаты, которым он будет передан. Обычный Chrome должен быть закрыт.",
+                           "Allow the agent to import cookies for this site and its subdomains from the selected Chrome profile when sign-in is missing. Permission applies to this browser profile, including chats it is handed to. Regular Chrome must be closed."))
+                .font(.caption).foregroundStyle(.secondary)
+            if let automaticPolicy {
+                Text(L10n.text("Разрешено: ", "Enabled: ") + automaticPolicy.site + " · " + automaticPolicy.profile).font(.callout)
+            }
+            HStack {
+                Button(L10n.text("Разрешить импорт агенту", "Enable agent import")) { saveAutomaticPolicy(enabled: true) }
+                    .disabled(importing || loading || selection.isEmpty)
+                Button(L10n.text("Отключить", "Disable")) { saveAutomaticPolicy(enabled: false) }
+                    .disabled(importing || automaticPolicy == nil)
+            }
             if let receipt, result == nil {
                 Text(L10n.text("Последний импорт: ", "Last import: ") + receipt.date.formatted(date: .abbreviated, time: .shortened) + " · " +
                      L10n.text("Проверено cookies: \(receipt.result.verified). Вход на сайте не проверен.",
@@ -74,13 +92,32 @@ struct ChromeCookieImportView: View {
                 profiles = try await Task.detached { try ChromeCookieSource.profiles() }.value
                 if let environment = try BrowserEnvironmentStore.existingEnvironment(session: session) {
                     receipt = try ChromeCookieImportReceipt.last(environment: environment)
+                    automaticPolicy = try ChromeSessionImportPolicy.load(environment: environment)
+                    if let automaticPolicy { automaticSite = automaticPolicy.site }
                 }
-                selection = profiles.contains(where: { $0.id == lastProfile }) ? lastProfile : profiles.first?.id ?? ""
+                let preferred = automaticPolicy?.profile ?? lastProfile
+                selection = profiles.contains(where: { $0.id == preferred }) ? preferred : profiles.first?.id ?? ""
                 if profiles.isEmpty { error = L10n.text("Профили обычного Google Chrome не найдены.", "No regular Google Chrome profiles were found.") }
             } catch {
                 profiles = []; selection = ""
                 self.error = (error as? ChromeCookieError ?? .unavailable).localizedDescription
             }
+        }
+    }
+
+    private func saveAutomaticPolicy(enabled: Bool) {
+        error = nil
+        do {
+            guard let root = try BrowserEnvironmentStore.existingEnvironment(session: session) else { throw ChromeCookieError.missingEnvironment }
+            let store = BrowserProfileStore(), reference = AgentSessionReference(connection: .originalCodex, nativeID: session)
+            let grant = try store.current(session: reference) == nil ? nil : store.ownedGrant(session: reference, allowHuman: true)
+            let policy = enabled ? try ChromeSessionImportPolicy(profile: selection, site: automaticSite) : nil
+            try ChromeSessionImportPolicy.save(policy, environment: root, grant: grant)
+            automaticPolicy = policy
+        } catch {
+            self.error = (error as? BrowserProfileError)?.localizedDescription ??
+                L10n.text("Не удалось сохранить разрешение. Проверь домен и профиль Chrome; дождись завершения операции браузера.",
+                          "Could not save permission. Check the domain and Chrome profile; wait for the browser operation to finish.")
         }
     }
 

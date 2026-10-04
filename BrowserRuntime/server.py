@@ -8,6 +8,7 @@ from pathlib import Path
 import queue
 import re
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -96,6 +97,7 @@ class Browser:
         self.counter = 0
         self.metrics = {'calls': 0, 'rpcMilliseconds': 0, 'responseBytes': 0, 'toolErrors': 0}
         self.checkpoint = None
+        self.imported_sites = set()
 
     def start(self):
         if self.transport or self.injected:
@@ -379,6 +381,57 @@ class Browser:
             self.stopped.wait(0.25)
             self.owner(token)
 
+    def import_session(self, token, expected_url):
+        self.owner(token)
+        web_url(expected_url)
+        policy_file = self.root / 'chrome-session-import.json'
+        unavailable = tr('Разреши импорт для сайта и профиля Chrome через Браузер → Импортировать только cookies.',
+                         'Enable import for the site and Chrome profile in Browser → Import cookies only.')
+        require(policy_file.is_file() and not policy_file.is_symlink() and policy_file.stat().st_size <= 4096, unavailable)
+        try:
+            policy = json.loads(policy_file.read_text())
+            site = policy['site']
+            require(isinstance(site, str) and re.fullmatch(r'[a-z0-9]+(?:[a-z0-9.-]*[a-z0-9])?', site)
+                    and '.' in site and '..' not in site, unavailable)
+        except (ValueError, KeyError, TypeError):
+            raise Rejected(unavailable)
+        host = urlparse(expected_url).hostname or ''
+        require(host == site or host.endswith('.' + site), tr(
+            'Этот сайт не разрешён для автоматического импорта.', 'Automatic import is not enabled for this site.'))
+        require((token, site) not in self.imported_sites, tr(
+            'Cookies уже импортированы в этой сессии. Проверь вход; автоматического повтора не будет.',
+            'Cookies were already imported in this session. Check sign-in; no automatic replay is allowed.'))
+        self.expected(expected_url)
+        require(self.chrome is not None and self.chrome.owner is not None, tr(
+            'Не найден выделенный браузер чата.', 'The dedicated chat browser was not found.'))
+        endpoint = self.chrome.endpoint(self.chrome.owner)
+        require(endpoint, tr('Не удалось проверить подключение к браузеру чата.',
+                             'Could not verify the connection to the chat browser.'))
+        websocket = endpoint.replace('http://', 'ws://', 1) + self.chrome.owner['browserPath']
+        helper = Path(__file__).resolve().parents[2] / 'MacOS' / 'ContextDesk'
+        require(helper.is_file(), tr('Нужна собранная версия Context Desk.', 'A built Context Desk app is required.'))
+        try:
+            result = subprocess.run([str(helper), '--browser-import-session', str(self.root), site, websocket, LANGUAGE],
+                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=60, check=False)
+            require(result.returncode == 0 and len(result.stdout) <= 32768, 'native_import_failed')
+            value = json.loads(result.stdout)
+            require(isinstance(value, dict), 'invalid_import_result')
+        except Exception:
+            self.failed = True
+            raise Rejected(tr('Исход импорта неизвестен. Повтора не было.', 'Import outcome is unknown. Nothing was retried.'))
+        if 'error' in value:
+            self.failed = value.get('outcomeUnknown') is True
+            raise Rejected(value['error'])
+        if not all(isinstance(value.get(k), int) and not isinstance(value.get(k), bool) and value[k] >= 0
+                   for k in ('verified', 'skipped', 'unverified')) or value.get('websiteSignInVerified') is not False:
+            self.failed = True
+            raise Rejected(tr('Исход импорта неизвестен. Повтора не было.', 'Import outcome is unknown. Nothing was retried.'))
+        self.imported_sites.add((token, site))
+        self.checkpoint.update(importedSite=site, state='cookies_imported_sign_in_unverified')
+        self.persist()
+        # Return only counts. A separate navigation/read must check website sign-in.
+        return {k: value[k] for k in ('verified', 'skipped', 'unverified', 'websiteSignInVerified')}
+
     def close_session(self, token, confirmation_timeout=2):
         self.owner(token)
         self.checkpoint.update(state='close_pending')
@@ -418,6 +471,7 @@ def catalog():
     action = {**token, 'actionID': string, 'expectedURL': string}
     definitions = [
         ('browser_open', 'Открыть собственную вкладку; сохрани session. Другие чаты могут держать свои вкладки: операции выполняются по очереди. После закрытия Chrome начни новую сессию без повторения действий.', 'Open your own tab; retain its session token. Other chats can keep their tabs: operations run serially. After Chrome exits, start a new session without replaying actions.', {'url': string}, ['url'], False),
+        ('browser_import_session', 'При отсутствии авторизации импортировать cookies текущего сайта из разрешённого профиля Chrome. Настрой сайт один раз в меню Браузер → Импортировать только cookies. Обычный Chrome должен быть закрыт; возможен запрос Связки ключей. Затем обнови страницу отдельным действием и проверь вход. Не используй для сетевых ошибок, CAPTCHA или обхода блокировок. Не повторяй неопределённый импорт.', 'When sign-in is missing, import current-site cookies from the enabled Chrome profile. Configure the site once in Browser → Import cookies only. Regular Chrome must be closed; Keychain may prompt. Then reload with a separate action and verify sign-in. Do not use for network errors, CAPTCHA or bypassing blocks. Never replay an uncertain import.', {**token, 'expectedURL': string}, ['session', 'expectedURL'], False),
         ('browser_cards', 'Прочитать карточки, включая date/excerpt. expectedCards — только для проверенного статического списка; иначе обход с прокруткой. complete относится к одной странице.', 'Read compact cards including date/excerpt. Set expectedCards only for an audited static list; otherwise scroll normally. complete describes one page.', {**token, 'selectors': config, 'timeout': timeout, 'expectedCards': {'type': 'integer', 'minimum': 1, 'maximum': 500}}, ['session', 'selectors'], True),
         ('browser_next', 'Передай либо nextToken для обычной ссылки Далее без снимка, либо наблюдаемый uid для клика. Проверяет смену ID; не повторяет действие.', 'Supply either nextToken for an ordinary Next link without a snapshot, or an observed uid to click. Verifies changed IDs; never replays an action.', {**action, 'uid': string, 'nextToken': string, 'selectors': config, 'timeout': timeout}, [*action, 'selectors'], False),
         ('browser_action', 'Одно действие Chrome DevTools. Результат требует проверки через browser_verify; actionID нельзя повторять.', 'One native Chrome DevTools action. Verify the result with browser_verify; never reuse an actionID.', {**action, 'name': {'type': 'string', 'enum': ['click', 'fill', 'fill_form', 'press_key', 'type_text', 'upload_file', 'navigate_page']}, 'arguments': {'type': 'object'}}, [*action, 'name', 'arguments'], False),
@@ -438,6 +492,8 @@ def dispatch(browser, name, a):
     if name == 'browser_open':
         return browser.open(a['url'])
     browser.owner(a['session'])
+    if name == 'browser_import_session':
+        return browser.import_session(a['session'], a['expectedURL'])
     if name == 'browser_cards':
         return browser.cards(a['session'], a['selectors'], a.get('timeout', 12), expected_cards=a.get('expectedCards'))
     if name == 'browser_next':

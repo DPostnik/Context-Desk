@@ -39,7 +39,7 @@ import UserNotifications
         willPresent notification: UNNotification) async -> UNNotificationPresentationOptions { [.banner, .sound] }
 }
 
-@main struct ContextDeskApp: App {
+struct ContextDeskApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var model = DeskModel()
     init() {
