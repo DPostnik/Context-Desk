@@ -27,17 +27,31 @@ import IOKit.ps
     private var powerSource: CFRunLoopSource?
     private var sleeping = false
     private var api: RemoteAPI?
+    private var apiURL = ""
+    private var apiKey = ""
+    private let makeClient: (String, String) throws -> RemoteAPI
     private var assertion: IOPMAssertionID = 0
     private let configFile = Locations.root.appendingPathComponent("mobile-remote.json")
     private let setupFile: URL
     private let journal = RemoteJournal(file: Locations.root.appendingPathComponent("mobile-remote-journal.json"))
     private var device = UUID().uuidString.lowercased()
     private struct Config: Codable { var url: String; var key: String; var device: String; var projects: Set<String> }
-    init(setupFile: URL = Locations.root.appendingPathComponent("mobile-setup.json")) {
+    init(setupFile: URL = Locations.root.appendingPathComponent("mobile-setup.json"),
+         makeClient: @escaping (String, String) throws -> RemoteAPI = { try RemoteAPI(url: $0, key: $1) }) {
         self.setupFile = setupFile
+        self.makeClient = makeClient
         if let data = try? Data(contentsOf: configFile), let config = try? JSONDecoder().decode(Config.self, from: data) {
             url = config.url; key = config.key; device = config.device; projects = config.projects
         }
+    }
+    // Disabling access stops transport, not authentication. Reuse the actor so
+    // re-enabling does not reread Keychain or race a second token refresh.
+    func connectionClient() throws -> RemoteAPI {
+        if let api, apiURL == url, apiKey == key { return api }
+        api = nil
+        let client = try makeClient(url, key)
+        api = client; apiURL = url; apiKey = key
+        return client
     }
     // Model construction also happens in tests and background contexts. Only the
     // settings UI consumes the installer handoff.
@@ -55,7 +69,7 @@ import IOKit.ps
         transitioning = true
         defer { transitioning = false }
         do {
-            let client = try RemoteAPI(url: url, key: key)
+            let client = try connectionClient()
             if !password.isEmpty { try await client.signIn(email: email, password: password); password = "" }
             _ = try await client.owner()
             try FileManager.default.createDirectory(at: configFile.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -201,7 +215,7 @@ import IOKit.ps
     func forgetCloudCopy() async {
         await disable()
         do {
-            let client = try api ?? RemoteAPI(url: url, key: key)
+            let client = try connectionClient()
             try await client.deleteDevice(device)
             try await client.signOut()
             status = L10n.text("Облачная копия и очередь удалены", "Cloud copy and queue deleted")
@@ -231,6 +245,8 @@ struct MobileRemoteSettings: View {
             TextField(L10n.text("Почта Supabase", "Supabase email"), text: $host.email)
             SecureField(L10n.text("Пароль Supabase", "Supabase password"), text: $host.password)
             }.disabled(host.enabled || host.transitioning)
+            Text(L10n.text("Если Связка ключей на Mac запрашивает доступ для Context Desk, выберите «Разрешать всегда», чтобы сохранить разрешение. После обновления приложения macOS может запросить его снова.", "If Keychain on your Mac asks to allow Context Desk access, choose Always Allow to save permission. macOS may ask again after an app update."))
+                .font(.caption).foregroundStyle(.secondary)
             Text(L10n.text("Выбранные проекты: названия, последние сообщения и запросы подтверждения передаются в Supabase. Фото с телефона удаляются из облака примерно через час после обработки команды, а с Mac — через час после окончания работы чата. Очистка на Mac выполняется, пока приложение открыто. Вложения из истории Mac и учётные данные агентов не передаются. Облачная копия хранится до удаления ниже. После перезапуска доступ нужно включить вручную; сохранённые команды будут обработаны.", "Selected projects: names, recent messages and approval requests are sent to Supabase. Phone photos are removed from the cloud about an hour after the command is processed, and from your Mac an hour after the chat becomes idle. Mac cleanup runs while the app is open. Attachments from Mac history and agent credentials are excluded. The cloud copy remains until deleted below. After restarting, enable access manually; saved commands will be processed."))
                 .font(.caption).foregroundStyle(.secondary)
             ForEach(model.state.projects) { project in

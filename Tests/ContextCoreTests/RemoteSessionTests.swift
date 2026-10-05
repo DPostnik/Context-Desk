@@ -8,6 +8,7 @@ private final class RemoteAuthFixture: @unchecked Sendable {
     var refreshes = 0
     var failRefresh = false
     var failStorage = false
+    var writes: [Data?] = []
     func respond(_ request: URLRequest) -> (Int, Data) {
         if request.url!.path.contains("/token") {
             let refresh = request.url!.query!.contains("refresh_token")
@@ -25,6 +26,7 @@ private final class RemoteAuthFixture: @unchecked Sendable {
         RemoteSessionStorage(read: { _ in self.lock.withLock { self.saved } }, write: { data, _ in
             try self.lock.withLock {
                 if data != nil && self.failStorage && self.refreshes > 0 { throw RemoteFailure.keychain(-25293) }
+                self.writes.append(data)
                 self.saved = data
             }
         })
@@ -73,6 +75,10 @@ private func fixtureAPI(_ fixture: RemoteAuthFixture, host: String) throws -> Re
     #expect(fixture.lock.withLock { fixture.refreshes } == 1)
     let saved = try #require(fixture.lock.withLock { fixture.saved })
     #expect((try JSONSerialization.jsonObject(with: saved) as? [String: Any])?["access_token"] as? String == "new")
+    let writes = fixture.lock.withLock { fixture.writes }
+    #expect(writes.count == 3)
+    #expect(writes[1] == Data())
+    #expect(writes.allSatisfy { $0 != nil })
 }
 
 @Test func remoteAmbiguousRefreshIsNeverRetried() async throws {
@@ -86,7 +92,11 @@ private func fixtureAPI(_ fixture: RemoteAuthFixture, host: String) throws -> Re
         catch RemoteFailure.signedOut {}
     }
     #expect(fixture.lock.withLock { fixture.refreshes } == 1)
-    #expect(fixture.lock.withLock { fixture.saved } == nil)
+    #expect(fixture.lock.withLock { fixture.saved } == Data())
+    let restored = try fixtureAPI(fixture, host: host)
+    do { _ = try await restored.realtimeCredentials(); Issue.record("An uncertain refresh was restored") }
+    catch RemoteFailure.signedOut {}
+    #expect(fixture.lock.withLock { fixture.refreshes } == 1)
 }
 
 @Test func remoteSignOutDuringRefreshCannotRestoreSession() async throws {
@@ -128,5 +138,24 @@ private func fixtureAPI(_ fixture: RemoteAuthFixture, host: String) throws -> Re
     try await api.signIn(email: "fixture", password: "fixture")
     let restored = try fixtureAPI(fixture, host: host)
     #expect(try await restored.owner() == "11111111-1111-1111-1111-111111111111")
+    #expect(fixture.lock.withLock { fixture.refreshes } == 0)
+}
+
+@Test func remoteRefreshRequiresPersistedInvalidationBeforeSending() async throws {
+    let fixture = RemoteAuthFixture(); let host = UUID().uuidString.lowercased() + ".invalid"
+    let initial = try fixtureAPI(fixture, host: host)
+    defer { AuthURLProtocol.registry.set(host, nil) }
+    try await initial.signIn(email: "fixture", password: "fixture")
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [AuthURLProtocol.self]
+    let storage = fixture.storage
+    let api = try RemoteAPI(url: "https://" + host, key: "sb_publishable_fixture",
+                            transport: URLSession(configuration: configuration),
+                            storage: RemoteSessionStorage(read: storage.read, write: { data, account in
+        if data == Data() { throw RemoteFailure.keychain(-25293) }
+        try storage.write(data, account)
+    }))
+    do { _ = try await api.realtimeCredentials(); Issue.record("Refresh escaped failed invalidation") }
+    catch RemoteFailure.keychain(let code) { #expect(code == -25293) }
     #expect(fixture.lock.withLock { fixture.refreshes } == 0)
 }

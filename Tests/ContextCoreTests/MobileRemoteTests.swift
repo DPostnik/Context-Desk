@@ -4,6 +4,35 @@ import Testing
 import ContextCore
 @testable import ContextDesk
 
+@Test @MainActor func remoteHostReusesAuthenticationAcrossDisableAndReenable() async throws {
+    var constructions = 0
+    let host = MobileRemoteHost(makeClient: { url, key in
+        constructions += 1
+        return try RemoteAPI(url: url, key: key,
+                             storage: RemoteSessionStorage(read: { _ in nil }, write: { _, _ in }))
+    })
+    host.url = "https://first.invalid"; host.key = "sb_publishable_fixture"
+    let first = try host.connectionClient()
+    await host.disable()
+    #expect(try host.connectionClient() === first)
+    #expect(constructions == 1)
+    #expect(!host.enabled)
+
+    host.url = "https://second.invalid"
+    let second = try host.connectionClient()
+    #expect(second !== first)
+    host.key = "sb_publishable_other"
+    let third = try host.connectionClient()
+    #expect(third !== second)
+    #expect(constructions == 3)
+
+    host.url = "http://invalid.invalid"
+    #expect(throws: RemoteFailure.self) { try host.connectionClient() }
+    host.url = "https://second.invalid"
+    #expect(try host.connectionClient() !== third)
+    #expect(constructions == 5)
+}
+
 @Test @MainActor func remoteHostLeavesInstallerHandoffUntilSettingsAreOpened() throws {
     let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: file) }

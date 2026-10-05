@@ -77,6 +77,13 @@ A macOS Swift typecheck of shared views is useful but is **not** an iOS build.
 - Supabase session tokens live in this app's Keychain service. The Mac's remote
   configuration and durable command journal live under the dedicated app home.
   Codex and Claude credentials/state remain on the Mac.
+  Disabling/re-enabling Mac access reuses the authenticated client for the same
+  URL and public key during that app launch, avoiding another Keychain read.
+  Token refresh clears the item's value before sending and updates it on success,
+  preserving the item's access permissions instead of deleting/recreating it.
+  An empty value restores as signed out, so an uncertain refresh is never replayed.
+  Explicit sign-out still deletes the item. Choose Always Allow in the Mac's
+  Keychain prompt to retain consent; ad-hoc app updates can require consent again.
 - A UUID identifies each command. SQL atomically claims it once; a durable local
   intent journal is written before agent dispatch. Claims never expire back to
   pending. Transport ambiguity never triggers an execution retry. A stuck claim

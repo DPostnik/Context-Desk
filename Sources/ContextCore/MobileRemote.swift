@@ -342,7 +342,10 @@ public actor RemoteAPI {
         // uncertain refresh, and never restore a session after sign-out.
         let generation = authGeneration
         session = nil
-        try storage.write(nil, account)
+        // Invalidate the old refresh token before sending, but preserve the
+        // Keychain item and its user-granted ACL. Delete/re-add loses that ACL.
+        // Empty data restores as signed out after a crash or uncertain refresh.
+        try storage.write(Data(), account)
         let task = Task<Session, Error> {
             do {
                 let data = try await self.request("auth/v1/token?grant_type=refresh_token", method: "POST",
