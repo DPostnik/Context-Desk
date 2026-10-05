@@ -1,0 +1,9 @@
+# Agent-requested app restart
+
+Run `zsh scripts/request-app-restart.sh` from this checkout after an authorized restart is needed. It sends one request to the running instance of `build/Context Desk.app`. For another bundle, invoke that bundle's `Contents/MacOS/ContextDesk --request-restart` executable directly. The CLI exits without constructing a second application model or connecting to agent state.
+
+The receiving app waits for bootstrap, connections, active chats, handoffs, summaries, scheduled jobs and pending approvals to finish. Finish the requesting turn so it can become idle. The app saves its metadata, starts a bounded relaunch helper and follows its ordinary shutdown path. The helper waits for the old process to exit before opening the same bundle; it never force-kills an owner. Existing chat history is restored through normal startup; requests and turns are not replayed.
+
+The app menu provides **Restart after tasks finish** and **Cancel pending restart**, localized in Russian and English. Duplicate requests coalesce while pending. Pending requests are in memory and do not survive a crash. Quitting while a restart is pending also follows the restart path; cancel the pending request first to quit without reopening. The CLI reports sending, not acknowledgement or completed relaunch; do not retry an uncertain delivery automatically. The helper gives up after 120 seconds if shutdown does not finish. LaunchServices failures cannot be displayed by an already terminated app.
+
+This channel is local to the login session and exact bundle path. It does not grant command permissions, modify other clients' state, or run arbitrary payloads. The running app must already contain restart support; after the first build, quit with Cmd+Q and reopen manually. Building does not itself request a restart.

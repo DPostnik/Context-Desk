@@ -7,15 +7,18 @@ import UserNotifications
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     weak var model: DeskModel?
     let keepAwake = KeepAwake()
+    let restart = AppRestartController()
     func applicationDidFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
         NSApplication.shared.setActivationPolicy(.regular)
+        restart.start(delegate: self)
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag { sender.windows.first { $0.canBecomeMain }?.makeKeyAndOrderFront(nil) }; return true
     }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if restart.terminating { return .terminateLater }
         if model?.anyBusy == true {
             let alert = NSAlert(); alert.messageText = L10n.text("Задача ещё выполняется", "A task is still running")
             alert.informativeText = L10n.text("Выход остановит подключение к Codex и задания Claude Code. Скрыть окно можно без остановки.", "Quitting will close the Codex connection and stop Claude Code tasks. You can hide the window without stopping them.")
@@ -23,7 +26,29 @@ import UserNotifications
             alert.addButton(withTitle: L10n.text("Остаться", "Stay")).keyEquivalent = "\u{1b}"
             if alert.runModal() != .alertFirstButtonReturn { return .terminateCancel }
         }
-        Task { await model?.shutdown(); sender.reply(toApplicationShouldTerminate: true) }
+        restart.terminating = true
+        Task {
+            if restart.requested {
+                do {
+                    guard let model else { throw RestartFailure.unavailable }
+                    try await model.store.save(model.state)
+                    // Saving suspends; work may have arrived in the meantime.
+                    guard model.readyForRestart else {
+                        restart.terminating = false
+                        sender.reply(toApplicationShouldTerminate: false)
+                        return
+                    }
+                    try restart.launchHelper()
+                } catch {
+                    restart.terminating = false
+                    restart.cancel()
+                    model?.error = L10n.text("Не удалось подготовить перезапуск: ", "Could not prepare restart: ") + error.localizedDescription
+                    sender.reply(toApplicationShouldTerminate: false)
+                    return
+                }
+            }
+            await model?.shutdown(); sender.reply(toApplicationShouldTerminate: true)
+        }
         return .terminateLater
     }
     func applicationWillTerminate(_ notification: Notification) { keepAwake.stop() }
@@ -66,6 +91,10 @@ struct ContextDeskApp: App {
         }
         .defaultSize(width: 1120, height: 760)
         .commands {
+            CommandGroup(before: .appTermination) {
+                RestartMenu(restart: delegate.restart)
+                Divider()
+            }
             CommandGroup(replacing: .help) {
                 SettingsLink { Text("Язык / Language…") }
             }
@@ -84,6 +113,18 @@ struct ContextDeskApp: App {
                 .preferredColorScheme(.light)
                 .environment(\.locale, L10n.locale).frame(width: 520).padding(24)
         }
+    }
+}
+
+private struct RestartMenu: View {
+    @ObservedObject var restart: AppRestartController
+    var body: some View {
+        Button(restart.requested
+               ? L10n.text("Перезапуск ожидает завершения задач…", "Restart waiting for tasks…")
+               : L10n.text("Перезапустить после завершения задач", "Restart after tasks finish")) { restart.enqueueRestart() }
+            .disabled(restart.requested)
+        Button(L10n.text("Отменить ожидающий перезапуск", "Cancel pending restart")) { restart.cancel() }
+            .disabled(!restart.requested)
     }
 }
 
