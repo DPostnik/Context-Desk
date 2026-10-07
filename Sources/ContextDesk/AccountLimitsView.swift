@@ -5,6 +5,16 @@ struct AccountLimitsView: View {
     @ObservedObject var model: DeskModel
     @Environment(\.dismiss) private var dismiss
 
+    @State private var agent: AgentConnectionID?
+
+    private var selected: AgentConnectionID { agent ?? (model.currentAgent == .appClaude ? .appClaude : .originalCodex) }
+    private var claude: Bool { selected == .appClaude }
+    private var limits: AccountLimits? { claude ? model.claudeLimits : model.accountLimits }
+    private var issue: String? { claude ? model.claudeLimitsError : model.limitsError }
+    private var refreshing: Bool { claude ? model.refreshingClaudeLimits : model.refreshingLimits }
+    private var connected: Bool { claude ? model.claudeConnected : model.connected }
+    private var authenticated: Bool { claude ? model.claudeAuthenticated : model.authenticated }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack {
@@ -13,16 +23,26 @@ struct AccountLimitsView: View {
                 Button { dismiss() } label: { Image(systemName: "xmark") }
                     .buttonStyle(PointerButtonStyle(base: .plain)).help(L10n.text("Закрыть", "Close")).keyboardShortcut(.cancelAction)
             }
-            Text(L10n.text("Лимиты Codex общие для аккаунта во всех приложениях. Контекст отдельного чата показан рядом с полем сообщения.", "Codex limits are shared across all apps on your account. Each chat’s context usage is shown next to the message field."))
-                .font(.callout).foregroundStyle(.secondary)
-            if !model.authenticated {
-                Text(L10n.text("Войди в ChatGPT в настройках приложения, чтобы увидеть лимиты.", "Sign in with ChatGPT in the app’s settings to see your limits."))
+            Picker(L10n.text("Провайдер", "Provider"), selection: Binding(get: { selected }, set: { agent = $0 })) {
+                Text("Codex").tag(AgentConnectionID.originalCodex)
+                Text("Claude Code").tag(AgentConnectionID.appClaude)
+            }.pickerStyle(.segmented).labelsHidden().pointingHandCursor()
+            Text(claude
+                 ? L10n.text("Лимиты подписки Claude общие для аккаунта: Claude Code, claude.ai и другие приложения. Контекст отдельного чата показан рядом с полем сообщения.", "Claude subscription limits are shared across your account: Claude Code, claude.ai and other apps. Each chat’s context usage is shown next to the message field.")
+                 : L10n.text("Лимиты Codex общие для аккаунта во всех приложениях. Контекст отдельного чата показан рядом с полем сообщения.", "Codex limits are shared across all apps on your account. Each chat’s context usage is shown next to the message field."))
+                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            if claude && !model.claudeConnected && model.claudeConnecting {
+                ProgressView(L10n.text("Подключаю Claude Code…", "Connecting Claude Code…")).padding(.vertical)
+            } else if !authenticated {
+                Text(claude
+                     ? L10n.text("Войди в Claude в настройках приложения, чтобы увидеть лимиты.", "Sign in to Claude in the app’s settings to see your limits.")
+                     : L10n.text("Войди в ChatGPT в настройках приложения, чтобы увидеть лимиты.", "Sign in with ChatGPT in the app’s settings to see your limits."))
             } else {
-                if !model.connected { Label(L10n.text("Нет подключения. Данные могут быть устаревшими.", "Disconnected. Data may be out of date."), systemImage: "wifi.slash") }
-                if let issue = model.limitsError {
+                if !connected { Label(L10n.text("Нет подключения. Данные могут быть устаревшими.", "Disconnected. Data may be out of date."), systemImage: "wifi.slash") }
+                if let issue {
                     Label(issue, systemImage: "exclamationmark.circle").font(.callout).foregroundStyle(.secondary)
                 }
-                if let snapshot = model.accountLimits {
+                if let snapshot = limits {
                     if snapshot.ordinaryUsageAllowed == false {
                         Text(L10n.text("Сервис сообщает, что обычное использование сейчас недоступно.", "The service reports that ordinary usage is currently unavailable.")).font(.callout)
                     }
@@ -40,22 +60,29 @@ struct AccountLimitsView: View {
                     }.frame(maxHeight: 340)
                     Text(L10n.text("Проверено: \(localDate(snapshot.fetchedAt))", "Checked: \(localDate(snapshot.fetchedAt))"))
                         .font(.caption).foregroundStyle(.secondary)
-                } else if model.refreshingLimits {
+                } else if refreshing {
                     ProgressView(L10n.text("Проверяю лимиты…", "Checking limits…")).padding(.vertical)
-                } else if model.limitsError == nil {
+                } else if issue == nil {
                     Text(L10n.text("Данные о лимитах пока не получены.", "Limit data has not been received yet.")).foregroundStyle(.secondary)
                 }
             }
             HStack {
                 Text(L10n.text("Время: \(TimeZone.current.identifier)", "Time zone: \(TimeZone.current.identifier)")).font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                if model.refreshingLimits && model.accountLimits != nil { ProgressView().controlSize(.small) }
-                Button(L10n.text("Обновить", "Refresh")) { Task { await model.refreshLimits() } }
-                    .disabled(model.refreshingLimits || !model.connected || !model.authenticated)
+                if refreshing && limits != nil { ProgressView().controlSize(.small) }
+                Button(L10n.text("Обновить", "Refresh")) { Task { await refresh() } }
+                    .disabled(refreshing || !connected || !authenticated)
             }
         }.padding(24).frame(width: 480)
             .buttonStyle(PointerButtonStyle(base: .automatic))
-            .task { await model.refreshLimits() }
+            .task(id: selected) { await refresh() }
+    }
+
+    private func refresh() async {
+        guard claude else { await model.refreshLimits(); return }
+        // The usage probe needs the app-owned Claude profile; connecting only checks the CLI and account.
+        if !model.claudeConnected { await model.connectClaude() }
+        await model.refreshClaudeLimits()
     }
 
     private func windowRow(_ window: LimitWindow) -> some View {

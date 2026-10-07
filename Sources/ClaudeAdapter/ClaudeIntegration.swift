@@ -63,7 +63,7 @@ public actor ClaudeIntegration: AgentIntegration {
     public func descriptor() -> AgentResult<AgentDescriptor> {
         guard home != nil, executable != nil else { return .unavailable }
         return .success(.init(context: context, identityMode: .appOwnedHome,
-            capabilities: [.interactiveSessions, .isolatedGeneration, .history, .streaming, .usage, .approvals, .userQuestions, .interruption, .authenticationManagement, .archive],
+            capabilities: [.interactiveSessions, .isolatedGeneration, .history, .streaming, .usage, .approvals, .userQuestions, .interruption, .authenticationManagement, .accountLimits, .archive],
             permissions: .claudeRestrictedFiles, routes: [.direct]))
     }
     public func observe(sessions: [AgentSessionReference]) {}
@@ -120,7 +120,19 @@ public actor ClaudeIntegration: AgentIntegration {
         } catch { return failed(error) }
     }
     public func models() -> AgentResult<[AgentModelInfo]> { .rejected(.unsupported(.modelDiscovery)) }
-    public func limits() -> AgentResult<AccountLimits> { .rejected(.unsupported(.accountLimits)) }
+    public func limits() async -> AgentResult<AccountLimits> {
+        guard let home, let executable else { return .unavailable }
+        let epoch = context, wire = ClaudeWire()
+        do {
+            try await wire.start(executable: executable, arguments: ClaudeLimits.arguments, environment: ClaudeProfile.environment(home: home), cwd: home)
+            _ = try await wire.control(.object(["subtype": .string("initialize"), "hooks": .null]))
+            let response = try await wire.control(ClaudeLimits.request)
+            await wire.close()
+            guard context == epoch else { return .rejected(.staleContext) }
+            guard let limits = ClaudeLimits.decode(response) else { return .rejected(.unsupported(.accountLimits)) }
+            return .success(limits)
+        } catch { await wire.close(); return failed(error) }
+    }
     public func configure(_ tools: AgentToolConfiguration, context: AgentContext) -> AgentResult<Void> { .rejected(.unsupported(.toolRegistration)) }
     private func validate(_ request: AgentExecutionRequest) -> AgentRejection? {
         guard case .success(let descriptor) = descriptor() else { return .staleContext }

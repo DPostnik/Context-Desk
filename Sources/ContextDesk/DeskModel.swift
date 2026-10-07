@@ -155,6 +155,10 @@ private struct ChatRunState {
     @Published private(set) var limitsError: String?
     @Published private(set) var refreshingLimits = false
     private var limitsRequestID: UUID?
+    @Published private(set) var claudeLimits: AccountLimits?
+    @Published private(set) var claudeLimitsError: String?
+    @Published private(set) var refreshingClaudeLimits = false
+    private var claudeLimitsRequestID: UUID?
     @Published var notificationStatus = L10n.text("Уведомления не включены", "Notifications are off")
     private var loadedThreads: Set<String> = []
     private var eventTask: Task<Void, Never>?
@@ -455,6 +459,38 @@ private struct ChatRunState {
         refreshingLimits = false
         accountLimits = nil
         limitsError = nil
+    }
+    func refreshClaudeLimits() async {
+        guard claudeConnected, claudeAuthenticated, !refreshingClaudeLimits else { return }
+        let requestID = UUID()
+        claudeLimitsRequestID = requestID
+        refreshingClaudeLimits = true
+        claudeLimitsError = nil
+        defer {
+            if claudeLimitsRequestID == requestID { refreshingClaudeLimits = false; claudeLimitsRequestID = nil }
+        }
+        do {
+            let result = try await claudeConnection.limits()
+            guard claudeLimitsRequestID == requestID, claudeAuthenticated, claudeConnected else { return }
+            claudeLimits = result
+        } catch let failure as AgentOperationFailure where failure.rejection == .staleContext {
+            return
+        } catch let failure as AgentOperationFailure where failure.rejection == .unsupported(.accountLimits) {
+            guard claudeLimitsRequestID == requestID else { return }
+            claudeLimits = nil
+            claudeLimitsError = L10n.text("Claude Code не сообщает лимиты для этого аккаунта. Они доступны только для подписки Claude.", "Claude Code reports no limits for this account. They are available only with a Claude subscription.")
+        } catch {
+            guard claudeLimitsRequestID == requestID else { return }
+            claudeLimitsError = claudeLimits == nil
+                ? L10n.text("Не удалось получить лимиты. Попробуй обновить ещё раз.", "Could not fetch limits. Try refreshing again.")
+                : L10n.text("Не удалось обновить лимиты. Показаны последние полученные данные.", "Could not refresh limits. Showing the last available data.")
+        }
+    }
+    private func clearClaudeLimits() {
+        claudeLimitsRequestID = nil
+        refreshingClaudeLimits = false
+        claudeLimits = nil
+        claudeLimitsError = nil
     }
     func moveProject(_ id: UUID, to targetID: UUID) -> Bool {
         guard state.moveProject(id, to: targetID) else { return false }
@@ -1376,7 +1412,7 @@ private struct ChatRunState {
     func connectClaude() async {
         guard !claudeConnecting, !state.chats.contains(where: { $0.nativeSession?.connection == .appClaude && isBusy(threadID: $0.id) }) else { return }
         claudeConnecting = true; defer { claudeConnecting = false }
-        resetAgentState(.appClaude); claudeConnected = false; claudeAuthenticated = false
+        resetAgentState(.appClaude); claudeConnected = false; claudeAuthenticated = false; clearClaudeLimits()
         do {
             claudeDescriptor = try await claudeConnection.start(.init(home: claudeHome))
             claudeConnected = true
@@ -1387,7 +1423,7 @@ private struct ChatRunState {
     func refreshClaudeAccount() async {
         do { claudeAuthenticated = try await claudeConnection.account().authenticated }
         catch { claudeAuthenticated = false; self.error = error.localizedDescription }
-        if claudeAuthenticated { startSummaryQueue() }
+        if claudeAuthenticated { startSummaryQueue() } else { clearClaudeLimits() }
     }
     func loginClaude() async {
         if !claudeConnected { await connectClaude() }
@@ -1418,14 +1454,14 @@ private struct ChatRunState {
         switch event.payload {
         case .descriptor(let descriptor): claudeDescriptor = descriptor
         case .accountChanged(let issue):
-            resetAgentState(.appClaude)
+            resetAgentState(.appClaude); clearClaudeLimits()
             await interruptSummaries(.appClaude, issue: L10n.text("Аккаунт изменился. Проверь итог перед новым запуском.", "The account changed. Review the summary before starting again."))
             if let issue { error = issue }
             await refreshClaudeAccount()
         case .interactionsReset: clearAgentInteractions(.appClaude)
         case .disconnected:
             flushDeltas()
-            resetAgentState(.appClaude); claudeConnected = false; claudeAuthenticated = false
+            resetAgentState(.appClaude); claudeConnected = false; claudeAuthenticated = false; clearClaudeLimits()
             await interruptSummaries(.appClaude, issue: L10n.text("Claude отключился. Итог не повторён автоматически.", "Claude disconnected. The summary was not retried automatically."))
         case .limitsChanged: break
         default: await receive(event)
