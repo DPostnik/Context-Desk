@@ -11,13 +11,13 @@ extension DeskModel {
         guard !isBusy(threadID: chatID), !isChangingChat(chatID),
               !pending.contains(where: { $0.threadID == chatID }),
               let chat = state.chats.first(where: { $0.id == chatID }),
-              let session = chat.nativeSession, session.connection == .originalCodex,
+              let session = chat.nativeSession, [.originalCodex, .appClaude].contains(session.connection),
               let project = state.projects.first(where: { $0.id == chat.projectID }),
               let runtime = Bundle.main.resourceURL?.appendingPathComponent("BrowserRuntime"),
               state.browserEnabled == true else { throw BrowserProfileError.busy }
         configuringBrowserChats.insert(chatID)
         defer { configuringBrowserChats.remove(chatID) }
-        let client = connection
+        let client = session.connection == .appClaude ? claudeConnection : connection
         let store = BrowserProfileStore()
         if try store.current(session: session) == nil {
             try await client.resume(session, projectPath: project.path, access: chat.resolvedAccessMode(in: project), route: chat.route ?? .direct)

@@ -93,7 +93,7 @@ import Testing
     for level in ClaudeEffort.allCases { #expect(!level.title.isEmpty) }
 }
 
-@Test func claudeArgumentsForwardOnlyDocumentedEffortLevels() {
+@Test func claudeArgumentsForwardOnlyDocumentedEffortLevels() throws {
     #expect(ClaudeJobRunner.version == ClaudeRuntime.pinnedVersion)
     let auto = ClaudeJobRunner.arguments(model: "claude-opus-5", effort: nil)
     #expect(!auto.contains("--effort"))
@@ -103,11 +103,11 @@ import Testing
     #expect(!ClaudeJobRunner.arguments(model: "claude-opus-5", effort: "").contains("--effort"))
     #expect(!ClaudeJobRunner.arguments(model: "claude-opus-5", effort: "ultra").contains("--effort"))
 
-    let interactive = ClaudeIntegration.arguments(id: UUID().uuidString, resumed: false,
+    let interactive = try ClaudeIntegration.arguments(id: UUID().uuidString, resumed: false,
                                                   access: .fullAccess, model: "claude-opus-5", effort: "xhigh")
     #expect(interactive[interactive.firstIndex(of: "--effort")! + 1] == "xhigh")
     #expect(interactive[interactive.firstIndex(of: "--model")! + 1] == "claude-opus-5")
-    #expect(!ClaudeIntegration.arguments(id: UUID().uuidString, resumed: false,
+    #expect(try !ClaudeIntegration.arguments(id: UUID().uuidString, resumed: false,
                                          access: .fullAccess, model: "", effort: nil).contains("--effort"))
 }
 

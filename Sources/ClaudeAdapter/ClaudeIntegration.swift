@@ -44,17 +44,34 @@ public actor ClaudeIntegration: AgentIntegration {
     private var meters: [String: ClaudeUsageMeter] = [:]
     private var generations: [UUID: ClaudeGenerationRunner] = [:]
     private var cancelledGenerations = Set<UUID>()
-    public init() { let stream = AsyncStream<AgentEvent>.makeStream(); events = stream.stream; sink = stream.continuation }
+    /// App bundle resources when the Context Desk browser is attached to chats; nil keeps chats browser-less.
+    private var browserResources: URL?
+    private let browserRoot: URL
+    private var wireGrants: [String: BrowserProfileGrant] = [:]
+    public init(browserRoot: URL = BrowserEnvironmentStore.directory) {
+        let stream = AsyncStream<AgentEvent>.makeStream(); events = stream.stream; sink = stream.continuation
+        self.browserRoot = browserRoot
+    }
     public func optimizerEnvironment(home: URL) -> AgentResult<[String: String]> { .rejected(.routeUnavailable) }
     public func connect(_ configuration: AgentConnectionConfiguration) async -> AgentResult<AgentDescriptor> {
-        guard configuration.optimizers.isEmpty, !configuration.browserEnabled else { return .rejected(.routeUnavailable) }
+        guard configuration.optimizers.isEmpty else { return .rejected(.routeUnavailable) }
         await disconnect()
         do {
+            if configuration.browserEnabled {
+                guard let resources = configuration.resources else {
+                    throw ClientFailure(L10n.text("Компонент браузера отсутствует в сборке приложения.", "The browser component is missing from this app build."))
+                }
+                guard FileManager.default.fileExists(atPath: resources.appendingPathComponent("BrowserRuntime/server.py").path),
+                      FileManager.default.fileExists(atPath: browserRoot.appendingPathComponent("runtime.json").path) else {
+                    throw ClientFailure(L10n.text("Сначала установи компонент Chrome DevTools по инструкции в настройках браузера.", "Install the Chrome DevTools component using the browser settings instructions first."))
+                }
+            }
             let binary = try configuration.executable ?? ClaudeJobRunner.executable()
             try FileManager.default.createDirectory(at: configuration.home, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             let (code, version) = try await ClaudeProfile.command(executable: binary, home: configuration.home, arguments: ["--version"])
             guard code == 0, String(decoding: version, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) == ClaudeJobRunner.version + " (Claude Code)" else { return .rejected(.incompatibleContract) }
             home = configuration.home; executable = binary
+            browserResources = configuration.browserEnabled ? configuration.resources : nil
             context = .init(connection: .appClaude, accountRevision: UUID())
             _ = await account()
             return descriptor()
@@ -62,8 +79,9 @@ public actor ClaudeIntegration: AgentIntegration {
     }
     public func descriptor() -> AgentResult<AgentDescriptor> {
         guard home != nil, executable != nil else { return .unavailable }
-        return .success(.init(context: context, identityMode: .appOwnedHome,
-            capabilities: [.interactiveSessions, .isolatedGeneration, .history, .streaming, .usage, .approvals, .userQuestions, .interruption, .authenticationManagement, .accountLimits, .archive],
+        var capabilities: Set<AgentCapability> = [.interactiveSessions, .isolatedGeneration, .history, .streaming, .usage, .approvals, .userQuestions, .interruption, .authenticationManagement, .accountLimits, .archive]
+        if browserResources != nil { capabilities.insert(.browserProfiles) }
+        return .success(.init(context: context, identityMode: .appOwnedHome, capabilities: capabilities,
             permissions: .claudeRestrictedFiles, routes: [.direct]))
     }
     public func observe(sessions: [AgentSessionReference]) {}
@@ -73,7 +91,7 @@ public actor ClaudeIntegration: AgentIntegration {
         for id in Array(wires.keys) { finish(id, outcome: .uncertain) }
         wires.removeAll(); readers.removeAll(); interactions.removeAll(); seenRequests.removeAll()
         sessions.removeAll(); messageIDs.removeAll(); interrupted.removeAll(); meters.removeAll()
-        home = nil; executable = nil; signedIn = false; accountIdentity = nil
+        home = nil; executable = nil; signedIn = false; accountIdentity = nil; browserResources = nil; wireGrants.removeAll()
         context = .init(connection: .appClaude, accountRevision: UUID())
     }
     public func account() async -> AgentResult<AgentAccountInfo> {
@@ -140,7 +158,7 @@ public actor ClaudeIntegration: AgentIntegration {
         guard ClaudeEffort.isDispatchable(request.model.effort), request.kind == .interactive else { return .invalidInput }
         return nil
     }
-    public func prepare(_ request: AgentExecutionRequest) -> AgentResult<AgentSessionReference> {
+    public func prepare(_ request: AgentExecutionRequest) async -> AgentResult<AgentSessionReference> {
         if let issue = validate(request) { return .rejected(issue) }
         guard signedIn else { return .unavailable }
         do {
@@ -153,8 +171,22 @@ public actor ClaudeIntegration: AgentIntegration {
                 // A fresh explicit user submission may continue native history; old work is never resent.
                 if old.active != nil { finish(id, outcome: .uncertain) }
                 sessions[id]?.access = access; try save(id)
+                if browserResources != nil {
+                    let profiles = BrowserProfileStore(root: browserRoot)
+                    let grant = try profiles.prepare(session: reference(id), project: old.cwd)
+                    try profiles.acknowledge(grant, session: reference(id))
+                    // A reassigned profile reaches the agent only through a new MCP launch; the idle CLI restarts on the next send.
+                    if let wire = wires[id], wireGrants[id] != grant { wires.removeValue(forKey: id); await wire.close() }
+                }
             } else {
+                let grant = try browserResources.map { resources in
+                    try BrowserProfileStore(root: browserRoot).prepareNew(project: request.projectPath, connection: .appClaude,
+                                                                           selection: request.browserProfile) { environment in
+                        try BrowserProfileControl.verifyClosed(environment: environment, runtime: resources.appendingPathComponent("BrowserRuntime"))
+                    }
+                }
                 sessions[id] = Session(id: id, cwd: request.projectPath, access: access); try save(id)
+                if let grant { try BrowserProfileStore(root: browserRoot).acknowledge(grant, session: reference(id)) }
             }
             return .success(reference(id))
         } catch { return failed(error) }
@@ -177,11 +209,20 @@ public actor ClaudeIntegration: AgentIntegration {
             if let current = wires[id] { wire = current }
             else {
                 wire = ClaudeWire()
-                let arguments = Self.arguments(id: id, resumed: record.sent, access: expectedAccess,
-                                               model: request.model.model, effort: request.model.effort,
-                                               projectInstructions: ProjectInstructions.prompt(projectPath: record.cwd))
-                try await wire.start(executable: executable, arguments: arguments, environment: ClaudeProfile.environment(home: home), cwd: URL(fileURLWithPath: record.cwd))
+                let profiles = BrowserProfileStore(root: browserRoot)
+                let grant = try browserResources.map { _ in try profiles.prepare(session: reference(id), project: record.cwd) }
+                let server = browserResources.flatMap { resources in grant.map {
+                    BrowserEnvironmentStore.serverArguments(resources: resources, root: browserRoot, environment: $0.environment, grant: $0)
+                } }
+                let arguments = try Self.arguments(id: id, resumed: record.sent, access: expectedAccess,
+                                                   model: request.model.model, effort: request.model.effort,
+                                                   projectInstructions: ProjectInstructions.prompt(projectPath: record.cwd), browserServer: server)
+                var environment = ClaudeProfile.environment(home: home)
+                // Same startup/tool limits as the Codex MCP entry (30 s / 90 s).
+                if server != nil { environment.merge(Self.browserEnvironment) { _, new in new } }
+                try await wire.start(executable: executable, arguments: arguments, environment: environment, cwd: URL(fileURLWithPath: record.cwd))
                 wires[id] = wire
+                if let grant { wireGrants[id] = grant; try profiles.acknowledge(grant, session: reference(id)) }
                 seenRequests[id] = []
                 readers[id] = Task { [weak self] in for await value in wire.frames { await self?.receive(value, session: id, wire: wire) } }
                 _ = try await wire.control(.object(["subtype": .string("initialize"), "hooks": .null]))
@@ -206,11 +247,17 @@ public actor ClaudeIntegration: AgentIntegration {
             return failed(error, uncertain: delivered)
         }
     }
+    /// `--safe-mode` would also drop `--mcp-config` servers, so browser chats spell out its isolation instead.
+    static let browserEnvironment = ["MCP_TIMEOUT": "30000", "MCP_TOOL_TIMEOUT": "90000", "CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1"]
     static func arguments(id: String, resumed: Bool, access: AccessMode, model: String, effort: String?,
-                          projectInstructions: String? = nil) -> [String] {
+                          projectInstructions: String? = nil, browserServer: [String]? = nil) throws -> [String] {
         var args = ["--print", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
-                    "--permission-prompt-tool", "stdio", "--setting-sources", "", "--safe-mode", "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}",
-                    resumed ? "--resume" : "--session-id", id]
+                    "--permission-prompt-tool", "stdio", "--setting-sources", "", "--strict-mcp-config"]
+        if let browserServer {
+            // Only the app's browser server; its tools run without a prompt, like scheduled runs.
+            args += ["--disable-slash-commands"] + (try ClaudeJobRunner.browserArguments(browserServer))
+        } else { args += ["--safe-mode", "--mcp-config", "{\"mcpServers\":{}}"] }
+        args += [resumed ? "--resume" : "--session-id", id]
         if access == .standard {
             args += ["--restricted", "--tools", "Read,Glob,Grep,Write,Edit,AskUserQuestion", "--permission-mode", "default"]
         } else { args += ["--permission-mode", "bypassPermissions"] }

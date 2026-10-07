@@ -59,7 +59,8 @@ private func interactiveFixture(_ root: URL) throws -> URL {
         if mode=='error':
             print(json.dumps({'type':'result','subtype':'error_during_execution','is_error':True,'result':'boom','usage':usage,'permission_denials':[]})); sys.exit(1)
         print(json.dumps({'type':'result','subtype':'success','is_error':False,'result':json.dumps(value),'structured_output':value,'usage':usage,'permission_denials':[]})); sys.exit(0)
-    assert '--safe-mode' in sys.argv and '--setting-sources' in sys.argv
+    browser='--mcp-config' in sys.argv and 'context_desk_browser' in sys.argv[sys.argv.index('--mcp-config')+1]
+    assert ('--safe-mode' in sys.argv) != browser and '--setting-sources' in sys.argv and '--strict-mcp-config' in sys.argv
     assert '--append-system-prompt' in sys.argv
     assert len(sys.argv[sys.argv.index('--append-system-prompt')+1]) > 100
     assert sys.argv[sys.argv.index('--setting-sources')+1] == ''
@@ -78,7 +79,7 @@ private func interactiveFixture(_ root: URL) throws -> URL {
         elif value['type']=='user':
             record=json.loads((home/'contextdesk-sessions'/(sid+'.json')).read_text())
             assert record['active'] and record['sent']
-            with (home/'submitted').open('a') as f: f.write(json.dumps({'prompt':value['message']['content'],'args':sys.argv})+'\n')
+            with (home/'submitted').open('a') as f: f.write(json.dumps({'prompt':value['message']['content'],'args':sys.argv,'env':{k:os.environ.get(k) for k in ['MCP_TIMEOUT','MCP_TOOL_TIMEOUT','CLAUDE_CODE_DISABLE_CLAUDE_MDS']}})+'\n')
             prompt=value['message']['content']
             if prompt=='broken': print('invalid-json',flush=True); continue
             if prompt=='unknown': out({'type':'control_request','request_id':'unknown','request':{'subtype':'unexpected_action'}}); continue
@@ -118,6 +119,64 @@ private func interactiveRequest(context: AgentContext, root: URL, session: Agent
     .init(id: id, conversation: ConversationID(), session: session, kind: .interactive, prompt: prompt,
           projectPath: root.path, permissions: .workspaceWrite(root: root.path, network: false, approval: .ask),
           model: .init(context: context, model: ""), route: .direct)
+}
+
+@Test func claudeChatsLaunchTheirOwnBrowserProfileAndRestartAfterReassignment() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let binary = try interactiveFixture(root), home = root.appendingPathComponent("home")
+    let resources = root.appendingPathComponent("Resources"), browserRoot = root.appendingPathComponent("browser")
+    try FileManager.default.createDirectory(at: resources.appendingPathComponent("BrowserRuntime"), withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: browserRoot, withIntermediateDirectories: true)
+    try Data("# fixture".utf8).write(to: resources.appendingPathComponent("BrowserRuntime/server.py"))
+    let adapter = ClaudeIntegration(browserRoot: browserRoot), events = ClaudeEvents()
+    let reader = Task { for await event in adapter.events { await events.append(event) } }
+    defer { reader.cancel() }
+    // The runtime is not installed yet: fail loudly instead of a silently browser-less chat.
+    guard case .failed = await adapter.connect(.init(executable: binary, home: home, resources: resources, browserEnabled: true)) else {
+        Issue.record("Missing browser runtime accepted"); return
+    }
+    try Data("{}".utf8).write(to: browserRoot.appendingPathComponent("runtime.json"))
+    let descriptor = try await adapter.connect(.init(executable: binary, home: home, resources: resources, browserEnabled: true)).value()
+    #expect(descriptor.capabilities.contains(.browserProfiles))
+    let session = try await adapter.prepare(interactiveRequest(context: descriptor.context, root: root)).value()
+    let store = BrowserProfileStore(root: browserRoot)
+    let first = try store.ownedGrant(session: session)
+    #expect(try store.current(session: session)?.connection == .appClaude)
+
+    func turn(_ index: Int) async throws -> [String: Any] {
+        _ = try await adapter.submit(interactiveRequest(context: descriptor.context, root: root, session: session)).value()
+        try await waitFor { await events.completionCount() == index }
+        let lines = try String(contentsOf: home.appendingPathComponent("submitted"), encoding: .utf8).split(separator: "\n")
+        return try #require(JSONSerialization.jsonObject(with: Data(lines[index - 1].utf8)) as? [String: Any])
+    }
+    func lease(_ record: [String: Any]) throws -> String {
+        let args = try #require(record["args"] as? [String])
+        let config = args[try #require(args.firstIndex(of: "--mcp-config")) + 1]
+        let server = try #require(JSONSerialization.jsonObject(with: Data(config.utf8)) as? [String: Any])
+        let browser = try #require((server["mcpServers"] as? [String: Any])?["context_desk_browser"] as? [String: Any])
+        let argv = try #require(browser["args"] as? [String])
+        #expect(argv.first == resources.appendingPathComponent("BrowserRuntime/server.py").path)
+        return argv[try #require(argv.firstIndex(of: "--profile-lease")) + 1]
+    }
+    let one = try await turn(1)
+    let args = try #require(one["args"] as? [String])
+    #expect(!args.contains("--safe-mode") && args.contains("--disable-slash-commands"))
+    #expect(args[args.firstIndex(of: "--allowedTools")! + 1] == "mcp__context_desk_browser")
+    #expect(one["env"] as? [String: String] == ["MCP_TIMEOUT": "30000", "MCP_TOOL_TIMEOUT": "90000", "CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1"])
+    #expect(try lease(one) == first.generation.uuidString.lowercased())
+
+    // Reopening keeps the chat's profile.
+    _ = try await adapter.prepare(interactiveRequest(context: descriptor.context, root: root, session: session)).value()
+    #expect(try store.ownedGrant(session: session) == first)
+    #expect(try lease(await turn(2)) == first.generation.uuidString.lowercased())
+
+    // A reassigned profile only reaches the agent through a new launch.
+    try store.select(nil, session: session, project: root.path) { _ in }
+    _ = try await adapter.prepare(interactiveRequest(context: descriptor.context, root: root, session: session)).value()
+    let second = try store.ownedGrant(session: session)
+    #expect(second.environment != first.environment)
+    #expect(try lease(await turn(3)) == second.generation.uuidString.lowercased())
 }
 
 @Test func claudeInteractivePersistsStreamsResumesAndRejectsReplay() async throws {

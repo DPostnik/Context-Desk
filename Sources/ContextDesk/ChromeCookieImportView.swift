@@ -3,7 +3,7 @@ import SwiftUI
 import ContextCore
 
 struct ChromeCookieImportView: View {
-    let session: String
+    let session: AgentSessionReference
     let onImported: () -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var profiles: [ChromeCookieProfile] = []
@@ -137,7 +137,7 @@ struct ChromeCookieImportView: View {
                 return
             }
             guard let root = try BrowserEnvironmentStore.existingEnvironment(session: session) else { throw ChromeCookieError.missingEnvironment }
-            let store = BrowserProfileStore(), reference = AgentSessionReference(connection: .originalCodex, nativeID: session)
+            let store = BrowserProfileStore(), reference = session
             let grant = try store.current(session: reference) == nil ? nil : store.ownedGrant(session: reference, allowHuman: true)
             let policy = enabled ? try ChromeSessionImportPolicy(profile: selection, site: site) : nil
             try ChromeSessionImportPolicy.save(policy, environment: root, grant: grant)
@@ -152,16 +152,16 @@ struct ChromeCookieImportView: View {
     private func start() {
         guard !importing, !selection.isEmpty else { return }
         importing = true; error = nil; result = nil
-        let profile = selection, nativeID = session, limit = maxBrowsers
+        let profile = selection, reference = session, limit = maxBrowsers
         let resources = Bundle.main.resourceURL
         Task {
             defer { importing = false }
             do {
-                guard let root = try BrowserEnvironmentStore.existingEnvironment(session: nativeID), let resources else {
+                guard let root = try BrowserEnvironmentStore.existingEnvironment(session: reference), let resources else {
                     throw ChromeCookieError.missingEnvironment
                 }
                 result = try await Task.detached {
-                    let store = BrowserProfileStore(), reference = AgentSessionReference(connection: .originalCodex, nativeID: nativeID)
+                    let store = BrowserProfileStore()
                     let grant = try store.current(session: reference) == nil ? nil : store.ownedGrant(session: reference, allowHuman: true)
                     return try await ChromeCookieImporter.run(profile: profile, environment: root,
                         runtime: resources.appendingPathComponent("BrowserRuntime"), maxBrowsers: limit, grant: grant,

@@ -23,10 +23,14 @@ public enum BrowserEnvironmentStore {
     }
 
     public static func existingEnvironment(session: String, root: URL = directory) throws -> URL? {
-        if let profile = try BrowserProfileStore(root: root).current(session: .init(connection: .originalCodex, nativeID: session)) {
+        try existingEnvironment(session: .init(connection: .originalCodex, nativeID: session), root: root)
+    }
+    public static func existingEnvironment(session: AgentSessionReference, root: URL = directory) throws -> URL? {
+        if let profile = try BrowserProfileStore(root: root).current(session: session) {
             return root.appendingPathComponent("environments").appendingPathComponent(profile.id.uuidString.lowercased())
         }
-        guard let id = try legacyEnvironment(session: session, root: root) else { return nil }
+        // Only the original Codex connection has pre-profile bindings keyed by native ID.
+        guard session.connection == .originalCodex, let id = try legacyEnvironment(session: session.nativeID, root: root) else { return nil }
         return root.appendingPathComponent("environments").appendingPathComponent(id.uuidString.lowercased())
     }
 

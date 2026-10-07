@@ -22,7 +22,7 @@ import Testing
     let rules = try #require(ProjectInstructions.prompt(projectPath: root.path, language: .russian))
     #expect(rules.hasPrefix("Инструкции проекта из AGENTS.md") && rules.contains("Push after verification."))
 
-    let args = ClaudeIntegration.arguments(id: UUID().uuidString, resumed: false, access: .standard, model: "", effort: nil, projectInstructions: rules)
+    let args = try ClaudeIntegration.arguments(id: UUID().uuidString, resumed: false, access: .standard, model: "", effort: nil, projectInstructions: rules)
     #expect(args[args.firstIndex(of: "--setting-sources")! + 1] == "")
     #expect(args.filter { $0 == "--append-system-prompt" }.count == 1)
     let prompt = args[args.firstIndex(of: "--append-system-prompt")! + 1]

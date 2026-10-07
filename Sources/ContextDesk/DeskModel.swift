@@ -1058,7 +1058,7 @@ private struct ChatRunState {
             }
             var id = threadID
             if id == nil {
-                let browserProfile = scheduledRun == nil && state.defaultConnection == .originalCodex && state.browserEnabled == true
+                let browserProfile = scheduledRun == nil && state.browserEnabled == true
                     ? newChatBrowserProfiles[project.id].map { AgentBrowserProfile(id: $0) } : nil
                 let session = try await client.createSession(projectPath: project.path, access: access,
                                                                  model: selectedModel, route: route, browserProfile: browserProfile)
@@ -1474,6 +1474,8 @@ private struct ChatRunState {
     func saveAgentChoice() { persist() }
     func selectAgent(_ agent: AgentConnectionID) {
         guard chatID == nil, !sending, [.originalCodex, .appClaude].contains(agent) else { return }
+        // Browser profiles belong to one agent; a picked profile does not carry over.
+        if state.defaultConnection != agent { newChatBrowserProfiles.removeAll() }
         state.defaultConnection = agent; persist()
         if agent == .appClaude && !claudeConnected { Task { await connectClaude() } }
     }
@@ -1482,7 +1484,8 @@ private struct ChatRunState {
         claudeConnecting = true; defer { claudeConnecting = false }
         resetAgentState(.appClaude); claudeConnected = false; claudeAuthenticated = false; clearClaudeLimits()
         do {
-            claudeDescriptor = try await claudeConnection.start(.init(home: claudeHome))
+            claudeDescriptor = try await claudeConnection.start(.init(home: claudeHome, resources: Bundle.main.resourceURL,
+                                                                      browserEnabled: state.browserEnabled == true))
             claudeConnected = true
             await refreshClaudeAccount()
             await backfillHistory(state.chats.filter { $0.nativeSession?.connection == .appClaude })

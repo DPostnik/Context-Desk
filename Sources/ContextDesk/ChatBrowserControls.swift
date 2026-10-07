@@ -4,7 +4,7 @@ import ContextCore
 
 /// Controls are bound to the saved native session, never the currently focused window.
 struct ChatBrowserControls: View {
-    let session: String
+    let session: AgentSessionReference
     let project: String
     let busy: Bool
     let ownerNames: [String: String]
@@ -52,12 +52,12 @@ struct ChatBrowserControls: View {
     private func perform(show: Bool = false, hide: Bool = false, close: Bool = false) {
         guard !operating, !close || !busy else { return }
         operating = true
-        let nativeID = session
+        let reference = session
         let resources = Bundle.main.resourceURL
         Task {
             defer { operating = false }
             do {
-                guard let root = try BrowserEnvironmentStore.existingEnvironment(session: nativeID),
+                guard let root = try BrowserEnvironmentStore.existingEnvironment(session: reference),
                       let resources else {
                     running = false
                     if show { error = L10n.text("Браузер откроется при первом обращении агента.", "The browser opens on the agent’s first browser request.") }
@@ -65,7 +65,6 @@ struct ChatBrowserControls: View {
                 }
                 let output = try await Task.detached {
                     let store = BrowserProfileStore()
-                    let reference = AgentSessionReference(connection: .originalCodex, nativeID: nativeID)
                     let grant = try store.current(session: reference) == nil ? nil : store.ownedGrant(session: reference, allowHuman: true)
                     return try BrowserProfileControl.status(environment: root,
                         runtime: resources.appendingPathComponent("BrowserRuntime"), grant: grant, close: close)

@@ -6,7 +6,7 @@ enum BrowserProfileAction: Sendable {
 }
 
 struct BrowserProfilesView: View {
-    let session: String
+    let session: AgentSessionReference
     let project: String
     let ownerNames: [String: String]
     let change: (BrowserProfileAction) async throws -> Void
@@ -16,7 +16,7 @@ struct BrowserProfilesView: View {
     @State private var name = ""
     @State private var operating = false
     @State private var error: String?
-    private var reference: AgentSessionReference { .init(connection: .originalCodex, nativeID: session) }
+    private var reference: AgentSessionReference { session }
     private var owned: Bool { current.map { BrowserProfileStore().owns($0, session: reference) } ?? false }
 
     var body: some View {
@@ -115,6 +115,7 @@ struct BrowserProfilesView: View {
 
 struct NewChatBrowserProfilePicker: View {
     let project: String
+    let connection: AgentConnectionID
     let ownerNames: [String: String]
     @Binding var selection: UUID?
     @State private var profiles: [BrowserProfile] = []
@@ -136,9 +137,10 @@ struct NewChatBrowserProfilePicker: View {
         }
         .onAppear { reload() }
         .onChange(of: project) { _, _ in reload() }
+        .onChange(of: connection) { _, _ in reload() }
     }
     private func reload() {
-        do { profiles = try BrowserProfileStore().profiles(project: project, connection: .originalCodex); error = nil }
+        do { profiles = try BrowserProfileStore().profiles(project: project, connection: connection); error = nil }
         catch { self.error = error.localizedDescription }
     }
 }
