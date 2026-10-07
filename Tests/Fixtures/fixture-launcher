@@ -1,0 +1,14 @@
+#!/bin/sh
+# Test fixture launcher. Fixture "executables" are symlinks to this file; the
+# script beside each one (<name>.fixture) is plain data run by its shebang
+# interpreter. macOS assesses every freshly written executable on first exec
+# (syspolicyd, including an online notarization lookup); in a parallel test run
+# those assessments queue up for longer than the adapters' process deadlines.
+script="$0.fixture"
+IFS= read -r first < "$script" || exit 127
+case $first in
+  '#!'*) ;;
+  *) echo "fixture-launcher: no shebang in $script" >&2; exit 127 ;;
+esac
+# Unquoted on purpose: the interpreter line may carry arguments.
+exec ${first#??} "$script" "$@"

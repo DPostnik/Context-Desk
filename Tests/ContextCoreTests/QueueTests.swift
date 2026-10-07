@@ -10,7 +10,7 @@ import ContextCore
     defer { try? FileManager.default.removeItem(at: folder) }
     let executable = folder.appendingPathComponent("engine.py")
     try Data(#"""
-    #!/usr/bin/python3
+    #!\#(fixturePython)
     import sys, json
     requests = []
     turns = 0
@@ -26,7 +26,7 @@ import ContextCore
         else: requests.append(m)
         print(json.dumps({'id': m['id'], 'result': result}), flush=True)
     """#.utf8).write(to: executable)
-    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    try installFixtureExecutable(at: executable)
     let connection = CodexConnection()
     try await connection.start(executable: executable, home: folder)
     let store = AppStore(file: folder.appendingPathComponent("state.sqlite"))
@@ -96,7 +96,7 @@ private func parallelChatFixture() throws -> (URL, URL) {
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     let executable = folder.appendingPathComponent("engine.py")
     try Data(#"""
-    #!/usr/bin/python3
+    #!\#(fixturePython)
     import sys, json, threading
     requests, counts = [], {}
     lock = threading.Lock()
@@ -134,7 +134,7 @@ private func parallelChatFixture() throws -> (URL, URL) {
                 continue
         emit(m, result)
     """#.utf8).write(to: executable)
-    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    try installFixtureExecutable(at: executable)
     return (folder, executable)
 }
 

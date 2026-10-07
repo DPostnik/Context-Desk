@@ -9,14 +9,14 @@ private func claudeFixture(_ root: URL, body: String) throws -> URL {
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     let file = root.appendingPathComponent("claude.py")
     try Data(("""
-    #!/usr/bin/python3
+    #!\(fixturePython)
     import sys,json,pathlib,time
     if '--version' in sys.argv:
         print('2.1.292 (Claude Code)'); sys.exit(0)
     pathlib.Path('sent').write_text(sys.stdin.read())
 
     """ + body).utf8).write(to: file)
-    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: file.path)
+    try installFixtureExecutable(at: file)
     return file
 }
 private func makeRequest(_ runner: any AgentScheduledExecutor, root: URL) async throws -> AgentExecutionRequest {
@@ -119,7 +119,7 @@ private func makeRequest(_ runner: any AgentScheduledExecutor, root: URL) async 
     defer { try? FileManager.default.removeItem(at: root) }
     let native = root.appendingPathComponent("codex.py")
     try Data(#"""
-    #!/usr/bin/python3
+    #!\#(fixturePython)
     import sys,json,pathlib
     for line in sys.stdin:
         m=json.loads(line)
@@ -135,7 +135,6 @@ private func makeRequest(_ runner: any AgentScheduledExecutor, root: URL) async 
             result={} if pathlib.Path('malformed').exists() else {'turn':{'id':'turn'}}
         print(json.dumps({'id':m['id'],'result':result}),flush=True)
     """#.utf8).write(to: native)
-    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: native.path)
     // Codex fixture runs in app home; the protocol process uses that directory explicitly below.
     let claude = try claudeFixture(root, body: """
     assert json.loads(pathlib.Path('jobs.json').read_text())['runs'][0]['status']=='running'
@@ -147,6 +146,7 @@ private func makeRequest(_ runner: any AgentScheduledExecutor, root: URL) async 
     var script = try String(contentsOf: native, encoding: .utf8)
     script = script.replacingOccurrences(of: "import sys,json,pathlib", with: "import sys,json,pathlib,os\nos.chdir(" + String(decoding: try encoder.encode(root.path), as: UTF8.self) + ")")
     try Data(script.utf8).write(to: native)
+    try installFixtureExecutable(at: native)
     let transport = CodexConnection(); try await transport.start(executable: native, home: root)
     let store = JobStore(file: root.appendingPathComponent("jobs.json"))
     let model = DeskModel(connection: CodexIntegration(client: CodexClient(transport: transport)), store: AppStore(file: root.appendingPathComponent("state.sqlite")), jobStore: store)

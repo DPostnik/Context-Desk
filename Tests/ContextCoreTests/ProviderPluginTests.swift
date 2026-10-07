@@ -13,8 +13,8 @@ private func writePlugin(in root: URL, id: String = "experiment", schema: Int = 
         "arguments": .array([.string("server.py")])])
     try JSONEncoder().encode(manifest).write(to: directory.appendingPathComponent("plugin.json"))
     let launcher = directory.appendingPathComponent("venv/bin/python")
-    try Data("#!/bin/sh\nexec /usr/bin/python3 \"$@\"\n".utf8).write(to: launcher)
-    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: launcher.path)
+    try Data("#!/bin/sh\nexec \(fixturePython) \"$@\"\n".utf8).write(to: launcher)
+    try installFixtureExecutable(at: launcher)
     let script = #"""
     import argparse, json, pathlib
     from http.server import BaseHTTPRequestHandler, HTTPServer

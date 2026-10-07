@@ -10,7 +10,7 @@ private func contractFixture(version: String = "0.159.0", disconnect: Bool = fal
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     let executable = root.appendingPathComponent("engine.py")
     let script = #"""
-    #!/usr/bin/python3
+    #!\#(fixturePython)
     import json,sys
     calls=[]
     for line in sys.stdin:
@@ -33,7 +33,7 @@ private func contractFixture(version: String = "0.159.0", disconnect: Bool = fal
         print(json.dumps({'id':m['id'],'result':result}),flush=True)
     """#.replacingOccurrences(of: "VERSION", with: version).replacingOccurrences(of: "DISCONNECT", with: disconnect ? "True" : "False").replacingOccurrences(of: "CHANGE_DURING", with: changeDuring)
     try Data(script.utf8).write(to: executable)
-    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    try installFixtureExecutable(at: executable)
     return (root, executable)
 }
 

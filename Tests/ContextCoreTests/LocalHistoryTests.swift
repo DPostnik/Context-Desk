@@ -89,7 +89,7 @@ import ContextCore
     defer { try? FileManager.default.removeItem(at: root) }
     let executable = root.appendingPathComponent("engine.py")
     try Data(#"""
-    #!/usr/bin/python3
+    #!\#(fixturePython)
     import json,sys
     calls=[]
     for line in sys.stdin:
@@ -102,7 +102,7 @@ import ContextCore
         if method=='thread/read': result={'thread':{'id':p['threadId'],'turns':[{'id':'t','status':'completed','items':[{'id':'a','type':'agentMessage','text':'Saved by backfill'}]}]}}
         print(json.dumps({'id':m['id'],'result':result}),flush=True)
     """#.utf8).write(to: executable)
-    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    try installFixtureExecutable(at: executable)
     let wire = CodexConnection()
     let integration = CodexIntegration(client: CodexClient(transport: wire))
     let store = AppStore(file: root.appendingPathComponent("metadata.sqlite"))

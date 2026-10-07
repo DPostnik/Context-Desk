@@ -43,7 +43,7 @@ private func handoffEngine(_ root: URL, mode: String) throws -> URL {
     try Data(handoffOutput.utf8).write(to: root.appendingPathComponent("output"))
     let executable = root.appendingPathComponent("engine.py")
     try Data(#"""
-    #!/usr/bin/python3
+    #!\#(fixturePython)
     import json, os, sys, time
     from pathlib import Path
     root=Path(os.environ['CODEX_HOME'])
@@ -84,7 +84,7 @@ private func handoffEngine(_ root: URL, mode: String) throws -> URL {
             continue
         emit({'id':m['id'],'result':result})
     """#.utf8).write(to: executable)
-    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    try installFixtureExecutable(at: executable)
     return executable
 }
 

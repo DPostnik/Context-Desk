@@ -123,7 +123,7 @@ import ContextCore
     defer { try? FileManager.default.removeItem(at: folder) }
     let executable = folder.appendingPathComponent("engine.py")
     try Data(#"""
-    #!/usr/bin/python3
+    #!\#(fixturePython)
     import sys, json
     for line in sys.stdin:
         request = json.loads(line)
@@ -132,7 +132,7 @@ import ContextCore
         if request.get('method') == 'turn/start': result = {'turn': {'id':'remote-turn'}}
         print(json.dumps({'id':request['id'], 'result':result}), flush=True)
     """#.utf8).write(to: executable)
-    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    try installFixtureExecutable(at: executable)
     let connection = CodexConnection()
     try await connection.start(executable: executable, home: folder)
     let model = DeskModel(connection: CodexIntegration(client: CodexClient(transport: connection)), store: AppStore(file: folder.appendingPathComponent("state.sqlite")), summaryExecutable: executable, summaryHome: folder)

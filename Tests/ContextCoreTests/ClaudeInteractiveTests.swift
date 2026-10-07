@@ -26,7 +26,7 @@ private func interactiveFixture(_ root: URL) throws -> URL {
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     let executable = root.appendingPathComponent("claude.py")
     let script = #"""
-    #!/usr/bin/python3
+    #!\#(fixturePython)
     import sys,os,json,pathlib
     home=pathlib.Path(os.environ['CLAUDE_CONFIG_DIR'])
     if '--version' in sys.argv:
@@ -76,7 +76,7 @@ private func interactiveFixture(_ root: URL) throws -> URL {
             result()
     """#
     try Data(script.utf8).write(to: executable)
-    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    try installFixtureExecutable(at: executable)
     return executable
 }
 private func waitFor(_ condition: @escaping () async -> Bool) async throws {

@@ -144,7 +144,7 @@ private actor RoutineExecutorFixture: AgentScheduledExecutor {
     defer { try? FileManager.default.removeItem(at: root) }
     let executable = root.appendingPathComponent("engine.py")
     try Data(#"""
-    #!/usr/bin/python3
+    #!\#(fixturePython)
     import json,sys
     calls=[]
     for line in sys.stdin:
@@ -158,7 +158,7 @@ private actor RoutineExecutorFixture: AgentScheduledExecutor {
         if method=='thread/read': result={'thread':{'id':p['threadId'],'turns':[]}}
         print(json.dumps({'id':m['id'],'result':result}),flush=True)
     """#.utf8).write(to: executable)
-    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    try installFixtureExecutable(at: executable)
     let wire = CodexConnection()
     let store = AppStore(file: root.appendingPathComponent("state.sqlite"))
     let model = DeskModel(connection: CodexIntegration(client: CodexClient(transport: wire)), store: store, summaryResources: nil)
@@ -201,7 +201,7 @@ private actor RoutineExecutorFixture: AgentScheduledExecutor {
     try Data(#"{"schemaVersion":1,"id":"incompatible","title":"Fixture","version":"1","executable":"run","arguments":[],"optimizerRequirements":{"protocolName":"anthropic-messages","authentication":"external-cli","streaming":true,"toolCalls":true}}"#.utf8).write(to: folder.appendingPathComponent("plugin.json"))
     let executable = folder.appendingPathComponent("run")
     try Data("#!/bin/sh\ntouch marker\n".utf8).write(to: executable)
-    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    try installFixtureExecutable(at: executable)
     let plugin = try ProviderPlugin(directory: folder)
     let runtime = ProviderPluginRuntime(plugin: plugin, environment: [:])
     await #expect(throws: ClientFailure.self) { try await runtime.start() }

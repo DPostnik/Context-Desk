@@ -10,7 +10,7 @@ private func fixture() throws -> (URL, URL) {
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     let executable = folder.appendingPathComponent("engine.py")
     let script = #"""
-    #!/usr/bin/python3
+    #!\#(fixturePython)
     import json, os, sys
     def emit(value):
         data = (json.dumps(value) + "\n").encode()
@@ -42,7 +42,7 @@ private func fixture() throws -> (URL, URL) {
             emit({"method": "test/answered", "params": m})
     """#
     try Data(script.utf8).write(to: executable)
-    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    try installFixtureExecutable(at: executable)
     return (folder, executable)
 }
 

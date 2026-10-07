@@ -82,7 +82,7 @@ private func withEventFixture(_ body: (CodexClient, CodexConnection, EventLog) a
     defer { try? FileManager.default.removeItem(at: root) }
     let executable = root.appendingPathComponent("engine.py")
     try Data(#"""
-    #!/usr/bin/python3
+    #!\#(fixturePython)
     import json, sys
     answers = []
     for line in sys.stdin:
@@ -97,7 +97,7 @@ private func withEventFixture(_ body: (CodexClient, CodexConnection, EventLog) a
         if m['method'] == 'test/answers': result = answers
         print(json.dumps({'id':m['id'], 'result':result}), flush=True)
     """#.utf8).write(to: executable)
-    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    try installFixtureExecutable(at: executable)
     let wire = CodexConnection(maximumLineBytes: 4096), log = EventLog()
     let client = CodexClient(transport: wire)
     await client.observeEvents(sessions: [.init(connection: .originalCodex, nativeID: "t")])

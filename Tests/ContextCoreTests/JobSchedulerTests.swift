@@ -188,7 +188,7 @@ func schedulerRecoveryPreservesNextOccurrenceWithoutReplaying(activeStatus: JobR
     defer { try? FileManager.default.removeItem(at: root) }
     let executable = root.appendingPathComponent("engine.py")
     try Data(#"""
-    #!/usr/bin/python3
+    #!\#(fixturePython)
     import sys, json
     requests = []
     for line in sys.stdin:
@@ -202,7 +202,7 @@ func schedulerRecoveryPreservesNextOccurrenceWithoutReplaying(activeStatus: JobR
         else: requests.append(m)
         print(json.dumps({'id':m['id'],'result':result}),flush=True)
     """#.utf8).write(to: executable)
-    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    try installFixtureExecutable(at: executable)
     let connection = CodexConnection(); try await connection.start(executable: executable, home: root)
     let store = JobStore(file: root.appendingPathComponent("jobs.json"))
     let model = DeskModel(connection: CodexIntegration(client: CodexClient(transport: connection)), store: AppStore(file: root.appendingPathComponent("state.sqlite")), jobStore: store)
@@ -238,7 +238,7 @@ func schedulerRecoveryPreservesNextOccurrenceWithoutReplaying(activeStatus: JobR
     defer { try? FileManager.default.removeItem(at: root) }
     let executable = root.appendingPathComponent("claude.py")
     try Data(#"""
-    #!/usr/bin/python3
+    #!\#(fixturePython)
     import sys,json
     if '--version' in sys.argv:
         print('2.1.292 (Claude Code)'); sys.exit(0)
@@ -250,7 +250,7 @@ func schedulerRecoveryPreservesNextOccurrenceWithoutReplaying(activeStatus: JobR
     text=sys.stdin.read()
     print(json.dumps({'type':'result','is_error':False,'result':text,'permission_denials':[{'tool_name':'Bash'}]}))
     """#.utf8).write(to: executable)
-    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    try installFixtureExecutable(at: executable)
     let (status, text) = try await ClaudeJobRunner().run(prompt: "Привет `date` $HOME", model: "test-model", cwd: root, executable: executable)
     #expect(status == .blocked)
     #expect(text == "Привет `date` $HOME")
@@ -278,7 +278,7 @@ func schedulerRecoveryPreservesNextOccurrenceWithoutReplaying(activeStatus: JobR
     defer { try? FileManager.default.removeItem(at: root) }
     let executable = root.appendingPathComponent("engine.py")
     try Data(#"""
-    #!/usr/bin/python3
+    #!\#(fixturePython)
     import sys,json
     starts=0
     for line in sys.stdin:
@@ -293,7 +293,7 @@ func schedulerRecoveryPreservesNextOccurrenceWithoutReplaying(activeStatus: JobR
         if method=='test/count': result={'starts':starts}
         print(json.dumps({'id':m['id'],'result':result}),flush=True)
     """#.utf8).write(to: executable)
-    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    try installFixtureExecutable(at: executable)
     let connection = CodexConnection(); try await connection.start(executable: executable, home: root)
     let store = JobStore(file: root.appendingPathComponent("jobs.json"))
     let model = DeskModel(connection: CodexIntegration(client: CodexClient(transport: connection)), store: AppStore(file: root.appendingPathComponent("state.sqlite")), jobStore: store)
@@ -354,13 +354,13 @@ func schedulerRecoveryPreservesNextOccurrenceWithoutReplaying(activeStatus: JobR
     defer { try? FileManager.default.removeItem(at: root) }
     let executable = root.appendingPathComponent("claude.py")
     try Data(#"""
-    #!/usr/bin/python3
+    #!\#(fixturePython)
     import sys,pathlib
     if '--version' in sys.argv:
         print('0.0.0 (Claude Code)'); sys.exit(0)
     pathlib.Path('unexpected-send').write_text('sent')
     """#.utf8).write(to: executable)
-    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    try installFixtureExecutable(at: executable)
     await #expect(throws: (any Error).self) {
         try await ClaudeJobRunner().run(prompt: "Do not send", model: "", cwd: root, executable: executable)
     }

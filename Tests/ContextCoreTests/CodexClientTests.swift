@@ -9,7 +9,7 @@ private func commandFixture() throws -> (URL, URL) {
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     let executable = root.appendingPathComponent("engine.py")
     try Data(#"""
-    #!/usr/bin/python3
+    #!\#(fixturePython)
     import json, os, pathlib, sys
     root = pathlib.Path(os.environ['CODEX_HOME'])
     calls = []
@@ -39,7 +39,7 @@ private func commandFixture() throws -> (URL, URL) {
                 if (root/'history').exists(): result = json.loads((root/'history').read_text())
         print(json.dumps({'id': m['id'], 'result': result}), flush=True)
     """#.utf8).write(to: executable)
-    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    try installFixtureExecutable(at: executable)
     return (root, executable)
 }
 

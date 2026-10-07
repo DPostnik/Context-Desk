@@ -61,7 +61,7 @@ import ContextCore
     defer { try? FileManager.default.removeItem(at: folder) }
     let executable = folder.appendingPathComponent("engine.py")
     try Data(#"""
-    #!/usr/bin/python3
+    #!\#(fixturePython)
     import sys,json
     requests=[]
     sessions=0
@@ -78,7 +78,7 @@ import ContextCore
         else: requests.append(m)
         print(json.dumps({'id':m['id'],'result':result}),flush=True)
     """#.utf8).write(to: executable)
-    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    try installFixtureExecutable(at: executable)
     let wire = CodexConnection()
     try await wire.start(executable: executable, home: folder)
     let model = DeskModel(connection: CodexIntegration(client: CodexClient(transport: wire)),
