@@ -12,6 +12,7 @@ import IOKit.ps
     @Published var email = ""
     @Published var password = ""
     @Published var projects: Set<String> = []
+    @Published var autoEnable = true { didSet { if autoEnable != oldValue { saveConfig() } } }
     @Published private(set) var enabled = false
     @Published private(set) var transitioning = false
     @Published private(set) var status = ""
@@ -35,14 +36,32 @@ import IOKit.ps
     private let setupFile: URL
     private let journal = RemoteJournal(file: Locations.root.appendingPathComponent("mobile-remote-journal.json"))
     private var device = UUID().uuidString.lowercased()
-    private struct Config: Codable { var url: String; var key: String; var device: String; var projects: Set<String> }
+    /// Whether access should come back on the next launch: set by enabling, cleared only when the user turns it off.
+    private var active = false
+    private struct Config: Codable {
+        var url: String; var key: String; var device: String; var projects: Set<String>
+        var autoEnable: Bool?; var active: Bool?
+    }
     init(setupFile: URL = Locations.root.appendingPathComponent("mobile-setup.json"),
          makeClient: @escaping (String, String) throws -> RemoteAPI = { try RemoteAPI(url: $0, key: $1) }) {
         self.setupFile = setupFile
         self.makeClient = makeClient
         if let data = try? Data(contentsOf: configFile), let config = try? JSONDecoder().decode(Config.self, from: data) {
             url = config.url; key = config.key; device = config.device; projects = config.projects
+            autoEnable = config.autoEnable ?? true; active = config.active ?? true
         }
+    }
+    private func saveConfig() {
+        do {
+            try FileManager.default.createDirectory(at: configFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try JSONEncoder().encode(Config(url: url, key: key, device: device, projects: projects, autoEnable: autoEnable, active: active))
+                .write(to: configFile, options: .atomic)
+        } catch { status = error.localizedDescription }
+    }
+    // Called once from app boot, so tests and background model instances never connect.
+    func restoreOnLaunch(model: DeskModel) async {
+        guard autoEnable, active, !url.isEmpty, !key.isEmpty, !projects.isEmpty else { return }
+        await enable(model: model)
     }
     // Disabling access stops transport, not authentication. Reuse the actor so
     // re-enabling does not reread Keychain or race a second token refresh.
@@ -72,8 +91,10 @@ import IOKit.ps
             let client = try connectionClient()
             if !password.isEmpty { try await client.signIn(email: email, password: password); password = "" }
             _ = try await client.owner()
+            active = true
             try FileManager.default.createDirectory(at: configFile.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try JSONEncoder().encode(Config(url: url, key: key, device: device, projects: projects)).write(to: configFile, options: .atomic)
+            try JSONEncoder().encode(Config(url: url, key: key, device: device, projects: projects, autoEnable: autoEnable, active: active))
+                .write(to: configFile, options: .atomic)
             api = client; self.model = model; enabled = true; lastPublished = nil
             let channel = RemoteRealtime(role: "mac", device: device, credentials: { try await client.realtimeCredentials() }) { [weak self] in
                 try await client.checkRealtimeSchema()
@@ -177,6 +198,11 @@ import IOKit.ps
             }
         }, failure: { [weak self] error in self?.realtime?.recover(from: error) })
     }
+    /// User-initiated off: unlike quitting, it also stops access from returning on the next launch.
+    func turnOff() async {
+        active = false; saveConfig()
+        await disable()
+    }
     func disable() async {
         enabled = false; sleeping = false
         realtime?.stop(); realtime = nil
@@ -213,7 +239,7 @@ import IOKit.ps
         if let powerSource { CFRunLoopAddSource(CFRunLoopGetMain(), powerSource, .commonModes) }
     }
     func forgetCloudCopy() async {
-        await disable()
+        await turnOff()
         do {
             let client = try connectionClient()
             try await client.deleteDevice(device)
@@ -247,7 +273,7 @@ struct MobileRemoteSettings: View {
             }.disabled(host.enabled || host.transitioning)
             Text(L10n.text("Если Связка ключей на Mac запрашивает доступ для Context Desk, выберите «Разрешать всегда», чтобы сохранить разрешение. После обновления приложения macOS может запросить его снова.", "If Keychain on your Mac asks to allow Context Desk access, choose Always Allow to save permission. macOS may ask again after an app update."))
                 .font(.caption).foregroundStyle(.secondary)
-            Text(L10n.text("Выбранные проекты: названия, последние сообщения и запросы подтверждения передаются в Supabase. Фото с телефона удаляются из облака примерно через час после обработки команды, а с Mac — через час после окончания работы чата. Очистка на Mac выполняется, пока приложение открыто. Вложения из истории Mac и учётные данные агентов не передаются. Облачная копия хранится до удаления ниже. После перезапуска доступ нужно включить вручную; сохранённые команды будут обработаны.", "Selected projects: names, recent messages and approval requests are sent to Supabase. Phone photos are removed from the cloud about an hour after the command is processed, and from your Mac an hour after the chat becomes idle. Mac cleanup runs while the app is open. Attachments from Mac history and agent credentials are excluded. The cloud copy remains until deleted below. After restarting, enable access manually; saved commands will be processed."))
+            Text(L10n.text("Выбранные проекты: названия, последние сообщения и запросы подтверждения передаются в Supabase. Фото с телефона удаляются из облака примерно через час после обработки команды, а с Mac — через час после окончания работы чата. Очистка на Mac выполняется, пока приложение открыто. Вложения из истории Mac и учётные данные агентов не передаются. Облачная копия хранится до удаления ниже.", "Selected projects: names, recent messages and approval requests are sent to Supabase. Phone photos are removed from the cloud about an hour after the command is processed, and from your Mac an hour after the chat becomes idle. Mac cleanup runs while the app is open. Attachments from Mac history and agent credentials are excluded. The cloud copy remains until deleted below."))
                 .font(.caption).foregroundStyle(.secondary)
             ForEach(model.state.projects) { project in
                 Toggle(project.name, isOn: Binding(get: { host.projects.contains(project.id.uuidString) }, set: {
@@ -256,8 +282,11 @@ struct MobileRemoteSettings: View {
             }
             Text(L10n.text("На питании от сети Mac не засыпает автоматически. Закрытая крышка, принудительный сон и Cmd+Q могут прервать доступ.", "On external power, the Mac stays awake during idle time. Closing the lid, forced sleep and Cmd+Q can interrupt access."))
                 .font(.caption).foregroundStyle(.secondary)
+            Toggle(L10n.text("Включать доступ при запуске приложения", "Enable access when the app launches"), isOn: $host.autoEnable)
+            Text(L10n.text("Если доступ был включён, он восстановится после запуска или перезапуска приложения, и сохранённые команды будут обработаны. Кнопка «Выключить доступ» отменяет это до следующего ручного включения.", "If access was on, it comes back after the app launches or restarts, and saved commands are processed. Disable access keeps it off until you enable it again."))
+                .font(.caption).foregroundStyle(.secondary)
             if host.enabled {
-                Button(L10n.text("Выключить доступ", "Disable access")) { Task { await host.disable() } }
+                Button(L10n.text("Выключить доступ", "Disable access")) { Task { await host.turnOff() } }
             } else {
                 Button(L10n.text("Включить и обработать очередь", "Enable and process queue")) { Task { await host.enable(model: model) } }.disabled(host.projects.isEmpty || host.transitioning)
             }

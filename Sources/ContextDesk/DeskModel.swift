@@ -237,6 +237,7 @@ private struct ChatRunState {
         await connect()
         if state.defaultConnection == .appClaude || state.chats.contains(where: { $0.nativeSession?.connection == .appClaude }) { await connectClaude() }
         await startScheduler()
+        Task { await mobileRemote.restoreOnLaunch(model: self) } // Network sign-in must not hold up boot.
         continueAfterRestart(RestartContinuation.take())
         let settings = await UNUserNotificationCenter.current().notificationSettings()
         notificationStatus = settings.authorizationStatus == .authorized ? L10n.text("Уведомления включены", "Notifications are on") : L10n.text("Уведомления не включены", "Notifications are off")
