@@ -242,7 +242,7 @@ struct JobEditor: View {
                     } }
                     TextField(L10n.text("Рассуждение", "Reasoning effort"), text: $job.effort, prompt: Text(L10n.text("По умолчанию", "Default")))
                 }
-                if job.engine == .codex { ScheduledBrowserImportEditor(policy: $job.browserSessionImport) }
+                ScheduledBrowserImportEditor(policy: $job.browserSessionImport)
                 if job.engine == .claude {
                     if job.route != .direct {
                         Text(model.routeCompatibilityIssue(job.route, agent: .claudeCode) ?? "").foregroundStyle(.orange).font(.caption)

@@ -196,7 +196,7 @@ private struct ChatRunState {
     var chats: [Chat] { projectID.map { state.orderedChats(projectID: $0, archived: false) } ?? [] }
     var currentAction: PendingAction? { pending.first { $0.threadID == chatID } }
     var currentUsage: UsageSnapshot? { chatID.flatMap { usage[$0] } }
-    var canSend: Bool { (chatID.map { chatIsAvailable($0) } ?? ([.originalCodex, .appClaude].contains(currentAgent))) && !selectedChatIsArchived && !isChangingChat(currentRunKey) && routeIsAvailable(currentRoute) && currentAgentConnected && currentAgentAuthenticated && selectedProject != nil && !sending && !loadingChat && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    var canSend: Bool { selectedChat?.isScheduledRecord != true && (chatID.map { chatIsAvailable($0) } ?? ([.originalCodex, .appClaude].contains(currentAgent))) && !selectedChatIsArchived && !isChangingChat(currentRunKey) && routeIsAvailable(currentRoute) && currentAgentConnected && currentAgentAuthenticated && selectedProject != nil && !sending && !loadingChat && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     var supportedEfforts: [String] {
         models.first { $0.id == currentModel }?.efforts ?? []
     }
@@ -574,6 +574,8 @@ private struct ChatRunState {
             if selectionGeneration == generation { self.error = error.localizedDescription }
         }
         guard selectionGeneration == generation else { return }
+        // A scheduled-run record has no engine session; local history is its complete source.
+        if chat.isScheduledRecord { localHistoryNotice = nil; return }
         do {
             let eventRevision = historyEventRevisions[chat.id, default: 0]
             let capturedAt = Date()
@@ -605,7 +607,7 @@ private struct ChatRunState {
     func backfillHistory(_ chats: [Chat]) async {
         for chat in chats {
             guard !Task.isCancelled else { return }
-            guard chatConnected(chat.id) else { continue }
+            guard !chat.isScheduledRecord, chatConnected(chat.id) else { continue }
             guard chatIsAvailable(chat.id), !isBusy(threadID: chat.id),
                   state.chats.contains(where: { $0.id == chat.id }), !isChangingChat(chat.id) else { continue }
             do {
@@ -637,6 +639,7 @@ private struct ChatRunState {
         handoffProgress = L10n.text("Читаю историю чата…", "Reading chat history…")
         defer { preparingHandoff = false; handoffRunner = nil; handoffProgress = "" }
         do {
+            guard !chat.isScheduledRecord else { throw ClientFailure(Self.scheduledRecordReadOnly) }
             guard let source = chat.nativeSession, !isBusy(threadID: chat.id), !isChangingChat(chat.id),
                   runs[chat.id]?.sending != true else {
                 throw ClientFailure(L10n.text("Дождись завершения текущего запроса перед передачей контекста.", "Wait for the current request to finish before handing off context."))
@@ -746,12 +749,12 @@ private struct ChatRunState {
         manuallyNamedChatIDs.insert(id)
         await cancelChatTitle(id)
         do {
-            try await clientForChat(id).rename(sessionForChat(id), title: title)
+            if !isScheduledRecord(id) { try await clientForChat(id).rename(sessionForChat(id), title: title) }
             if let i = state.chats.firstIndex(where: { $0.id == id }) { state.chats[i].title = title; persist() }
         } catch { self.error = error.localizedDescription }
     }
     func canDeleteChat(_ id: String) -> Bool {
-        chatConnected(id) && state.chats.contains(where: { $0.id == id }) &&
+        (chatConnected(id) || isScheduledRecord(id)) && state.chats.contains(where: { $0.id == id }) &&
         !isChangingChat(id) && summaryActiveThread != id && !isBusy(threadID: id) &&
         runs[id]?.sending != true && !pending.contains(where: { $0.threadID == id })
     }
@@ -760,10 +763,10 @@ private struct ChatRunState {
     func archiveChats(_ ids: [String]) async {
         let ids = ids.filter { !isArchived($0) }
         var failures: [String?] = []
-        var targets: [(id: String, client: AgentClient, session: AgentSessionReference)] = []
+        var targets: [(id: String, client: AgentClient, session: AgentSessionReference, record: Bool)] = []
         for id in ids {
             guard canDeleteChat(id), let client = try? clientForChat(id), let session = try? sessionForChat(id) else { failures.append(nil); continue }
-            targets.append((id, client, session))
+            targets.append((id, client, session, isScheduledRecord(id)))
         }
         let targetIDs = Set(targets.map(\.id))
         archivingChatIDs.formUnion(targetIDs)
@@ -772,6 +775,8 @@ private struct ChatRunState {
         let results = await withTaskGroup(of: (String, String?).self) { group in
             for target in targets {
                 group.addTask {
+                    // Scheduled-run records have no engine session to confirm with.
+                    if target.record { return (target.id, nil) }
                     do { try await target.client.setArchived(true, session: target.session); return (target.id, nil) }
                     catch { return (target.id, error.localizedDescription) }
                 }
@@ -801,7 +806,7 @@ private struct ChatRunState {
         runs[id, default: ChatRunState()].queuePaused = true
         defer { archivingChatIDs.remove(id) }
         do {
-            try await clientForChat(id).setArchived(archived, session: sessionForChat(id))
+            if !isScheduledRecord(id) { try await clientForChat(id).setArchived(archived, session: sessionForChat(id)) }
         } catch {
             self.error = (archived ? L10n.text("Не удалось подтвердить архивирование: ", "Could not confirm archiving: ") : L10n.text("Не удалось подтвердить восстановление: ", "Could not confirm restoring: ")) + error.localizedDescription
             return false
@@ -844,7 +849,7 @@ private struct ChatRunState {
         runs[id, default: ChatRunState()].queuePaused = true
         defer { deletingChatIDs.remove(id) }
         do {
-            try await clientForChat(id).delete(sessionForChat(id))
+            if !isScheduledRecord(id) { try await clientForChat(id).delete(sessionForChat(id)) }
         } catch {
             // Keep the chat and queue on any unconfirmed server result. Never retry deletion.
             runs[id, default: ChatRunState()].queuePaused = true
@@ -1041,8 +1046,10 @@ private struct ChatRunState {
         let newConnection = scheduledRun == nil ? currentAgent : .originalCodex
         let route = scheduledRoute ?? (threadID == nil ? (newConnection == .appClaude ? .direct : defaultRoute) : (state.chats.first { $0.id == threadID }?.route ?? .direct))
         do {
-            if let threadID { _ = try nativeThread(threadID) }
-            else if ![.originalCodex, .appClaude].contains(newConnection) { throw ConversationIdentity.unavailable }
+            if let threadID {
+                guard !isScheduledRecord(threadID) else { throw ClientFailure(Self.scheduledRecordReadOnly) }
+                _ = try nativeThread(threadID)
+            } else if ![.originalCodex, .appClaude].contains(newConnection) { throw ConversationIdentity.unavailable }
             let client = try threadID.map { try clientForChat($0) } ?? (newConnection == .appClaude ? claudeConnection : connection)
             if route != .direct {
                 guard let runtime = pluginRuntimes[route.rawValue], routeIsAvailable(route) else { throw ClientFailure(routeMessage(route)) }
@@ -1165,6 +1172,11 @@ private struct ChatRunState {
         await interruptThread(currentRunKey)
     }
     private func interruptThread(_ thread: String) async {
+        // Stopping a scheduled-run record stops its job; no engine turn exists to interrupt.
+        if let runID = state.chats.first(where: { $0.id == thread })?.scheduledRecord {
+            if let run = jobLedger.runs.first(where: { $0.id == runID && $0.status.active }) { await stopJob(run) }
+            return
+        }
         runs[thread, default: ChatRunState()].priorityMessageID = nil
         runs[thread, default: ChatRunState()].queuePaused = true
         runs[thread, default: ChatRunState()].stopRequested = true
@@ -1189,6 +1201,8 @@ private struct ChatRunState {
         let detail = [project?.name, chat?.title].compactMap { $0 }.joined(separator: " · ")
         notices.insert(DeskNotice(threadID: threadID, title: title, detail: detail, completionID: completionID, actionID: actionID), at: 0)
         notices = Array(notices.prefix(50))
+        // System notifications need an app bundle; headless hosts (tests) keep the in-app notice only.
+        guard Bundle.main.bundleURL.pathExtension == "app" else { return }
         let content = UNMutableNotificationContent()
         content.title = title; content.body = detail
         content.sound = .default; content.userInfo = ["threadID": threadID]
@@ -1646,4 +1660,85 @@ private struct ChatRunState {
         }
     }
     private func flushDeltas() { transcript.flush() }
+}
+
+// MARK: - Claude scheduled run records
+
+/// Claude scheduled runs execute through the external print runner, which has no app-owned engine session.
+/// Each run is shown as a read-only sidebar chat backed only by local history; it never dispatches,
+/// resumes or retries anything, and a missing (deleted) record never affects the run's ledger entry.
+@MainActor extension DeskModel {
+    static var scheduledRecordReadOnly: String {
+        L10n.text("Это запись запуска задания Claude. Она только для чтения: чтобы продолжить, начни новый чат.",
+                  "This is a record of a Claude scheduled run. It is read-only: start a new chat to follow up.")
+    }
+    func isScheduledRecord(_ id: String) -> Bool { state.chats.first { $0.id == id }?.isScheduledRecord == true }
+
+    /// Creates the run's chat, then durably marks the run as running with the link. A record that cannot be saved
+    /// is reported but does not block the run; the ledger write still gates dispatch.
+    func attachScheduledRecord(_ run: JobRun, job: ManagedJob, prompt: String, project: Project) async throws {
+        try Task.checkCancellation()
+        guard !schedulerStopping else { throw CancellationError() }
+        var thread: String?
+        do { thread = try await createScheduledRecord(run, job: job, prompt: prompt, project: project) }
+        catch {
+            self.error = L10n.text("Не удалось создать чат запуска задания: ", "Could not create the scheduled run chat: ") + error.localizedDescription
+        }
+        jobLedger = try await jobStore.attach(run.id, thread: thread)
+    }
+
+    private func createScheduledRecord(_ run: JobRun, job: ManagedJob, prompt: String, project: Project) async throws -> String {
+        if let existing = state.chats.first(where: { $0.scheduledRecord == run.id }) { return existing.id }
+        let session = AgentSessionReference(connection: .appClaude, nativeID: "scheduled-" + run.id.uuidString.lowercased())
+        guard !state.chats.contains(where: { $0.nativeSession == session }) else { throw ConversationIdentity.invalidStorage }
+        var chat = Chat(session: session, projectID: project.id, title: run.name, model: job.model)
+        chat.effort = job.effort; chat.route = .direct; chat.scheduledRecord = run.id
+        chat.accessMode = project.accessMode ?? .standard; chat.inheritsProjectAccess = false
+        state.chats.append(chat)
+        do { try await store.save(state) }
+        catch { state.chats.removeAll { $0.id == chat.id }; throw error }
+        let turn = run.id.uuidString
+        var user = TranscriptItem(id: "user:" + turn, kind: "user", text: prompt); user.turnID = turn
+        try await store.saveTranscript(LocalHistory.snapshot(conversation: chat.conversationID, source: session, items: [user]))
+        runs[chat.id, default: ChatRunState()].running = true
+        runs[chat.id, default: ChatRunState()].turnID = turn
+        runs[chat.id, default: ChatRunState()].queuePaused = true
+        if chatID == chat.id { items = [user] }
+        return chat.id
+    }
+
+    /// Appends the confirmed outcome to the run's chat. Runs whose chat was deleted are left untouched.
+    func finishScheduledRecord(_ id: UUID, status: JobRunStatus, output: String) async {
+        guard let index = state.chats.firstIndex(where: { $0.scheduledRecord == id }) else { return }
+        let chat = state.chats[index]
+        runs[chat.id, default: ChatRunState()].running = false
+        runs[chat.id, default: ChatRunState()].turnID = nil
+        runs[chat.id, default: ChatRunState()].stopRequested = false
+        guard let session = chat.nativeSession else { return }
+        let turn = id.uuidString
+        do {
+            var entries = try await store.loadTranscript(conversationID: chat.id).map(LocalHistory.items) ?? []
+            let started = jobLedger.runs.first { $0.id == id }?.started
+            let text = output.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !text.isEmpty {
+                var answer = TranscriptItem(id: "assistant:" + turn, kind: "assistant", text: text,
+                                            timing: ResponseTiming(startedAt: started, completedAt: Date()))
+                answer.turnID = turn; answer.agentName = "Claude"
+                TranscriptItem.merge(answer, into: &entries)
+            }
+            if status != .completed {
+                var note = TranscriptItem(id: "status:" + turn, kind: "activity", text: status.title); note.turnID = turn
+                TranscriptItem.merge(note, into: &entries)
+            }
+            let snapshot = try LocalHistory.snapshot(conversation: chat.conversationID, source: session, items: entries, completeness: .complete)
+            try await store.saveTranscript(snapshot)
+            if chatID == chat.id && !loadingChat { items = LocalHistory.items(snapshot) }
+        } catch { self.error = error.localizedDescription }
+        state.chats[index].updated = Date()
+        let title = status == .completed ? L10n.text("Ответ готов", "Response ready")
+            : status == .interrupted ? L10n.text("Ответ остановлен", "Response stopped") : L10n.text("Ошибка в разговоре", "Conversation error")
+        let completionID = "turn:" + chat.id + ":" + turn
+        recordUnreadCompletion(threadID: chat.id, completionID: completionID)
+        postNotice(threadID: chat.id, title: title, identifier: completionID, completionID: completionID)
+    }
 }

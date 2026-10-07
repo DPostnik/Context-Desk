@@ -601,7 +601,7 @@ struct ChatView: View {
                     }
                     Button(L10n.text("Передать контекст…", "Hand off context…")) {
                         Task { handoff = await model.prepareHandoff(chat) }
-                    }.disabled(model.loadingChat || model.creatingHandoff || model.preparingHandoff || model.isBusy(threadID: chat.id))
+                    }.disabled(model.loadingChat || model.creatingHandoff || model.preparingHandoff || model.isBusy(threadID: chat.id) || chat.isScheduledRecord)
                 } else if model.state.browserEnabled == true, model.state.defaultConnection == .originalCodex, let project = model.selectedProject {
                     NewChatBrowserProfilePicker(project: project.path, ownerNames: model.browserProfileOwnerNames, selection: Binding(
                         get: { model.newChatBrowserProfiles[project.id] },
@@ -647,6 +647,11 @@ struct ChatView: View {
                     }
                     .padding(12)
                     .background(.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 14)).tint(.blue).padding(.horizontal, 24)
+            }
+            if let chat = model.selectedChat, chat.isScheduledRecord, !model.selectedChatIsArchived {
+                Label(DeskModel.scheduledRecordReadOnly, systemImage: "clock.arrow.circlepath")
+                    .font(.callout).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 24).padding(.vertical, 8)
             }
             if model.selectedChatIsArchived, let chat = model.selectedChat {
                 HStack {

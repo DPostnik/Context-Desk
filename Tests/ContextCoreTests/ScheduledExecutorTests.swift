@@ -172,7 +172,15 @@ private func makeRequest(_ runner: any AgentScheduledExecutor, root: URL) async 
         }
     } else {
         #expect(model.jobLedger.runs.first?.output == "saved output")
-        #expect(model.state.chats.isEmpty)
+        // Each Claude print run is linked to its own read-only sidebar record.
+        let run = try #require(model.jobLedger.runs.first)
+        let chat = try #require(model.state.chats.first)
+        #expect(model.state.chats.count == 1 && chat.scheduledRecord == run.id && run.threadID == chat.id)
+        #expect(chat.title == "test" && chat.projectID == project.id && chat.nativeSession?.connection == .appClaude)
+        let saved = try #require(try await model.store.loadTranscript(conversationID: chat.id))
+        #expect(LocalHistory.items(saved).map(\.kind) == ["user", "assistant"])
+        #expect(LocalHistory.items(saved).map(\.text) == ["test", "saved output"])
+        #expect(!model.isBusy(threadID: chat.id))
     }
     #expect(model.jobLedger.runs.first?.status == .completed)
     #expect(model.chatID == "visible" && model.draft == "keep draft")
@@ -210,8 +218,122 @@ private func makeRequest(_ runner: any AgentScheduledExecutor, root: URL) async 
         for task in Array(model.jobTasks.values) { await task.value }
     }
     #expect(model.jobLedger.runs.first?.status == (engine == .codex ? .interrupted : .uncertain))
+    if engine == .claude {
+        #expect(model.state.chats.count == 3 && model.state.chats.allSatisfy { !model.isBusy(threadID: $0.id) })
+        #expect(model.jobLedger.runs.allSatisfy { run in model.state.chats.contains { $0.id == run.threadID && $0.scheduledRecord == run.id } })
+    }
     #expect(model.jobLedger.jobs.first?.enabled == true)
     #expect(model.jobLedger.jobs.first?.nextRun == next)
     #expect(model.jobExecutors.isEmpty)
     await model.stopScheduler(); await transport.stop()
+}
+
+@Test func claudeScheduledBrowserLeasesFreshProfileAndReleasesAfterRun() async throws {
+    let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let browserRoot = root.appendingPathComponent("browser")
+    try FileManager.default.createDirectory(at: browserRoot, withIntermediateDirectories: true)
+    try Data("{}".utf8).write(to: browserRoot.appendingPathComponent("runtime.json"))
+    let resources = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    let executable = try claudeFixture(root, body: #"""
+    a=sys.argv
+    assert '--strict-mcp-config' not in a
+    assert a[a.index('--allowedTools')+1]=='mcp__context_desk_browser'
+    import os
+    assert os.environ.get('MCP_TIMEOUT')=='30000' and os.environ.get('MCP_TOOL_TIMEOUT')=='90000'
+    server=json.loads(a[a.index('--mcp-config')+1])['mcpServers']['context_desk_browser']
+    assert server['type']=='stdio' and server['command']=='/usr/bin/python3'
+    args=server['args']; assert args[0].endswith('BrowserRuntime/server.py')
+    env=args[args.index('--environment')+1]; lease=args[args.index('--profile-lease')+1]
+    root=pathlib.Path(args[args.index('--root')+1])
+    profile=json.loads((root/'profiles.json').read_text())['profiles'][env]
+    assert profile['generation'].lower()==lease and profile['state']=='active' and profile['owner']
+    assert json.loads((root/'environments'/env/'chrome-session-import.json').read_text())
+    sent=pathlib.Path('sent').read_text()
+    assert sent.startswith('test') and 'mcp__context_desk_browser__browser_import_session' in sent
+    pathlib.Path('environment').write_text(env)
+    print(json.dumps({'type':'result','is_error':False,'result':'done'}))
+    """#)
+    var job = ManagedJob(); job.engine = .claude; job.prompt = "test"
+    job.browserSessionImport = try .init(profile: "Default", site: "linkedin.com")
+    let runner = await AgentIntegrationFactory.claudeRunner(browserEnabled: true, job: job, resources: resources,
+                                                            root: browserRoot, executable: executable)
+    let request = try await makeRequest(runner, root: root)
+    let result = try await runner.execute(request, willStart: {}).value()
+    guard case .finished(.completed, let output) = result else { Issue.record("Expected completion: \(result)"); return }
+    #expect(output == "done")
+    let environment = try #require(UUID(uuidString: try String(contentsOf: root.appendingPathComponent("environment"), encoding: .utf8)))
+    let catalog = try JSONSerialization.jsonObject(with: Data(contentsOf: browserRoot.appendingPathComponent("profiles.json"))) as? [String: Any]
+    let profile = try #require((catalog?["profiles"] as? [String: Any])?[environment.uuidString.lowercased()] as? [String: Any])
+    #expect(profile["state"] as? String == "available" && profile["owner"] == nil)
+
+    // Required browser unavailable: blocked before any dispatch; no-policy jobs still run without MCP.
+    try FileManager.default.removeItem(at: root.appendingPathComponent("sent"))
+    let blocked = await AgentIntegrationFactory.claudeRunner(browserEnabled: false, job: job, resources: resources,
+                                                             root: browserRoot, executable: executable)
+    guard case .finished(.blocked, let reason) = try await blocked.execute(try await makeRequest(blocked, root: root), willStart: {}).value() else {
+        Issue.record("Expected blocked run"); return
+    }
+    #expect(reason == ScheduledBrowserImport.unavailable.message)
+    #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("sent").path))
+    job.browserSessionImport = nil
+    let plain = await AgentIntegrationFactory.claudeRunner(browserEnabled: false, job: job, resources: resources,
+                                                           root: browserRoot, executable: executable)
+    guard case .failed = await plain.execute(try await makeRequest(plain, root: root), willStart: {}) else {
+        Issue.record("Fixture requires MCP arguments; a plain run must not receive them"); return
+    }
+}
+
+@Test @MainActor func claudeScheduledRecordIsReadOnlyAndSurvivesRemoval() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let executable = try claudeFixture(root, body: """
+    if pathlib.Path('wait').exists(): time.sleep(20)
+    print(json.dumps({'type':'result','is_error':True,'result':'denied','permission_denials':[{'tool_name':'Bash'}]}))
+    """)
+    let store = JobStore(file: root.appendingPathComponent("jobs.json"))
+    let model = DeskModel(store: AppStore(file: root.appendingPathComponent("state.sqlite")), jobStore: store)
+    model.jobExecutorFactories[.claude] = { _, _, _, _ in ClaudeJobRunner(executable: executable) }
+    var project = Project(path: root.path); project.accessMode = .fullAccess
+    model.state.projects = [project]; model.schedulerReady = true
+    var job = ManagedJob(); job.name = "Morning"; job.prompt = "collect"; job.engine = .claude; job.projectID = project.id
+    job.acceptsExternalPolicy = true; job.enabled = true
+    #expect(await model.saveJob(job))
+    await model.launchJob(job.id)
+    for task in Array(model.jobTasks.values) { await task.value }
+    let run = try #require(model.jobLedger.runs.first)
+    #expect(run.status == .blocked)
+    let chat = try #require(model.state.chats.first { $0.scheduledRecord == run.id })
+    #expect(run.threadID == chat.id && chat.title == "Morning" && chat.unreadCompletionID != nil)
+
+    // Opening never contacts an engine (Claude is not connected here) and nothing is dispatched.
+    try FileManager.default.removeItem(at: root.appendingPathComponent("sent"))
+    await model.openChat(chat)
+    #expect(model.error == nil && model.localHistoryNotice == nil)
+    #expect(model.items.map(\.text) == ["collect", "denied", JobRunStatus.blocked.title])
+    model.draft = "follow up"
+    #expect(!model.canSend && !model.canGenerateSummary(chat.id))
+    await model.send()
+    #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("sent").path))
+
+    // Stopping from the chat stops the job; archive and delete need no engine and keep the run history.
+    try Data().write(to: root.appendingPathComponent("wait"))
+    await model.launchJob(job.id)
+    for _ in 0..<1500 {
+        if FileManager.default.fileExists(atPath: root.appendingPathComponent("sent").path) { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    let active = try #require(model.jobLedger.runs.first)
+    let live = try #require(model.state.chats.first { $0.scheduledRecord == active.id })
+    #expect(active.status == .running && model.isBusy(threadID: live.id) && !model.canDeleteChat(live.id))
+    await model.openChat(live)
+    await model.interrupt()
+    for task in Array(model.jobTasks.values) { await task.value }
+    #expect(model.jobLedger.runs.first?.status == .uncertain && !model.isBusy(threadID: live.id))
+    #expect(await model.setChatArchived(live.id, archived: true, revealArchive: false))
+    await model.deleteChat(chat.id)
+    #expect(!model.state.chats.contains { $0.id == chat.id })
+    #expect(model.jobLedger.runs.count == 2 && model.jobLedger.runs.last?.threadID == chat.id && model.jobLedger.runs.last?.output == "denied")
+    #expect(model.error == nil)
+    await model.stopScheduler()
 }

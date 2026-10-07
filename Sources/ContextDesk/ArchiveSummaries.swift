@@ -3,7 +3,8 @@ import ContextCore
 
 extension DeskModel {
     func supportsSummaries(_ id: String) -> Bool {
-        [.originalCodex, .appClaude].contains(state.chats.first { $0.id == id }?.nativeSession?.connection)
+        state.chats.first { $0.id == id }?.isScheduledRecord != true &&
+            [.originalCodex, .appClaude].contains(state.chats.first { $0.id == id }?.nativeSession?.connection)
     }
 
     /// Generation for a chat runs on its own agent connection, never on another agent's account.

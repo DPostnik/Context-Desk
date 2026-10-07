@@ -36,6 +36,10 @@ public struct Chat: Identifiable, Codable, Hashable, Sendable {
     public var archived: Bool?
     public var isArchived: Bool { archived == true }
     public var route: RequestRoute?
+    /// Read-only record of one Claude scheduled print run (the run ID). No engine session backs it:
+    /// its transcript exists only in local history and it never dispatches or resumes work.
+    public var scheduledRecord: UUID?
+    public var isScheduledRecord: Bool { scheduledRecord != nil }
     public var id: String
     public var projectID: UUID
     public var title: String

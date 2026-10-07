@@ -4,6 +4,18 @@ import CryptoKit
 /// Persistent browser ownership; stores no authentication material.
 public enum BrowserEnvironmentStore {
     public static var directory: URL { Locations.root.appendingPathComponent("browser", isDirectory: true) }
+    public static let parallelLimitKey = "parallelBrowserLimit"
+
+    /// Shared stdio MCP argv (after `/usr/bin/python3`) so every engine launches the browser identically.
+    public static func serverArguments(resources: URL, root: URL, environment: UUID, grant: BrowserProfileGrant?,
+                                       language: AppLanguage = L10n.language) -> [String] {
+        let limit = UserDefaults.standard.integer(forKey: parallelLimitKey)
+        return [resources.appendingPathComponent("BrowserRuntime/server.py").path,
+                "--root", root.path, "--environment", environment.uuidString.lowercased(),
+                "--max-browsers", String((1...8).contains(limit) ? limit : 2),
+                "--language", language.rawValue]
+            + (grant.map { ["--profile-lease", $0.generation.uuidString.lowercased()] } ?? [])
+    }
     /// Host-owned identity, independent of MCP process IDs and model arguments.
     public static func bindingPath(session: String, root: URL) -> URL {
         let key = SHA256.hash(data: Data(session.utf8)).map { String(format: "%02x", $0) }.joined()

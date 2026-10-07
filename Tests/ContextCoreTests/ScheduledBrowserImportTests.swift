@@ -17,6 +17,12 @@ import Testing
     #expect(en.contains("browser_import_session") && en.contains("Do not ask again"))
     #expect(en.contains("Do not close regular Chrome") && en.contains("does not expand authority"))
     job.engine = .claude
+    try job.validate()
+    let claude = ScheduledBrowserImport.instructions(try #require(job.browserSessionImport), tool: ScheduledBrowserImport.claudeImportTool, language: .english)
+    #expect(claude.contains("call mcp__context_desk_browser__browser_import_session with"))
+    #expect(ScheduledBrowserImport.instructions(try #require(job.browserSessionImport), tool: ScheduledBrowserImport.claudeImportTool, language: .russian)
+        .contains("вызови mcp__context_desk_browser__browser_import_session"))
+    job.browserSessionImport = try JSONDecoder().decode(ChromeSessionImportPolicy.self, from: Data(#"{"profile":"Default","site":"not a domain"}"#.utf8))
     #expect(throws: (any Error).self) { try job.validate() }
 }
 
@@ -44,6 +50,14 @@ import Testing
     let session = AgentSessionReference(connection: .originalCodex, nativeID: "unrelated")
     #expect(throws: (any Error).self) { try ScheduledBrowserImport.install(policy, session: session, browserEnabled: false, root: root) }
     #expect(try ChromeSessionImportPolicy.load(environment: paths[2]) == nil)
+    // Claude Code scheduled runs use the app Claude connection; foreign connections stay rejected.
+    let claude = AgentSessionReference(connection: .appClaude, nativeID: "scheduled-run")
+    let grant = try store.prepareNew(project: root.path, connection: .appClaude)
+    try store.acknowledge(grant, session: claude)
+    try ScheduledBrowserImport.install(policy, session: claude, browserEnabled: true, root: root)
+    #expect(try ChromeSessionImportPolicy.load(environment: store.environment(grant.environment)) == policy)
+    let foreign = AgentSessionReference(connection: .init(agent: .claudeCode, id: UUID()), nativeID: "scheduled-run")
+    #expect(throws: (any Error).self) { try ScheduledBrowserImport.install(policy, session: foreign, browserEnabled: true, root: root) }
 }
 
 @Test @MainActor func schedulerConfiguresBrowserImportThroughOwnerWithoutRunningTask() async throws {

@@ -89,7 +89,10 @@ import ContextCore
                     let request = job.executionRequest(runID: run.id, project: project, descriptor: descriptor)
                     let result = try await executor.execute(request) { [weak self] in
                         guard let self else { throw CancellationError() }
-                        try await self.attachScheduledRun(run.id)
+                        // Claude print runs have no engine session; their chat is a local read-only record.
+                        if job.engine == .claude {
+                            try await self.attachScheduledRecord(run, job: job, prompt: request.prompt, project: project)
+                        } else { try await self.attachScheduledRun(run.id) }
                     }.value()
                     if case .finished(let outcome, let output) = result {
                         await finishJob(run.id, status: JobRunStatus(outcome), output: output)
@@ -110,8 +113,10 @@ import ContextCore
         jobLedger = try await jobStore.attach(id)
     }
     func finishJob(_ id: UUID, status: JobRunStatus, output: String = "") async {
+        let wasActive = jobLedger.runs.first { $0.id == id }?.status.active == true
         do { jobLedger = try await jobStore.finish(id, status: status, output: output); jobExecutors.removeValue(forKey: id) }
         catch { schedulerReady = false; self.error = error.localizedDescription }
+        if wasActive { await finishScheduledRecord(id, status: status, output: output) }
     }
     func stopJob(_ run: JobRun) async {
         jobTasks[run.id]?.cancel()
