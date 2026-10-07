@@ -19,6 +19,28 @@ class ChromeHostTests(unittest.TestCase):
         self.owner = dict(pid=123, port=9233, executable=ChromeHost.executables()[0],
                           profile=str(self.host.profile), birth='birth')
 
+    def test_tab_inventory_and_close_use_only_verified_endpoint(self):
+        class Response(io.BytesIO):
+            status = 200
+            def __enter__(self): return self
+            def __exit__(self, *_): pass
+        listing = [{'id': 'A' * 32, 'type': 'page', 'url': 'https://framer.com/'},
+                   {'id': 'B' * 32, 'type': 'service_worker', 'url': 'https://framer.com/sw.js'}]
+        opened = []
+        def fake_open(url, timeout):
+            opened.append(url)
+            return Response(json.dumps(listing).encode() if url.endswith('/json/list') else b'Target is closing')
+        with patch.object(self.host, 'endpoint', return_value='http://127.0.0.1:9233'), \
+             patch.object(self.host.opener, 'open', side_effect=fake_open):
+            self.assertEqual(self.host.page_targets(self.owner), {'A' * 32: 'https://framer.com/'})
+            self.assertFalse(self.host.close_target(self.owner, '../json/new'))
+            self.assertTrue(self.host.close_target(self.owner, 'A' * 32))
+        self.assertEqual(opened, ['http://127.0.0.1:9233/json/list', 'http://127.0.0.1:9233/json/close/' + 'A' * 32])
+        with patch.object(self.host, 'endpoint', return_value=None), patch.object(self.host.opener, 'open') as never:
+            self.assertIsNone(self.host.page_targets(self.owner))
+            self.assertFalse(self.host.close_target(self.owner, 'A' * 32))
+        never.assert_not_called()
+
     def test_normal_launch(self):
         command = chrome_command(self.owner['executable'], self.host.profile, 9233)
         for forbidden in ('--enable-automation', '--disable-sync', '--use-mock-keychain', '--password-store=basic'):

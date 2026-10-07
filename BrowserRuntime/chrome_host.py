@@ -10,6 +10,7 @@ import hashlib
 import fcntl
 import os
 from pathlib import Path
+import re
 import socket
 import subprocess
 import signal
@@ -119,6 +120,34 @@ class ChromeHost:
             return base
         except (OSError, ValueError, KeyError):
             return None
+
+    def page_targets(self, owner):
+        """Read-only page inventory of the verified endpoint: CDP target ID -> URL."""
+        base = self.endpoint(owner)
+        if not base:
+            return None
+        try:
+            with self.opener.open(base + '/json/list', timeout=2) as response:
+                value = json.loads(response.read(4_000_000))
+        except (OSError, ValueError):
+            return None
+        if not isinstance(value, list):
+            return None
+        return {t['id']: t.get('url', '') for t in value
+                if isinstance(t, dict) and t.get('type') == 'page' and isinstance(t.get('id'), str)}
+
+    def close_target(self, owner, target):
+        """One close request for one recorded page target. Never retried by this host."""
+        if not isinstance(target, str) or not re.fullmatch(r'[0-9A-F]{32}', target):
+            return False
+        base = self.endpoint(owner)
+        if not base:
+            return False
+        try:
+            with self.opener.open(base + '/json/close/' + target, timeout=2) as response:
+                return response.status == 200
+        except (OSError, ValueError):
+            return False
 
     def persist(self, owner):
         temporary = self.record.with_suffix('.tmp')

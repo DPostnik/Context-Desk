@@ -156,6 +156,49 @@ class BrowserTests(unittest.TestCase):
         self.assertEqual(opened['pageId'], 9)
         self.assertEqual([name for name, _ in self.calls], ['new_page', 'navigate_page', 'evaluate_script'])
 
+    def test_open_closes_only_verified_orphaned_tabs_once_and_records_new_target(self):
+        browser = Browser(Path(self.directory.name))
+        records = browser.records
+        def record(name, **fields):
+            server.save(records / name, {'session': name, 'pageId': 2, **fields})
+        record('orphan.json', state='disconnected', outcomeUnknown=False, targetId='A' * 32)
+        record('uncertain.json', state='disconnected', outcomeUnknown=True, targetId='B' * 32)
+        record('live.json', state='navigated', targetId='C' * 32)
+        record('gone.json', state='disconnected', outcomeUnknown=False, targetId='D' * 32)
+        record('legacy.json', state='disconnected', outcomeUnknown=False)
+        marker = []
+        def rpc(name, args):
+            if name == 'new_page':
+                marker.append(args['url'])
+                return {'content': [{'type': 'text', 'text': '9: ' + args['url']}]}
+            return envelope({'url': 'https://example.test/', 'readyState': 'complete'})
+        browser.injected = rpc
+        browser.chrome = Mock(owner={'pid': 123})
+        browser.chrome.process_gone.return_value = False
+        browser.chrome.visibility.return_value = False
+        browser.chrome.close_target.return_value = True
+        browser.chrome.page_targets.side_effect = lambda owner: (
+            {'A' * 32: 'https://framer.com/', 'B' * 32: 'https://x.test/', 'C' * 32: 'https://y.test/'}
+            if not marker else {'E' * 32: marker[0], 'A' * 32: 'https://framer.com/'})
+        opened = browser.open('https://example.test/')
+        browser.chrome.close_target.assert_called_once_with({'pid': 123}, 'A' * 32)
+        state = lambda name: json.loads((records / name).read_text())['state']
+        self.assertEqual(state('orphan.json'), 'orphan_closed')
+        self.assertEqual([state(n) for n in ('uncertain.json', 'live.json', 'gone.json', 'legacy.json')],
+                         ['disconnected', 'navigated', 'disconnected', 'disconnected'])
+        self.assertEqual(json.loads((records / (opened['session'] + '.json')).read_text())['targetId'], 'E' * 32)
+        # A failed close is recorded and never retried by a later open.
+        record('failing.json', state='disconnected', outcomeUnknown=False, targetId='F' * 32)
+        browser.chrome.close_target.reset_mock(return_value=True)
+        browser.chrome.close_target.return_value = False
+        browser.chrome.page_targets.side_effect = lambda owner: {'F' * 32: 'https://framer.com/'}
+        browser.session = browser.page = None
+        browser.open('https://example.test/')
+        browser.session = browser.page = None
+        browser.open('https://example.test/')
+        browser.chrome.close_target.assert_called_once_with({'pid': 123}, 'F' * 32)
+        self.assertEqual(state('failing.json'), 'orphan_close_uncertain')
+
     def test_explicit_open_detects_user_closed_tab_without_adopting_other_tab(self):
         def rpc(name, args):
             self.calls.append((name, args))

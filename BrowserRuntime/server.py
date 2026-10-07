@@ -218,6 +218,7 @@ class Browser:
         token = uuid.uuid4().hex
         marker = 'about:blank#context-desk-' + token
         self.start()
+        self.close_orphaned_tabs()
         # macOS can unhide Chrome when CDP creates a tab, even with background=True.
         # Preserve a hidden browser without overriding a user's visible window.
         hidden = self.chrome is not None and self.chrome.visibility(self.chrome.owner)
@@ -234,6 +235,9 @@ class Browser:
         self.session = token
         self.metrics = {'calls': 0, 'rpcMilliseconds': 0, 'responseBytes': 0, 'toolErrors': 0}
         self.checkpoint = {'session': token, 'pageId': self.page, 'state': 'opened', 'url': marker}
+        target = self.owned_target(marker)
+        if target:
+            self.checkpoint['targetId'] = target
         self.persist()
         self.native('navigate_page', {'pageId': self.page, 'type': 'url', 'url': url})
         actual = self.evaluate('() => ({url: location.href, readyState: document.readyState})')
@@ -241,6 +245,43 @@ class Browser:
         self.persist()
         return {'session': token, 'pageId': self.page, 'requestedURL': url, **actual,
                 'verification': 'url_matches' if actual['url'] == url else 'redirect_requires_review'}
+
+    def owned_target(self, marker):
+        """CDP target ID of the tab just created with this unique marker, if unambiguous."""
+        if self.chrome is None or self.chrome.owner is None:
+            return None
+        targets = self.chrome.page_targets(self.chrome.owner)
+        if not isinstance(targets, dict):
+            return None
+        found = [target for target, url in targets.items() if url == marker]
+        return found[0] if len(found) == 1 else None
+
+    def close_orphaned_tabs(self):
+        """Close tabs left by this chat's earlier sessions whose MCP connection ended.
+
+        Their session tokens are dead, so no agent can use them, yet each keeps a
+        renderer alive. Only the recorded target ID identifies a tab; sessions
+        with an unknown outcome, user tabs and other chats' browsers are kept.
+        One close request per tab, never retried.
+        """
+        if self.chrome is None or self.chrome.owner is None:
+            return
+        targets = self.chrome.page_targets(self.chrome.owner)
+        if not isinstance(targets, dict) or not targets:
+            return
+        for path in sorted(self.records.glob('*.json')):
+            try:
+                record = json.loads(path.read_text())
+            except (OSError, ValueError):
+                continue
+            if (not isinstance(record, dict) or record.get('state') != 'disconnected'
+                    or record.get('outcomeUnknown') is not False or record.get('targetId') not in targets):
+                continue
+            record['state'] = 'orphan_close_pending'
+            save(path, record)
+            closed = self.chrome.close_target(self.chrome.owner, record['targetId'])
+            record['state'] = 'orphan_closed' if closed else 'orphan_close_uncertain'
+            save(path, record)
 
     def persist(self):
         if self.session:
