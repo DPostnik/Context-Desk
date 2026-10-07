@@ -44,6 +44,30 @@ class SessionImportTests(unittest.TestCase):
                 self.call()
             run.assert_not_called()
 
+    def test_any_site_policy_in_browser_root_passes_exact_page_host(self):
+        environment = self.root / 'environments' / 'fixture'
+        browser = server.Browser(environment, rpc=Mock(), installation_root=self.root)
+        browser.session, browser.page, browser.checkpoint = 'owned', 1, {'state': 'opened'}
+        browser.expected, browser.chrome = self.browser.expected, self.browser.chrome
+        self.policy.write_text(json.dumps({'site': '*', 'profile': 'Default'}))
+        with patch.object(Path, 'is_file', return_value=True), patch('server.subprocess.run') as run:
+            run.return_value = Mock(returncode=0, stdout=json.dumps(self.result).encode())
+            url = 'https://Gist.GitHub.com/x'
+            self.assertEqual(server.dispatch(browser, 'browser_import_session', {'session': 'owned', 'expectedURL': url}), self.result)
+            self.assertEqual(run.call_args.args[0][3], 'gist.github.com')
+            # The chat's own site policy wins over the shared wildcard.
+            (environment / 'chrome-session-import.json').write_text(json.dumps({'site': 'linkedin.com', 'profile': 'Default'}))
+            server.dispatch(browser, 'browser_import_session', {'session': 'owned', 'expectedURL': self.url})
+            self.assertEqual(run.call_args.args[0][3], 'linkedin.com')
+
+    def test_any_site_policy_rejects_hosts_without_domain(self):
+        self.policy.write_text(json.dumps({'site': '*', 'profile': 'Default'}))
+        with patch('server.subprocess.run') as run:
+            for url in ['http://localhost:8080/', 'file:///etc/passwd']:
+                with self.assertRaises(server.Rejected):
+                    self.call(url)
+            run.assert_not_called()
+
     def test_success_is_secret_free_and_not_reimported(self):
         with patch.object(Path, 'is_file', return_value=True), patch('server.subprocess.run') as run:
             run.return_value = Mock(returncode=0, stdout=json.dumps(self.result).encode())

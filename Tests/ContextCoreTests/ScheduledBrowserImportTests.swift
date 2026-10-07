@@ -22,6 +22,11 @@ import Testing
     #expect(claude.contains("call mcp__context_desk_browser__browser_import_session with"))
     #expect(ScheduledBrowserImport.instructions(try #require(job.browserSessionImport), tool: ScheduledBrowserImport.claudeImportTool, language: .russian)
         .contains("вызови mcp__context_desk_browser__browser_import_session"))
+    let any = try ChromeSessionImportPolicy(profile: "Default", site: ChromeSessionImportPolicy.anySite)
+    #expect(ScheduledBrowserImport.instructions(any, language: .english).contains("any site where sign-in is missing"))
+    #expect(ScheduledBrowserImport.instructions(any, language: .russian).contains("любого сайта"))
+    job.browserSessionImport = any
+    try job.validate()
     job.browserSessionImport = try JSONDecoder().decode(ChromeSessionImportPolicy.self, from: Data(#"{"profile":"Default","site":"not a domain"}"#.utf8))
     #expect(throws: (any Error).self) { try job.validate() }
 }

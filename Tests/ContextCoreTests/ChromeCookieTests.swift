@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Testing
 import CSQLite
@@ -81,23 +82,113 @@ private func fixtureDatabase(root: URL, schema: Int = 24, rows: String) throws -
     #expect(try ChromeCookieSource.profiles(root: root).map(\.id) == ["Default"])
 }
 
-@Test func chromeSourceRequiresClosedStableProfileBeforeKeychain() throws {
+@Test func chromeSourceReadsWhileRunningAndRejectsInvalidProfilesBeforeKeychain() throws {
     let root = try temporaryCookies()
     defer { try? FileManager.default.removeItem(at: root) }
     let file = try fixtureDatabase(root: root, rows: "")
     var keyReads = 0
     let key = { keyReads += 1; return Data() }
-    #expect(throws: ChromeCookieError.self) {
-        try ChromeCookieSource.read(profile: "Default", root: root, sourceIsRunning: { true }, key: key)
-    }
+    #expect(try ChromeCookieSource.read(profile: "Default", root: root, sourceIsRunning: { true }, key: key).cookies.isEmpty)
     try Data([1]).write(to: URL(fileURLWithPath: file.path + "-wal"))
-    #expect(throws: ChromeCookieError.self) {
-        try ChromeCookieSource.read(profile: "Default", root: root, sourceIsRunning: { false }, key: key)
-    }
-    #expect(throws: ChromeCookieError.self) {
+    #expect(try ChromeCookieSource.read(profile: "Default", root: root, sourceIsRunning: { true }, key: key).cookies.isEmpty)
+    #expect(try ChromeCookieSource.read(profile: "Default", root: root, sourceIsRunning: { false }, key: key).cookies.isEmpty)
+    #expect(throws: ChromeCookieError.invalidProfile) {
         try ChromeCookieSource.read(profile: "../Default", root: root, sourceIsRunning: { false }, key: key)
     }
     #expect(keyReads == 0)
+}
+
+private func sha256(_ file: URL) throws -> Data { Data(SHA256.hash(data: try Data(contentsOf: file))) }
+private func emptySnapshotRoot() throws -> URL {
+    let folder = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+    return folder
+}
+
+@Test func chromeRunningSnapshotReplaysWALWithoutTouchingProfile() throws {
+    let root = try temporaryCookies(), snapshots = try emptySnapshotRoot()
+    defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(at: snapshots) }
+    let file = root.appendingPathComponent("Default/Network/Cookies"), wal = URL(fileURLWithPath: file.path + "-wal")
+    // An open writer with checkpoints disabled keeps the cookie only in the WAL, as a running Chrome would.
+    var writer: OpaquePointer?
+    #expect(sqlite3_open(file.path, &writer) == SQLITE_OK)
+    defer { sqlite3_close(writer) }
+    let sql = """
+    PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;
+    CREATE TABLE meta (key TEXT, value INTEGER); INSERT INTO meta VALUES ('version', 24);
+    CREATE TABLE cookies (host_key TEXT, name TEXT, value TEXT, encrypted_value BLOB, path TEXT, expires_utc INTEGER, is_secure INTEGER,
+      is_httponly INTEGER, samesite INTEGER, top_frame_site_key TEXT, has_expires INTEGER);
+    INSERT INTO cookies VALUES ('wal.example.test','sid','wal-only-value',X'','/',0,1,1,1,'',0);
+    """
+    #expect(sqlite3_exec(writer, sql, nil, nil, nil) == SQLITE_OK)
+    #expect(try Data(contentsOf: file).range(of: Data("wal-only-value".utf8)) == nil)
+    #expect(try Data(contentsOf: wal).range(of: Data("wal-only-value".utf8)) != nil)
+    let hashes = (try sha256(file), try sha256(wal))
+    let read = try ChromeCookieSource.read(profile: "Default", root: root, now: 1_700_000_000, site: nil, sourceIsRunning: { true },
+                                           key: { Data() }, temporaryRoot: snapshots, afterCopy: { _ in })
+    #expect(read.cookies.map(\.value) == ["wal-only-value"])
+    #expect(try sha256(file) == hashes.0 && sha256(wal) == hashes.1)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: snapshots.path).isEmpty)
+}
+
+@Test func chromeSnapshotRetriesAndReportsAProfileThatKeepsChanging() throws {
+    let root = try temporaryCookies(), snapshots = try emptySnapshotRoot()
+    defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(at: snapshots) }
+    let file = try fixtureDatabase(root: root, rows: "INSERT INTO cookies VALUES ('example.test','a','b',X'','/',0,0,0,1,'',0);")
+    let wal = URL(fileURLWithPath: file.path + "-wal")
+    try Data().write(to: wal)
+    var attempts: [Int] = []
+    #expect(throws: ChromeCookieError.sourceChanged) {
+        try ChromeCookieSource.read(profile: "Default", root: root, now: 0, site: nil, sourceIsRunning: { true }, key: { Data() },
+                                    temporaryRoot: snapshots, afterCopy: { attempt in
+            attempts.append(attempt)
+            let handle = try FileHandle(forWritingTo: wal)
+            try handle.seekToEnd(); try handle.write(contentsOf: Data([UInt8(attempt)])); try handle.close()
+        })
+    }
+    #expect(attempts == [1, 2, 3])
+    try FileManager.default.removeItem(at: wal)
+    // A single change during the first copy is absorbed by a retry.
+    attempts = []
+    let read = try ChromeCookieSource.read(profile: "Default", root: root, now: 0, site: nil, sourceIsRunning: { true }, key: { Data() },
+                                           temporaryRoot: snapshots, afterCopy: { attempt in
+        attempts.append(attempt)
+        if attempt == 1 { try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -60)], ofItemAtPath: file.path) }
+    })
+    #expect(attempts == [1, 2] && read.cookies.count == 1)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: snapshots.path).isEmpty)
+}
+
+@Test func chromeCorruptSnapshotFailsAsChangedNotEmpty() throws {
+    let root = try temporaryCookies(), snapshots = try emptySnapshotRoot()
+    defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(at: snapshots) }
+    let rows = (0..<200).map { "INSERT INTO cookies VALUES ('example.test','n\($0)','\(String(repeating: "v", count: 100))',X'','/',0,0,0,1,'',0);" }
+    let file = try fixtureDatabase(root: root, rows: rows.joined(separator: "\n"))
+    var bytes = try Data(contentsOf: file)
+    #expect(bytes.count > 3 * 4096)
+    bytes.replaceSubrange(4096..<4196, with: Data(repeating: 0xA5, count: 100))
+    try bytes.write(to: file)
+    let hash = try sha256(file)
+    #expect(throws: ChromeCookieError.sourceChanged) {
+        try ChromeCookieSource.read(profile: "Default", root: root, now: 0, site: nil, sourceIsRunning: { true }, key: { Data() },
+                                    temporaryRoot: snapshots, afterCopy: { _ in })
+    }
+    #expect(try sha256(file) == hash)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: snapshots.path).isEmpty)
+}
+
+@Test func chromeUnreadableProfileIsRunningOnlyWhileChromeIsOpen() throws {
+    let root = try temporaryCookies()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let file = try fixtureDatabase(root: root, rows: "")
+    try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: file.path)
+    defer { try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path) }
+    #expect(throws: ChromeCookieError.sourceRunning) {
+        try ChromeCookieSource.read(profile: "Default", root: root, sourceIsRunning: { true }, key: { Data() })
+    }
+    #expect(throws: ChromeCookieError.unavailable) {
+        try ChromeCookieSource.read(profile: "Default", root: root, sourceIsRunning: { false }, key: { Data() })
+    }
 }
 
 @Test func chromeUnknownSchemaAndSymlinkFailClosed() throws {
@@ -262,4 +353,54 @@ private actor CookieWriteProbe {
             return .null
         }
     }
+}
+
+@Test func anySitePolicyImportsOnlyCookiesChromeWouldSendToThePage() throws {
+    let root = try temporaryCookies()
+    defer { try? FileManager.default.removeItem(at: root) }
+    _ = try fixtureDatabase(root: root, rows: """
+    INSERT INTO cookies VALUES ('.linkedin.com','parent','a',X'','/',0,1,1,1,'',0);
+    INSERT INTO cookies VALUES ('www.linkedin.com','host','b',X'','/',0,1,1,1,'',0);
+    INSERT INTO cookies VALUES ('.www.linkedin.com','domain','c',X'','/',0,1,1,1,'',0);
+    INSERT INTO cookies VALUES ('login.linkedin.com','sibling','',X'\(domainCipher)','/',0,1,1,1,'',0);
+    INSERT INTO cookies VALUES ('linkedin.com','apex','',X'\(domainCipher)','/',0,1,1,1,'',0);
+    INSERT INTO cookies VALUES ('.evillinkedin.com','other','',X'\(domainCipher)','/',0,1,1,1,'',0);
+    INSERT INTO cookies VALUES ('.www.linkedin.com.evil.test','other','',X'\(domainCipher)','/',0,1,1,1,'',0);
+    """)
+    let read = try ChromeCookieSource.read(profile: "Default", root: root, pageHost: "www.linkedin.com", sourceIsRunning: { true }, key: {
+        Issue.record("Cookies Chrome would not send to the page must never be decrypted")
+        throw ChromeCookieError.keychain
+    })
+    #expect(read.cookies.map(\.name) == ["parent", "host", "domain"])
+    #expect(ChromeSessionImportPolicy.sent(cookieHost: ".LinkedIn.com", toPageHost: "linkedin.com"))
+    #expect(!ChromeSessionImportPolicy.sent(cookieHost: "linkedin.com", toPageHost: "www.linkedin.com"))
+}
+
+@Test func anySitePolicyIsSharedAcrossChatsAndChatPolicyWins() throws {
+    let policy = try ChromeSessionImportPolicy(profile: "Profile 2", site: " * ")
+    #expect(policy.coversAnySite)
+    for site in ["*.linkedin.com", "**", "*com"] {
+        #expect(throws: ChromeCookieError.self) { try ChromeSessionImportPolicy(profile: "Default", site: site) }
+    }
+    let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let environment = root.appendingPathComponent("environments/" + UUID().uuidString.lowercased())
+    #expect(try ChromeSessionImportPolicy.resolve(site: "github.com", environment: environment, browserRoot: root) == nil)
+    try ChromeSessionImportPolicy.saveShared(policy, browserRoot: root)
+    let file = root.appendingPathComponent("chrome-session-import.json")
+    #expect((try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? NSNumber)?.intValue == 0o600)
+    #expect(try ChromeSessionImportPolicy.loadShared(browserRoot: root) == policy)
+    let shared = try #require(try ChromeSessionImportPolicy.resolve(site: "WWW.GitHub.com", environment: environment, browserRoot: root))
+    #expect(shared.profile == "Profile 2" && shared.site == nil && shared.pageHost == "www.github.com")
+    // A wildcard never turns a non-domain request into an unfiltered read.
+    for site in ["*", "", "localhost", "a..b", "-x.test"] {
+        #expect(try ChromeSessionImportPolicy.resolve(site: site, environment: environment, browserRoot: root) == nil)
+    }
+    try ChromeSessionImportPolicy.save(try .init(profile: "Default", site: "linkedin.com"), environment: environment, grant: nil, browserRoot: root)
+    let chat = try #require(try ChromeSessionImportPolicy.resolve(site: "linkedin.com", environment: environment, browserRoot: root))
+    #expect(chat.profile == "Default" && chat.site == "linkedin.com" && chat.pageHost == nil)
+    #expect(try ChromeSessionImportPolicy.resolve(site: "github.com", environment: environment, browserRoot: root)?.pageHost == "github.com")
+    try ChromeSessionImportPolicy.saveShared(nil, browserRoot: root)
+    #expect(try ChromeSessionImportPolicy.resolve(site: "github.com", environment: environment, browserRoot: root) == nil)
+    #expect(!FileManager.default.fileExists(atPath: file.path))
 }

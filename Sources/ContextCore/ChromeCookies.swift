@@ -11,12 +11,12 @@ public enum ChromeCookieError: Error, LocalizedError, Sendable {
     public var errorDescription: String? { message(language: L10n.language) }
     public func message(language: AppLanguage) -> String {
         switch self {
-        case .sourceRunning: return L10n.text("Заверши обычный Google Chrome через Cmd+Q, затем повтори импорт.", "Quit regular Google Chrome with Cmd+Q, then import again.", language: language)
+        case .sourceRunning: return L10n.text("Chrome не дал прочитать файл cookies. Заверши обычный Google Chrome через Cmd+Q и повтори импорт.", "Chrome did not allow reading its cookie file. Quit regular Google Chrome with Cmd+Q, then import again.", language: language)
         case .unavailable: return L10n.text("Не удалось прочитать cookies выбранного профиля Chrome.", "Could not read cookies from the selected Chrome profile.", language: language)
         case .invalidProfile: return L10n.text("Профиль Chrome недоступен или его путь изменился. Обнови список профилей.", "The Chrome profile is unavailable or its path changed. Refresh the profile list.", language: language)
         case .unsupportedSchema: return L10n.text("Этот формат cookies Chrome пока не поддерживается. Импорт не выполнен.", "This Chrome cookie format is not supported yet. Nothing was imported.", language: language)
         case .keychain: return L10n.text("Не получен доступ к Chrome Safe Storage в Связке ключей. Разреши доступ при следующем явном импорте.", "Access to Chrome Safe Storage in Keychain was not granted. Allow access during your next explicit import.", language: language)
-        case .sourceChanged: return L10n.text("Профиль Chrome изменился во время чтения. Заверши Chrome и начни импорт заново.", "The Chrome profile changed during reading. Quit Chrome and start a new import.", language: language)
+        case .sourceChanged: return L10n.text("Профиль Chrome менялся во время чтения. Заверши обычный Google Chrome через Cmd+Q и повтори импорт.", "The Chrome profile kept changing during reading. Quit regular Google Chrome with Cmd+Q, then import again.", language: language)
         case .tooLarge: return L10n.text("Профиль cookies превышает поддерживаемый размер. Импорт не выполнен.", "The cookie profile exceeds the supported size. Nothing was imported.", language: language)
         case .browserBusy: return L10n.text("Браузер чата занят. Дождись завершения текущей операции.", "This chat's browser is busy. Wait for its current operation to finish.", language: language)
         case .destinationRunning: return L10n.text("Перед импортом закрой Chrome for Testing этого чата через меню «Браузер». Импорт откроет его снова.", "Before importing, close this chat's Chrome for Testing from the Browser menu. Import will reopen it.", language: language)
@@ -99,38 +99,84 @@ public enum ChromeCookieSource {
     }
 
     /// Reads an encrypted database snapshot; never opens the user's database with SQLite.
+    /// While Chrome runs, the main file and its WAL are copied together and SQLite replays the WAL on the copy only.
     public static func read(profile: String, root: URL = directory, now: Double = Date().timeIntervalSince1970,
-                            site: String? = nil, sourceIsRunning: () -> Bool, key: () throws -> Data = keychainKey) throws -> ChromeCookieRead {
-        guard !sourceIsRunning() else { throw ChromeCookieError.sourceRunning }
-        guard profileID(profile), try profiles(root: root).contains(where: { $0.id == profile }) else { throw ChromeCookieError.invalidProfile }
-        let choices = try ["\(profile)/Network/Cookies", "\(profile)/Cookies"].map { try checked($0, root: root) }
-        guard let source = choices.first(where: { FileManager.default.fileExists(atPath: $0.path) }) else { throw ChromeCookieError.unavailable }
-        let wal = URL(fileURLWithPath: source.path + "-wal")
-        // Require Chrome to finish checkpointing before taking a file-level snapshot.
-        if ((try? wal.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) > 0 { throw ChromeCookieError.sourceRunning }
-        let before = try source.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey, .isRegularFileKey])
-        guard before.isRegularFile == true, let size = before.fileSize, size <= maximumBytes else { throw ChromeCookieError.tooLarge }
-        let bytes = try Data(contentsOf: source)
-        guard bytes.count <= maximumBytes else { throw ChromeCookieError.tooLarge }
-        let after = try source.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
-        guard !sourceIsRunning(), before.fileSize == after.fileSize, before.contentModificationDate == after.contentModificationDate,
-              !FileManager.default.fileExists(atPath: wal.path) || ((try? wal.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 1) == 0 else { throw ChromeCookieError.sourceChanged }
-        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("contextdesk-cookie-" + UUID().uuidString)
-        try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
-        defer { try? FileManager.default.removeItem(at: temporary) }
-        let snapshot = temporary.appendingPathComponent("Cookies")
-        try bytes.write(to: snapshot, options: .atomic)
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: snapshot.path)
-        return try decode(snapshot: snapshot, now: now, site: site, key: key)
+                            site: String? = nil, pageHost: String? = nil, sourceIsRunning: () -> Bool,
+                            key: () throws -> Data = keychainKey) throws -> ChromeCookieRead {
+        try read(profile: profile, root: root, now: now, site: site, pageHost: pageHost, sourceIsRunning: sourceIsRunning, key: key,
+                 temporaryRoot: FileManager.default.temporaryDirectory, afterCopy: { _ in })
     }
 
-    static func decode(snapshot: URL, now: Double, site: String? = nil, key: () throws -> Data) throws -> ChromeCookieRead {
+    static let snapshotAttempts = 3
+    static let snapshotRetryDelay: TimeInterval = 0.2
+
+    private struct FileStamp: Equatable {
+        let size: Int
+        let modified: Date?
+    }
+    private static func stamp(_ file: URL) throws -> FileStamp? {
+        // URL resource values are cached per URL instance, so fresh attributes are read for every comparison.
+        guard FileManager.default.fileExists(atPath: file.path) else { return nil }
+        guard let values = try? FileManager.default.attributesOfItem(atPath: file.path),
+              values[.type] as? FileAttributeType == .typeRegular, let size = (values[.size] as? NSNumber)?.intValue else { throw ChromeCookieError.unavailable }
+        guard size <= maximumBytes else { throw ChromeCookieError.tooLarge }
+        return FileStamp(size: size, modified: values[.modificationDate] as? Date)
+    }
+
+    static func read(profile: String, root: URL, now: Double, site: String?, pageHost: String? = nil, sourceIsRunning: () -> Bool, key: () throws -> Data,
+                     temporaryRoot: URL, afterCopy: (Int) throws -> Void) throws -> ChromeCookieRead {
+        guard profileID(profile), try profiles(root: root).contains(where: { $0.id == profile }) else { throw ChromeCookieError.invalidProfile }
+        let choices = try ["\(profile)/Network/Cookies", "\(profile)/Cookies"].map { (try checked($0, root: root), try checked($0 + "-wal", root: root)) }
+        guard let (source, wal) = choices.first(where: { FileManager.default.fileExists(atPath: $0.0.path) }) else { throw ChromeCookieError.unavailable }
+        let running = sourceIsRunning()
+        // A locked or unreadable file is reported as "running" only when Chrome is open; otherwise it is a plain read failure.
+        let blocked = running ? ChromeCookieError.sourceRunning : .unavailable
+        var files: [(name: String, bytes: Data)] = []
+        var stable = false
+        for attempt in 1...snapshotAttempts {
+            if attempt > 1 { Thread.sleep(forTimeInterval: snapshotRetryDelay) }
+            let before = (try stamp(source), try stamp(wal))
+            guard before.0 != nil else { throw ChromeCookieError.unavailable }
+            // The WAL may hold committed rows that are not checkpointed yet; copy it whenever Chrome may be writing.
+            let includeWAL = before.1 != nil && (running || before.1!.size > 0)
+            do {
+                files = [(source.lastPathComponent, try Data(contentsOf: source))]
+                if includeWAL { files.append((wal.lastPathComponent, try Data(contentsOf: wal))) }
+            } catch { throw blocked }
+            guard files.allSatisfy({ $0.bytes.count <= maximumBytes }) else { throw ChromeCookieError.tooLarge }
+            try afterCopy(attempt)
+            let after = (try stamp(source), try stamp(wal))
+            if before == after, files[0].bytes.count == before.0?.size, !includeWAL || files[1].bytes.count == before.1?.size {
+                stable = true; break
+            }
+        }
+        guard stable else { throw ChromeCookieError.sourceChanged }
+        let temporary = temporaryRoot.appendingPathComponent("contextdesk-cookie-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        for file in files {
+            // Cookies-shm is never copied; SQLite rebuilds it next to the snapshot.
+            guard FileManager.default.createFile(atPath: temporary.appendingPathComponent(file.name).path, contents: file.bytes,
+                                                 attributes: [.posixPermissions: 0o600]) else { throw ChromeCookieError.unavailable }
+        }
+        return try decode(snapshot: temporary.appendingPathComponent(source.lastPathComponent), now: now, site: site, pageHost: pageHost, key: key)
+    }
+
+    static func decode(snapshot: URL, now: Double, site: String? = nil, pageHost: String? = nil, key: () throws -> Data) throws -> ChromeCookieRead {
         var database: OpaquePointer?
-        guard sqlite3_open_v2(snapshot.path, &database, SQLITE_OPEN_READONLY, nil) == SQLITE_OK, let db = database else {
+        // A normal (not immutable) open lets SQLite replay a copied WAL into this private snapshot.
+        guard sqlite3_open_v2(snapshot.path, &database, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK, let db = database else {
             if let database { sqlite3_close(database) }; throw ChromeCookieError.unavailable
         }
         defer { sqlite3_close(db) }
         var statement: OpaquePointer?
+        // A torn copy must fail loudly instead of yielding a silently partial cookie list.
+        guard sqlite3_prepare_v2(db, "PRAGMA quick_check", -1, &statement, nil) == SQLITE_OK else {
+            sqlite3_finalize(statement); throw ChromeCookieError.sourceChanged
+        }
+        let healthy = sqlite3_step(statement) == SQLITE_ROW && sqlite3_column_text(statement, 0).map { String(cString: $0) } == "ok"
+        sqlite3_finalize(statement); statement = nil
+        guard healthy else { throw ChromeCookieError.sourceChanged }
         guard sqlite3_prepare_v2(db, "SELECT value FROM meta WHERE key='version'", -1, &statement, nil) == SQLITE_OK else { throw ChromeCookieError.unsupportedSchema }
         let version = sqlite3_step(statement) == SQLITE_ROW ? sqlite3_column_int(statement, 0) : 0
         sqlite3_finalize(statement); statement = nil
@@ -157,6 +203,7 @@ public enum ChromeCookieSource {
                 result.unsupported += 1; continue
             }
             if let site, !ChromeSessionImportPolicy.includes(host: host, site: site) { continue }
+            if let pageHost, !ChromeSessionImportPolicy.sent(cookieHost: host, toPageHost: pageHost) { continue }
             if !partition.isEmpty { result.partitioned += 1; continue }
             let expiry = sqlite3_column_int(row, 10) == 0 ? nil : Optional(Double(sqlite3_column_int64(row, 5)) / 1_000_000 - 11_644_473_600)
             if let expiry, expiry <= now { result.expired += 1; continue }

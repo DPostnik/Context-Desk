@@ -15,6 +15,9 @@ struct ChromeCookieImportView: View {
     @State private var receipt: ChromeCookieImportReceipt?
     @State private var automaticSite = "linkedin.com"
     @State private var automaticPolicy: ChromeSessionImportPolicy?
+    @State private var sharedPolicy: ChromeSessionImportPolicy?
+    @State private var automaticAnySite = false
+    @State private var automaticAllChats = false
     @AppStorage("chromeCookieSourceProfile") private var lastProfile = "Default"
     @AppStorage("parallelBrowserLimit") private var maxBrowsers = 2
 
@@ -23,8 +26,8 @@ struct ChromeCookieImportView: View {
             Text(L10n.text("Импортировать только cookies", "Import cookies only")).font(.title2.bold())
             Text(L10n.text("Cookies сайтов станут доступны выбранному браузеру и агенту этого чата. Если профиль сохранён, они будут доступны и следующим чатам, которым ты передашь этот профиль.",
                            "Website cookies will be available to this chat’s selected browser and agent. If you save the profile, later chats you assign to it will also have access."))
-            Text(L10n.text("Заверши обычный Google Chrome через Cmd+Q. Если браузер чата открыт, сначала закрой его через меню «Браузер». macOS может запросить доступ к Chrome Safe Storage в Связке ключей.",
-                           "Quit regular Google Chrome with Cmd+Q. If this chat’s browser is open, close it from the Browser menu first. macOS may request access to Chrome Safe Storage in Keychain."))
+            Text(L10n.text("Обычный Google Chrome можно не закрывать; если он не даст прочитать cookies, заверши его через Cmd+Q и повтори. Если браузер чата открыт, сначала закрой его через меню «Браузер». macOS может запросить доступ к Chrome Safe Storage в Связке ключей.",
+                           "Regular Google Chrome can stay open; if it blocks reading cookies, quit it with Cmd+Q and try again. If this chat’s browser is open, close it from the Browser menu first. macOS may request access to Chrome Safe Storage in Keychain."))
                 .font(.callout)
             if loading {
                 ProgressView(L10n.text("Поиск профилей…", "Finding profiles…"))
@@ -41,20 +44,29 @@ struct ChromeCookieImportView: View {
                 .font(.caption).foregroundStyle(.secondary)
             Divider()
             Text(L10n.text("Импорт сессии агентом", "Agent session import")).font(.headline)
-            TextField(L10n.text("Домен сайта, например linkedin.com", "Site domain, for example linkedin.com"), text: $automaticSite)
-                .disabled(importing)
-            Text(L10n.text("Разреши агенту переносить cookies этого сайта и его поддоменов из выбранного профиля Chrome при отсутствии входа. Разрешение действует для этого браузерного профиля, включая чаты, которым он будет передан. Обычный Chrome должен быть закрыт.",
-                           "Allow the agent to import cookies for this site and its subdomains from the selected Chrome profile when sign-in is missing. Permission applies to this browser profile, including chats it is handed to. Regular Chrome must be closed."))
+            Toggle(L10n.text("Любой сайт", "Any site"), isOn: $automaticAnySite).disabled(importing)
+            if !automaticAnySite {
+                TextField(L10n.text("Домен сайта, например linkedin.com", "Site domain, for example linkedin.com"), text: $automaticSite)
+                    .disabled(importing)
+            }
+            Toggle(L10n.text("Во всех чатах", "In every chat"), isOn: $automaticAllChats).disabled(importing)
+            Text(L10n.text("Разреши агенту переносить cookies сайта из выбранного профиля Chrome при отсутствии входа. Для одного сайта переносятся cookies сайта и его поддоменов; для любого сайта — только cookies, которые Chrome отправил бы открытой странице. Разрешение для чата действует для этого браузерного профиля, включая чаты, которым он будет передан; разрешение для всех чатов — для каждого браузера чата. Обычный Chrome можно не закрывать.",
+                           "Allow the agent to import site cookies from the selected Chrome profile when sign-in is missing. For one site, cookies of the site and its subdomains are imported; for any site, only the cookies Chrome would send to the open page. Chat permission applies to this browser profile, including chats it is handed to; every-chat permission applies to each chat browser. Regular Chrome can stay open."))
                 .font(.caption).foregroundStyle(.secondary)
             if let automaticPolicy {
-                Text(L10n.text("Разрешено: ", "Enabled: ") + automaticPolicy.site + " · " + automaticPolicy.profile).font(.callout)
+                HStack {
+                    Text(L10n.text("Разрешено в этом чате: ", "Enabled in this chat: ") + siteLabel(automaticPolicy) + " · " + automaticPolicy.profile).font(.callout)
+                    Button(L10n.text("Отключить", "Disable")) { saveAutomaticPolicy(enabled: false, shared: false) }.disabled(importing)
+                }
             }
-            HStack {
-                Button(L10n.text("Разрешить импорт агенту", "Enable agent import")) { saveAutomaticPolicy(enabled: true) }
-                    .disabled(importing || loading || selection.isEmpty)
-                Button(L10n.text("Отключить", "Disable")) { saveAutomaticPolicy(enabled: false) }
-                    .disabled(importing || automaticPolicy == nil)
+            if let sharedPolicy {
+                HStack {
+                    Text(L10n.text("Разрешено во всех чатах: ", "Enabled in every chat: ") + siteLabel(sharedPolicy) + " · " + sharedPolicy.profile).font(.callout)
+                    Button(L10n.text("Отключить", "Disable")) { saveAutomaticPolicy(enabled: false, shared: true) }.disabled(importing)
+                }
             }
+            Button(L10n.text("Разрешить импорт агенту", "Enable agent import")) { saveAutomaticPolicy(enabled: true, shared: automaticAllChats) }
+                .disabled(importing || loading || selection.isEmpty)
             if let receipt, result == nil {
                 Text(L10n.text("Последний импорт: ", "Last import: ") + receipt.date.formatted(date: .abbreviated, time: .shortened) + " · " +
                      L10n.text("Проверено cookies: \(receipt.result.verified). Вход на сайте не проверен.",
@@ -90,12 +102,17 @@ struct ChromeCookieImportView: View {
             defer { loading = false }
             do {
                 profiles = try await Task.detached { try ChromeCookieSource.profiles() }.value
+                sharedPolicy = try ChromeSessionImportPolicy.loadShared()
                 if let environment = try BrowserEnvironmentStore.existingEnvironment(session: session) {
                     receipt = try ChromeCookieImportReceipt.last(environment: environment)
                     automaticPolicy = try ChromeSessionImportPolicy.load(environment: environment)
-                    if let automaticPolicy { automaticSite = automaticPolicy.site }
                 }
-                let preferred = automaticPolicy?.profile ?? lastProfile
+                if let current = automaticPolicy ?? sharedPolicy {
+                    automaticAnySite = current.coversAnySite
+                    automaticAllChats = automaticPolicy == nil
+                    if !current.coversAnySite { automaticSite = current.site }
+                }
+                let preferred = automaticPolicy?.profile ?? sharedPolicy?.profile ?? lastProfile
                 selection = profiles.contains(where: { $0.id == preferred }) ? preferred : profiles.first?.id ?? ""
                 if profiles.isEmpty { error = L10n.text("Профили обычного Google Chrome не найдены.", "No regular Google Chrome profiles were found.") }
             } catch {
@@ -105,13 +122,24 @@ struct ChromeCookieImportView: View {
         }
     }
 
-    private func saveAutomaticPolicy(enabled: Bool) {
+    private func siteLabel(_ policy: ChromeSessionImportPolicy) -> String {
+        policy.coversAnySite ? L10n.text("любой сайт", "any site") : policy.site
+    }
+
+    private func saveAutomaticPolicy(enabled: Bool, shared: Bool) {
         error = nil
         do {
+            let site = automaticAnySite ? ChromeSessionImportPolicy.anySite : automaticSite
+            if shared {
+                let policy = enabled ? try ChromeSessionImportPolicy(profile: selection, site: site) : nil
+                try ChromeSessionImportPolicy.saveShared(policy)
+                sharedPolicy = policy
+                return
+            }
             guard let root = try BrowserEnvironmentStore.existingEnvironment(session: session) else { throw ChromeCookieError.missingEnvironment }
             let store = BrowserProfileStore(), reference = AgentSessionReference(connection: .originalCodex, nativeID: session)
             let grant = try store.current(session: reference) == nil ? nil : store.ownedGrant(session: reference, allowHuman: true)
-            let policy = enabled ? try ChromeSessionImportPolicy(profile: selection, site: automaticSite) : nil
+            let policy = enabled ? try ChromeSessionImportPolicy(profile: selection, site: site) : nil
             try ChromeSessionImportPolicy.save(policy, environment: root, grant: grant)
             automaticPolicy = policy
         } catch {

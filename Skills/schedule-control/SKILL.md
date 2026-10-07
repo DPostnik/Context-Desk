@@ -32,12 +32,13 @@ Unclaimed requests expire after 60 seconds; claimed requests never replay after 
 
 For explicit user authorization covering a selected task/site/source Chrome profile,
 use `python3 scripts/browser-import.py --job-id UUID --chrome-profile Default --site linkedin.com`.
+Use `--site '*'` for any site; each run then imports only the cookies Chrome would send to the page that lacks sign-in.
 Use `--disable` without profile/site to revoke for future runs. Read the observed
 job first. This stores permission metadata only; it never imports cookies immediately,
 changes the prompt/schedule/model/project permissions, enables a task, or runs it.
 Every new Codex or Claude Code run receives the site permission in its own browser environment
 and conditional sign-in recovery instructions (Claude Code calls the tool as
-`mcp__context_desk_browser__browser_import_session`; with the browser disabled the run is blocked). Regular Chrome must be closed;
+`mcp__context_desk_browser__browser_import_session`; with the browser disabled the run is blocked). Regular Chrome may stay open;
 Keychain may need a user grant. Cookie readback is not website sign-in verification.
 Never auto-close Chrome, retry an uncertain import, or expand the site's action scope.
 An old running app rejects `browser-import`; ask for Cmd+Q/reopen of the verified

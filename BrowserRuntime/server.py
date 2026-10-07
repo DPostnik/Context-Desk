@@ -384,19 +384,37 @@ class Browser:
     def import_session(self, token, expected_url):
         self.owner(token)
         web_url(expected_url)
-        policy_file = self.root / 'chrome-session-import.json'
-        unavailable = tr('Разреши импорт для сайта и профиля Chrome через Браузер → Импортировать только cookies.',
-                         'Enable import for the site and Chrome profile in Browser → Import cookies only.')
-        require(policy_file.is_file() and not policy_file.is_symlink() and policy_file.stat().st_size <= 4096, unavailable)
-        try:
-            policy = json.loads(policy_file.read_text())
-            site = policy['site']
-            require(isinstance(site, str) and re.fullmatch(r'[a-z0-9]+(?:[a-z0-9.-]*[a-z0-9])?', site)
-                    and '.' in site and '..' not in site, unavailable)
-        except (ValueError, KeyError, TypeError):
-            raise Rejected(unavailable)
-        host = urlparse(expected_url).hostname or ''
-        require(host == site or host.endswith('.' + site), tr(
+        unavailable = tr('Разреши импорт для сайта (или для всех сайтов) и профиля Chrome через Браузер → Импортировать только cookies.',
+                         'Enable import for the site (or for all sites) and Chrome profile in Browser → Import cookies only.')
+        host = (urlparse(expected_url).hostname or '').lower()
+        domain = re.compile(r'[a-z0-9]+(?:[a-z0-9.-]*[a-z0-9])?')
+        # The chat's own policy wins; the app-wide policy in the browser root applies to every chat.
+        roots = [self.root] + ([self.installation_root] if self.installation_root != self.root else [])
+        policies = []
+        for root in roots:
+            policy_file = root / 'chrome-session-import.json'
+            if not policy_file.exists():
+                continue
+            require(policy_file.is_file() and not policy_file.is_symlink() and policy_file.stat().st_size <= 4096, unavailable)
+            try:
+                site = json.loads(policy_file.read_text())['site']
+                require(isinstance(site, str) and (site == '*' or (domain.fullmatch(site) and '.' in site and '..' not in site)), unavailable)
+            except (ValueError, KeyError, TypeError):
+                raise Rejected(unavailable)
+            policies.append(site)
+        require(policies, unavailable)
+        site = None
+        for allowed in policies:
+            if allowed != '*' and (host == allowed or host.endswith('.' + allowed)):
+                site = allowed
+                break
+            if allowed == '*':
+                # Any site: the native helper imports only cookies Chrome would send to this exact host.
+                require(domain.fullmatch(host) and '.' in host and '..' not in host, tr(
+                    'Импорт возможен только для сайта с доменным именем.', 'Import requires a site with a domain name.'))
+                site = host
+                break
+        require(site is not None, tr(
             'Этот сайт не разрешён для автоматического импорта.', 'Automatic import is not enabled for this site.'))
         require((token, site) not in self.imported_sites, tr(
             'Cookies уже импортированы в этой сессии. Проверь вход; автоматического повтора не будет.',
@@ -471,7 +489,7 @@ def catalog():
     action = {**token, 'actionID': string, 'expectedURL': string}
     definitions = [
         ('browser_open', 'Открыть собственную вкладку; сохрани session. Другие чаты могут держать свои вкладки: операции выполняются по очереди. После закрытия Chrome начни новую сессию без повторения действий.', 'Open your own tab; retain its session token. Other chats can keep their tabs: operations run serially. After Chrome exits, start a new session without replaying actions.', {'url': string}, ['url'], False),
-        ('browser_import_session', 'При отсутствии авторизации импортировать cookies текущего сайта из разрешённого профиля Chrome. Настрой сайт один раз в меню Браузер → Импортировать только cookies. Обычный Chrome должен быть закрыт; возможен запрос Связки ключей. Затем обнови страницу отдельным действием и проверь вход. Не используй для сетевых ошибок, CAPTCHA или обхода блокировок. Не повторяй неопределённый импорт.', 'When sign-in is missing, import current-site cookies from the enabled Chrome profile. Configure the site once in Browser → Import cookies only. Regular Chrome must be closed; Keychain may prompt. Then reload with a separate action and verify sign-in. Do not use for network errors, CAPTCHA or bypassing blocks. Never replay an uncertain import.', {**token, 'expectedURL': string}, ['session', 'expectedURL'], False),
+        ('browser_import_session', 'При отсутствии авторизации импортировать cookies текущего сайта из разрешённого профиля Chrome. Разреши сайт или все сайты один раз в меню Браузер → Импортировать только cookies. Обычный Chrome можно не закрывать; возможен запрос Связки ключей. Затем обнови страницу отдельным действием и проверь вход. Не используй для сетевых ошибок, CAPTCHA или обхода блокировок. Не повторяй неопределённый импорт.', 'When sign-in is missing, import current-site cookies from the enabled Chrome profile. Enable the site or all sites once in Browser → Import cookies only. Regular Chrome can stay open; Keychain may prompt. Then reload with a separate action and verify sign-in. Do not use for network errors, CAPTCHA or bypassing blocks. Never replay an uncertain import.', {**token, 'expectedURL': string}, ['session', 'expectedURL'], False),
         ('browser_cards', 'Прочитать карточки, включая date/excerpt. expectedCards — только для проверенного статического списка; иначе обход с прокруткой. complete относится к одной странице.', 'Read compact cards including date/excerpt. Set expectedCards only for an audited static list; otherwise scroll normally. complete describes one page.', {**token, 'selectors': config, 'timeout': timeout, 'expectedCards': {'type': 'integer', 'minimum': 1, 'maximum': 500}}, ['session', 'selectors'], True),
         ('browser_next', 'Передай либо nextToken для обычной ссылки Далее без снимка, либо наблюдаемый uid для клика. Проверяет смену ID; не повторяет действие.', 'Supply either nextToken for an ordinary Next link without a snapshot, or an observed uid to click. Verifies changed IDs; never replays an action.', {**action, 'uid': string, 'nextToken': string, 'selectors': config, 'timeout': timeout}, [*action, 'selectors'], False),
         ('browser_action', 'Одно действие Chrome DevTools. Результат требует проверки через browser_verify; actionID нельзя повторять.', 'One native Chrome DevTools action. Verify the result with browser_verify; never reuse an actionID.', {**action, 'name': {'type': 'string', 'enum': ['click', 'fill', 'fill_form', 'press_key', 'type_text', 'upload_file', 'navigate_page']}, 'arguments': {'type': 'object'}}, [*action, 'name', 'arguments'], False),
