@@ -314,7 +314,7 @@ struct DeskView: View {
             .background(model.projectID == project.id && model.chatID == nil && !model.showingJobs && !model.showingArchive ? DeskPalette.selection : Color.clear, in: RoundedRectangle(cornerRadius: 8))
 
             SidebarDisclosure(isExpanded: isExpanded, animation: sidebarAnimation) {
-                VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 4) {
                     let matching = model.state.orderedChats(projectID: project.id, archived: false).filter {
                         search.isEmpty || project.name.localizedCaseInsensitiveContains(search) || project.path.localizedCaseInsensitiveContains(search) || $0.title.localizedCaseInsensitiveContains(search)
                     }
