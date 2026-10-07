@@ -1423,7 +1423,7 @@ private struct ChatRunState {
     func refreshClaudeAccount() async {
         do { claudeAuthenticated = try await claudeConnection.account().authenticated }
         catch { claudeAuthenticated = false; self.error = error.localizedDescription }
-        if claudeAuthenticated { startSummaryQueue() } else { clearClaudeLimits() }
+        if claudeAuthenticated { startSummaryQueue(); await refreshClaudeLimits() } else { clearClaudeLimits() }
     }
     func loginClaude() async {
         if !claudeConnected { await connectClaude() }

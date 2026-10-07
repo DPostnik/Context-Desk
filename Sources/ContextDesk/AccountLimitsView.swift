@@ -6,6 +6,7 @@ struct AccountLimitsView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var agent: AgentConnectionID?
+    @State private var listHeight: CGFloat = 0
 
     private var selected: AgentConnectionID { agent ?? (model.currentAgent == .appClaude ? .appClaude : .originalCodex) }
     private var claude: Bool { selected == .appClaude }
@@ -56,8 +57,14 @@ struct AccountLimitsView: View {
                                     ForEach(bucket.windows) { window in windowRow(window) }
                                 }.padding(16).background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 14))
                             }
-                        }
-                    }.frame(maxHeight: 340)
+                        }.background(GeometryReader { proxy in
+                            Color.clear.onAppear { listHeight = proxy.size.height }
+                                .onChange(of: proxy.size.height) { _, height in listHeight = height }
+                        })
+                    }
+                    // A rigid height: data often arrives after the popover is sized, and a flexible
+                    // scroll view is then squeezed to nothing instead of growing the popover.
+                    .frame(height: min(listHeight, 340))
                     Text(L10n.text("Проверено: \(localDate(snapshot.fetchedAt))", "Checked: \(localDate(snapshot.fetchedAt))"))
                         .font(.caption).foregroundStyle(.secondary)
                 } else if refreshing {
