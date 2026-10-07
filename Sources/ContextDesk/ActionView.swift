@@ -12,11 +12,11 @@ struct ActionView: View {
             Label(action.title, systemImage: "exclamationmark.bubble.fill").font(.headline).foregroundStyle(.blue)
             switch action.interaction.kind {
             case .questions(let fields):
-                questionFields(fields)
+                questionFields(fields, onSubmit: { submitAnswers(fields) })
                 answerButton(fields)
             case .form(let message, let fields):
                 Text(message).textSelection(.enabled)
-                questionFields(fields)
+                questionFields(fields, onSubmit: { submitAnswers(fields) })
                 answerButton(fields)
                 declineButton
             case .link(let message, let url):
@@ -49,27 +49,36 @@ struct ActionView: View {
         Text(L10n.text("Этот запрос нельзя подтвердить в приложении. Его можно отклонить и продолжить разговор.", "This request cannot be approved in the app. You can decline it and continue the conversation.")).font(.caption)
     }
     private var declineButton: some View { Button(L10n.text("Отклонить", "Decline")) { submit(.deny) } }
-    private func questionFields(_ fields: [AgentInteraction.Field]) -> some View {
+    private func questionFields(_ fields: [AgentInteraction.Field], onSubmit: @escaping () -> Void) -> some View {
         ForEach(fields) { field in
             Text(field.text).textSelection(.enabled)
             ForEach(field.options, id: \.self) { option in
                 Button(option) { answers[field.id] = option }
             }
-            if field.secret { SecureField(L10n.text("Твой ответ", "Your answer"), text: binding(field.id)) }
-            else { TextField(L10n.text("Твой ответ", "Your answer"), text: binding(field.id)) }
+            // Return submits the answers like the button instead of leaving the card silently open.
+            Group {
+                if field.secret { SecureField(L10n.text("Твой ответ", "Your answer"), text: binding(field.id)) }
+                else { TextField(L10n.text("Твой ответ", "Your answer"), text: binding(field.id)) }
+            }.onSubmit(onSubmit)
         }
     }
     private func answerButton(_ fields: [AgentInteraction.Field]) -> some View {
-        Button(L10n.text("Ответить", "Submit answer")) {
-            guard fields.allSatisfy({ !$0.required || !(answers[$0.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
-                validation = L10n.text("Заполни обязательные поля", "Fill in the required fields"); return
-            }
-            submit(.answers(answers))
-        }.buttonStyle(PointerButtonStyle(base: .borderedProminent))
+        Button(L10n.text("Ответить", "Submit answer")) { submitAnswers(fields) }
+            .buttonStyle(PointerButtonStyle(base: .borderedProminent))
+    }
+    private func submitAnswers(_ fields: [AgentInteraction.Field]) {
+        guard !submitting else { return }
+        guard fields.allSatisfy({ !$0.required || !(answers[$0.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
+            validation = L10n.text("Заполни обязательные поля", "Fill in the required fields"); return
+        }
+        submit(.answers(answers))
     }
     private func binding(_ id: String) -> Binding<String> { Binding(get: { answers[id] ?? "" }, set: { answers[id] = $0 }) }
     private func submit(_ value: AgentInteractionResponse) {
-        submitting = true
-        Task { await model.answer(action, result: value); submitting = false }
+        submitting = true; validation = nil
+        Task {
+            if let failure = await model.answer(action, result: value) { validation = failure }
+            submitting = false
+        }
     }
 }

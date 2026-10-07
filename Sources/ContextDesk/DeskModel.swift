@@ -1221,14 +1221,23 @@ private struct ChatRunState {
         guard let chat = state.chats.first(where: { $0.id == threadID }) else { return }
         await openChat(chat)
     }
-    func answer(_ action: PendingAction, result: AgentInteractionResponse) async {
-        guard pending.contains(where: { $0.id == action.id }), chatIsAvailable(action.threadID), chatConnected(action.threadID) else { return }
+    /// Returns a failure shown on the card itself; the answer is never retried automatically.
+    @discardableResult
+    func answer(_ action: PendingAction, result: AgentInteractionResponse) async -> String? {
+        guard pending.contains(where: { $0.id == action.id }) else { return nil }
+        guard chatIsAvailable(action.threadID), chatConnected(action.threadID) else {
+            return L10n.text("Чат сейчас не подключён, ответ не отправлен.", "The chat is not connected; the answer was not sent.")
+        }
         do {
             try await clientForChat(action.threadID).answer(action.interaction.id, session: action.interaction.session, response: result)
             pending.removeAll { $0.id == action.id }
             removeActionNotices([action])
             NSApplication.shared.dockTile.badgeLabel = pending.isEmpty ? nil : String(pending.count)
-        } catch { self.error = error.localizedDescription }
+            return nil
+        } catch {
+            self.error = error.localizedDescription
+            return L10n.text("Ответ не отправлен: ", "The answer was not sent: ") + error.localizedDescription
+        }
     }
     func generateChatTitle(_ id: String, firstMessage: String, model: String, route: RequestRoute) {
         let log = AppLog.chatTitle
