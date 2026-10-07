@@ -3,7 +3,42 @@ import ContextCore
 
 extension DeskModel {
     func supportsSummaries(_ id: String) -> Bool {
-        state.chats.first { $0.id == id }?.nativeSession?.connection == .originalCodex
+        [.originalCodex, .appClaude].contains(state.chats.first { $0.id == id }?.nativeSession?.connection)
+    }
+
+    /// Generation for a chat runs on its own agent connection, never on another agent's account.
+    func canGenerateSummary(_ id: String) -> Bool {
+        supportsSummaries(id) && chatConnected(id) && chatAuthenticated(id)
+    }
+
+    func generationRunner(for id: String) -> AgentGenerationRunner {
+        state.chats.first { $0.id == id }?.nativeSession?.connection == .appClaude ? claudeSummaryRunner : summaryRunner
+    }
+
+    func generationEnvironment(for id: String, workspace: String, recipe: String? = nil) -> AgentGenerationEnvironment {
+        let claude = state.chats.first { $0.id == id }?.nativeSession?.connection == .appClaude
+        return .init(executable: claude ? nil : summaryExecutable, home: claude ? claudeHome : summaryHome,
+                     workspace: summarySkillsDirectory.appendingPathComponent(workspace),
+                     recipeDirectory: recipe.map { summarySkillsDirectory.appendingPathComponent($0) })
+    }
+
+    /// The chat's own model; Claude falls back to its app default, never to the Codex model.
+    func generationModel(for chat: Chat) -> String {
+        if chat.nativeSession?.connection == .appClaude { return ClaudeModel.resolved(chat.model.isEmpty ? state.claudeModel : chat.model) }
+        return chat.model.isEmpty ? state.model : chat.model
+    }
+
+    /// Stops in-flight summary work owned by one agent after its account or connection changed.
+    func interruptSummaries(_ agent: AgentConnectionID, issue: String) async {
+        let owned = { (id: String) in self.state.chats.first { $0.id == id }?.nativeSession?.connection == agent }
+        if let active = summaryActiveThread, owned(active) { summaryTask?.cancel() }
+        for id in archiveSummaries.keys where owned(id) {
+            guard var record = archiveSummaries[id], [.queued, .reading, .generating].contains(record.status) else { continue }
+            record.status = record.status == .generating ? .uncertain : .stale
+            record.issue = issue
+            archiveSummaries[id] = record
+            do { try await store.saveArchiveSummary(record) } catch { self.error = error.localizedDescription }
+        }
     }
 
     var summarySkillsDirectory: URL { summaryHome.deletingLastPathComponent().appendingPathComponent("workflows") }
@@ -55,13 +90,13 @@ extension DeskModel {
     }
 
     func startSummaryQueue() {
-        guard summaryTask == nil, connected, authenticated,
-              archiveSummaries.values.contains(where: { $0.status == .queued && isArchived($0.threadID) && supportsSummaries($0.threadID) }) else { return }
+        guard summaryTask == nil,
+              archiveSummaries.values.contains(where: { $0.status == .queued && isArchived($0.threadID) && canGenerateSummary($0.threadID) }) else { return }
         summaryTask = Task { [weak self] in
             guard let self else { return }
             defer { self.summaryActiveThread = nil; self.summaryTask = nil }
-            while !Task.isCancelled && self.connected && self.authenticated {
-                guard let next = self.archiveSummaries.values.filter({ $0.status == .queued && self.isArchived($0.threadID) && self.supportsSummaries($0.threadID) })
+            while !Task.isCancelled {
+                guard let next = self.archiveSummaries.values.filter({ $0.status == .queued && self.isArchived($0.threadID) && self.canGenerateSummary($0.threadID) })
                     .sorted(by: { $0.updatedAt < $1.updatedAt }).first else { return }
                 self.summaryActiveThread = next.threadID
                 await self.buildArchiveSummary(next)
@@ -107,7 +142,7 @@ extension DeskModel {
             record.sourceReferences = source.references; record.omittedDetails = source.omittedDetails
             record.sourceTurnDates = source.turnDates
             record.partCount = source.chunks.count
-            record.model = chat.model.isEmpty ? state.model : chat.model
+            record.model = generationModel(for: chat)
             record.route = chat.route ?? .direct
             guard routeIsAvailable(record.route), !record.model.isEmpty else {
                 throw ClientFailure(L10n.text("Модель или маршрут чата недоступны для подготовки итога", "The chat model or route is unavailable for summarization"))
@@ -116,10 +151,9 @@ extension DeskModel {
             for chunk in source.chunks.dropFirst(matching) {
                 try Task.checkCancellation()
                 let id = record.threadID, attempt = record.attempt
-                let part = try await summaryRunner.summarize(source: sessionForChat(record.threadID), chunk: chunk, model: record.model,
-                    route: record.route, environment: .init(executable: summaryExecutable, home: summaryHome,
-                        workspace: summarySkillsDirectory.appendingPathComponent(".summary-workspace"),
-                        recipeDirectory: summarySkillsDirectory.appendingPathComponent("archive-summary")), language: L10n.language) { [weak self] in
+                let part = try await generationRunner(for: id).summarize(source: sessionForChat(record.threadID), chunk: chunk, model: record.model,
+                    route: record.route, environment: generationEnvironment(for: id, workspace: ".summary-workspace", recipe: "archive-summary"),
+                    language: L10n.language) { [weak self] in
                         guard let self else { throw CancellationError() }
                         try await self.markSummaryGenerating(id: id, attempt: attempt)
                     }
@@ -150,6 +184,6 @@ extension DeskModel {
     }
 
     private func readSummarySource(_ id: String) async throws -> SummarySource {
-        try await connection.summarySource(sessionForChat(id))
+        try await clientForChat(id).summarySource(sessionForChat(id))
     }
 }

@@ -7,6 +7,7 @@ struct ChatRow: NSViewRepresentable {
     let chat: Chat
     let enabled: Bool
     let activate: () -> Void
+    var select: (ChatRowSelection) -> Void = { _ in }
     let move: (String) -> Bool
     let targeted: (Bool) -> Void
     let actions: [ChatRowAction]
@@ -22,6 +23,7 @@ struct ChatRow: NSViewRepresentable {
         view.toolTip = chat.title
         view.isInteractionEnabled = enabled
         view.activate = activate
+        view.select = select
         view.move = move
         view.targeted = targeted
         view.actions = actions
@@ -31,6 +33,8 @@ struct ChatRow: NSViewRepresentable {
         view.setAccessibilityEnabled(enabled)
     }
 }
+
+enum ChatRowSelection { case toggle, extend }
 
 struct ChatRowAction {
     let title: String
@@ -44,6 +48,7 @@ final class ChatRowView: SidebarRowView {
     var projectID = UUID()
     var archived = false
     var move: (String) -> Bool = { _ in false }
+    var select: (ChatRowSelection) -> Void = { _ in }
     var actions: [ChatRowAction] = []
     override var dragType: NSPasteboard.PasteboardType { Self.pasteboardType }
     override var dragID: String { chatID }
@@ -51,6 +56,11 @@ final class ChatRowView: SidebarRowView {
     override func performMove(from source: SidebarRowView) -> Bool {
         guard let source = source as? ChatRowView else { return false }
         return move(source.chatID)
+    }
+    override func click(modifiers: NSEvent.ModifierFlags) {
+        if modifiers.contains(.command) { select(.toggle) }
+        else if modifiers.contains(.shift) { select(.extend) }
+        else { activate() }
     }
     override func menu(for event: NSEvent) -> NSMenu? {
         guard isInteractionEnabled else { return nil }

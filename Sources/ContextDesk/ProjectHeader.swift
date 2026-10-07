@@ -100,8 +100,9 @@ class SidebarRowView: NSView, NSDraggingSource {
         defer { pressedEvent = nil; startedDrag = false }
         guard isInteractionEnabled, pressedEvent != nil, !startedDrag,
               bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
-        activate()
+        click(modifiers: event.modifierFlags)
     }
+    func click(modifiers: NSEvent.ModifierFlags) { activate() }
     func startDrag(with event: NSEvent) {
         let payload = NSPasteboardItem()
         payload.setString(dragID, forType: dragType)

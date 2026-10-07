@@ -40,7 +40,7 @@ struct ArchiveView: View {
                 if archivedChats.contains(where: { model.archiveSummaries[$0.id] == nil }) {
                     Button(L10n.text("Подготовить итоги архивных чатов", "Summarize archived chats")) {
                         Task { await model.queueMissingArchiveSummaries() }
-                    }.buttonStyle(DeskButtonStyle()).disabled(!model.connected || !model.authenticated)
+                    }.buttonStyle(DeskButtonStyle()).disabled(!archivedChats.contains { model.archiveSummaries[$0.id] == nil && model.canGenerateSummary($0.id) })
                         .help(L10n.text("Создать краткие итоги для архива. Использует модель и лимиты твоего аккаунта.", "Create compact archive summaries. Uses your model and account allowance."))
                         .padding(.bottom, 10)
                 }
@@ -72,7 +72,7 @@ struct ArchiveView: View {
                                             if [.failed, .uncertain, .stale].contains(record.status) {
                                                 Button(L10n.text("Создать итог заново", "Generate summary again")) {
                                                     Task { await model.retryArchiveSummary(chat.id) }
-                                                }.buttonStyle(DeskButtonStyle()).disabled(!model.connected || !model.authenticated || model.isChangingChat(chat.id))
+                                                }.buttonStyle(DeskButtonStyle()).disabled(!model.canGenerateSummary(chat.id) || model.isChangingChat(chat.id))
                                                 if record.status == .uncertain {
                                                     Text(L10n.text("Прошлый запрос мог выполниться. Новый использует лимиты повторно.", "The previous request may have completed. A new one uses allowance again."))
                                                         .font(.caption2).foregroundStyle(.secondary).frame(maxWidth: 220)

@@ -17,6 +17,8 @@ public struct AgentEvent: Sendable {
         case completed(AgentTurnCompletion)
         case item(TranscriptItem)
         case delta(turn: String?, item: String, text: String)
+        /// Transient one-line activity for a running turn, such as thinking or a tool name. Nil clears it.
+        case status(turn: String?, text: String?)
     }
 }
 

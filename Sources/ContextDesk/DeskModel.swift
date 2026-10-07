@@ -31,6 +31,8 @@ private struct ChatRunState {
     var turnID: String?
     var queuePaused = true
     var priorityMessageID: String?
+    /// Live activity label for the running turn; never persisted.
+    var status: String?
 }
 
 @MainActor final class DeskModel: ObservableObject {
@@ -70,12 +72,14 @@ private struct ChatRunState {
     @Published var summaryActiveThread: String?
     var summaryTask: Task<Void, Never>?
     let summaryRunner: AgentGenerationRunner
+    let claudeSummaryRunner: AgentGenerationRunner
     var titleTasks: [String: Task<Void, Never>] = [:]
     private var titleRunners: [String: AgentGenerationRunner] = [:]
     private var manuallyNamedChatIDs: Set<String> = []
     let summaryResources: URL?
     let summaryExecutable: URL?
     let summaryHome: URL
+    let claudeHome: URL
     let transcript = TranscriptPresentation()
     var items: [TranscriptItem] {
         get { transcript.items }
@@ -133,6 +137,7 @@ private struct ChatRunState {
     private var currentRunKey: String { chatID ?? "new:" + selectionGeneration.uuidString }
     var sending: Bool { runs[currentRunKey]?.sending == true }
     var busy: Bool { runs[currentRunKey]?.running == true }
+    var workingStatus: String? { busy ? runs[currentRunKey]?.status : nil }
     var queuePaused: Bool { runs[currentRunKey]?.queuePaused ?? true }
     var priorityMessageID: String? { runs[currentRunKey]?.priorityMessageID }
     var anyBusy: Bool { preparingHandoff || creatingHandoff || jobLedger.runs.contains { $0.status.active } || summaryTask != nil || !deletingChatIDs.isEmpty || !archivingChatIDs.isEmpty || runs.values.contains { $0.running || $0.sending } }
@@ -166,12 +171,14 @@ private struct ChatRunState {
     init(connection: any AgentIntegration = AgentIntegrationFactory.codex(), claudeIntegration: any AgentIntegration = AgentIntegrationFactory.claude(), store: AppStore = AppStore(file: Locations.root.appendingPathComponent("metadata.sqlite")),
          pluginDirectory: URL = PluginCatalog.defaultDirectory,
          summaryResources: URL? = Bundle.main.resourceURL?.appendingPathComponent("Skills"),
-         summaryExecutable: URL? = nil, summaryHome: URL = Locations.codexHome,
+         summaryExecutable: URL? = nil, summaryHome: URL = Locations.codexHome, claudeHome: URL = Locations.claudeHome,
          jobStore: JobStore = JobStore(file: Locations.root.appendingPathComponent("scheduled-jobs.json"))) {
         self.jobStore = jobStore
         self.connection = AgentClient(integration: connection)
         self.claudeConnection = AgentClient(integration: claudeIntegration)
         self.summaryRunner = AgentGenerationRunner(integration: connection)
+        self.claudeSummaryRunner = AgentGenerationRunner(integration: claudeIntegration)
+        self.claudeHome = claudeHome
         self.store = store
         self.pluginDirectory = pluginDirectory
         self.summaryResources = summaryResources; self.summaryExecutable = summaryExecutable; self.summaryHome = summaryHome
@@ -595,13 +602,13 @@ private struct ChatRunState {
                   runs[chat.id]?.sending != true else {
                 throw ClientFailure(L10n.text("Дождись завершения текущего запроса перед передачей контекста.", "Wait for the current request to finish before handing off context."))
             }
-            guard source.connection == .originalCodex else {
-                throw ClientFailure(L10n.text("Автоматическая подготовка контекста пока доступна только для чатов Codex.", "Automatic context preparation is currently available only for Codex chats."))
+            guard chatConnected(chat.id), chatAuthenticated(chat.id) else {
+                throw ClientFailure(L10n.text("Агент этого чата не подключён. Подключись и войди, затем повтори.", "This chat's agent is not connected. Connect and sign in, then try again."))
             }
-            let client = connection
+            let client = try clientForChat(chat.id)
             let descriptor = try await client.descriptor()
             guard descriptor.capabilities.contains(.isolatedGeneration) else {
-                throw ClientFailure(L10n.text("Этот агент пока не поддерживает автоматическую подготовку контекста. Сейчас она доступна для чатов Codex.", "This agent does not yet support automatic context preparation. It is currently available for Codex chats."))
+                throw ClientFailure(L10n.text("Этот агент не поддерживает автоматическую подготовку контекста.", "This agent does not support automatic context preparation."))
             }
             let language = L10n.language
             let turns = try await client.history(source)
@@ -617,9 +624,8 @@ private struct ChatRunState {
                 handoffProgress = L10n.text("Готовлю контекст: часть \(index + 1) из \(chunks.count)…", "Preparing context: part \(index + 1) of \(chunks.count)…", language: language)
                 summary = try await runner.handoff(source: source,
                     input: HandoffSummary.input(chunk: chunk, previous: summary, completeness: snapshot.completeness),
-                    model: chat.model.isEmpty ? state.model : chat.model, route: chat.route ?? .direct,
-                    environment: .init(executable: summaryExecutable, home: summaryHome,
-                        workspace: summarySkillsDirectory.appendingPathComponent(".handoff-workspace")), language: language)
+                    model: generationModel(for: chat), route: chat.route ?? .direct,
+                    environment: generationEnvironment(for: chat.id, workspace: ".handoff-workspace"), language: language)
             }
             try Task.checkCancellation()
             guard !handoffCancelled else { throw CancellationError() }
@@ -710,8 +716,25 @@ private struct ChatRunState {
         !isChangingChat(id) && summaryActiveThread != id && !isBusy(threadID: id) &&
         runs[id]?.sending != true && !pending.contains(where: { $0.threadID == id })
     }
-    func setChatArchived(_ id: String, archived: Bool) async {
-        guard canDeleteChat(id), isArchived(id) != archived else { return }
+    /// Archives one chat at a time; failures keep the remaining chats and are reported once.
+    func archiveChats(_ ids: [String]) async {
+        var failed = 0
+        var firstError: String?
+        for id in ids where !isArchived(id) {
+            error = nil
+            if !(await setChatArchived(id, archived: true, revealArchive: false)) {
+                failed += 1
+                if firstError == nil { firstError = error }
+            }
+        }
+        if selectedChatIsArchived { newChat() }
+        if failed > 0 {
+            error = L10n.text("Не удалось заархивировать чатов: \(failed) из \(ids.count).", "Could not archive \(failed) of \(ids.count) chats.") + (firstError.map { " " + $0 } ?? "")
+        }
+    }
+    @discardableResult
+    func setChatArchived(_ id: String, archived: Bool, revealArchive: Bool = true) async -> Bool {
+        guard canDeleteChat(id), isArchived(id) != archived else { return false }
         archivingChatIDs.insert(id)
         runs[id, default: ChatRunState()].queuePaused = true
         defer { archivingChatIDs.remove(id) }
@@ -719,13 +742,13 @@ private struct ChatRunState {
             try await clientForChat(id).setArchived(archived, session: sessionForChat(id))
         } catch {
             self.error = (archived ? L10n.text("Не удалось подтвердить архивирование: ", "Could not confirm archiving: ") : L10n.text("Не удалось подтвердить восстановление: ", "Could not confirm restoring: ")) + error.localizedDescription
-            return
+            return false
         }
-        guard let index = state.chats.firstIndex(where: { $0.id == id }) else { return }
+        guard let index = state.chats.firstIndex(where: { $0.id == id }) else { return false }
         state.chats[index].archived = archived
         if chatID == id {
-            if archived { openArchive() }
-            else { archiveViewingChat = false }
+            if !archived { archiveViewingChat = false }
+            else if revealArchive { openArchive() }
         }
         state.chats[index].sidebarOrder = nil
         loadedThreads.remove(id)
@@ -742,6 +765,7 @@ private struct ChatRunState {
             startSummaryQueue()
         }
         catch { self.error = L10n.text("Статус чата изменён у агента, но не удалось сохранить его в приложении: ", "The chat status changed in the agent, but could not be saved in the app: ") + error.localizedDescription }
+        return true
     }
     func deleteChat(_ id: String) async {
         guard canDeleteChat(id) else { return }
@@ -1119,15 +1143,16 @@ private struct ChatRunState {
     func generateChatTitle(_ id: String, firstMessage: String, model: String, route: RequestRoute) {
         guard supportsSummaries(id), titleTasks[id] == nil, !manuallyNamedChatIDs.contains(id),
               state.chats.contains(where: { $0.id == id }) else { return }
-        let runner = AgentGenerationRunner(integration: connection.integration)
+        guard let client = try? clientForChat(id) else { return }
+        let runner = AgentGenerationRunner(integration: client.integration)
+        let environment = generationEnvironment(for: id, workspace: ".title-workspace")
         titleRunners[id] = runner
         titleTasks[id] = Task { [weak self] in
             guard let self else { return }
             defer { self.titleTasks[id] = nil; self.titleRunners[id] = nil }
             do {
                 let title = try await runner.title(source: self.sessionForChat(id), firstMessage: firstMessage, model: model, route: route,
-                    environment: .init(executable: self.summaryExecutable, home: self.summaryHome,
-                        workspace: self.summarySkillsDirectory.appendingPathComponent(".title-workspace")))
+                    environment: environment)
                 try Task.checkCancellation()
                 guard let index = self.state.chats.firstIndex(where: { $0.id == id }) else { return }
                 self.state.chats[index].title = title
@@ -1281,6 +1306,7 @@ private struct ChatRunState {
         summaryTask?.cancel()
         await cancelHandoffPreparation()
         await summaryRunner.stop()
+        await claudeSummaryRunner.stop()
         await summaryTask?.value
         await connection.stop()
         await claudeConnection.stop()
@@ -1298,7 +1324,7 @@ private struct ChatRunState {
         claudeConnecting = true; defer { claudeConnecting = false }
         resetAgentState(.appClaude); claudeConnected = false; claudeAuthenticated = false
         do {
-            claudeDescriptor = try await claudeConnection.start(.init(home: Locations.claudeHome))
+            claudeDescriptor = try await claudeConnection.start(.init(home: claudeHome))
             claudeConnected = true
             await refreshClaudeAccount()
             await backfillHistory(state.chats.filter { $0.nativeSession?.connection == .appClaude })
@@ -1307,6 +1333,7 @@ private struct ChatRunState {
     func refreshClaudeAccount() async {
         do { claudeAuthenticated = try await claudeConnection.account().authenticated }
         catch { claudeAuthenticated = false; self.error = error.localizedDescription }
+        if claudeAuthenticated { startSummaryQueue() }
     }
     func loginClaude() async {
         if !claudeConnected { await connectClaude() }
@@ -1338,12 +1365,14 @@ private struct ChatRunState {
         case .descriptor(let descriptor): claudeDescriptor = descriptor
         case .accountChanged(let issue):
             resetAgentState(.appClaude)
+            await interruptSummaries(.appClaude, issue: L10n.text("Аккаунт изменился. Проверь итог перед новым запуском.", "The account changed. Review the summary before starting again."))
             if let issue { error = issue }
             await refreshClaudeAccount()
         case .interactionsReset: clearAgentInteractions(.appClaude)
         case .disconnected:
             flushDeltas()
             resetAgentState(.appClaude); claudeConnected = false; claudeAuthenticated = false
+            await interruptSummaries(.appClaude, issue: L10n.text("Claude отключился. Итог не повторён автоматически.", "Claude disconnected. The summary was not retried automatically."))
         case .limitsChanged: break
         default: await receive(event)
         }
@@ -1368,16 +1397,9 @@ private struct ChatRunState {
         case .interactionsReset:
             clearAgentInteractions(.originalCodex)
         case .accountChanged(let issue):
-            summaryTask?.cancel()
-            for task in titleTasks.values { task.cancel() }
+            for (id, task) in titleTasks where state.chats.first(where: { $0.id == id })?.nativeSession?.connection != .appClaude { task.cancel() }
             models = []; clearLimits(); resetAgentState(.originalCodex)
-            for id in archiveSummaries.keys {
-                guard var record = archiveSummaries[id], [.queued, .reading, .generating].contains(record.status) else { continue }
-                record.status = record.status == .generating ? .uncertain : .stale
-                record.issue = L10n.text("Аккаунт изменился. Проверь итог перед новым запуском.", "The account changed. Review the summary before starting again.")
-                archiveSummaries[id] = record
-                do { try await store.saveArchiveSummary(record) } catch { self.error = error.localizedDescription }
-            }
+            await interruptSummaries(.originalCodex, issue: L10n.text("Аккаунт изменился. Проверь итог перед новым запуском.", "The account changed. Review the summary before starting again."))
             for run in jobLedger.runs where run.engine == .codex && run.status.active {
                 await finishJob(run.id, status: .uncertain, output: L10n.text("Аккаунт изменился; запуск не повторён.", "The account changed; the run was not retried."))
             }
@@ -1435,6 +1457,7 @@ private struct ChatRunState {
                 }
                 runs[thread, default: ChatRunState()].running = true
                 runs[thread, default: ChatRunState()].turnID = turn
+                runs[thread, default: ChatRunState()].status = nil
             }
         case .completed(let completion):
             flushDeltas()
@@ -1474,6 +1497,9 @@ private struct ChatRunState {
             guard thread == chatID else { return }
             let agent = event.session?.connection == .appClaude ? "Claude" : "Codex"
             transcript.enqueue(id: id, text: text, turn: turn) { $0.agentName = agent }
+        case .status(let turn, let text):
+            guard let thread, runs[thread]?.running == true, turn == nil || runs[thread]?.turnID == turn else { return }
+            runs[thread]?.status = text
         }
     }
     private func flushDeltas() { transcript.flush() }

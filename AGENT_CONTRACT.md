@@ -29,7 +29,7 @@ capability switch.
 | Interrupt | Turn interruption; transport loss can remain uncertain | Process termination; does not prove rollback or all side effects stopped |
 | Native history/archive | Read/archive/unarchive supported | Unsupported with no session persistence |
 | Portable local transcript | Not yet implemented | Not yet implemented |
-| Isolated title/summary | Separate ephemeral runner, bounded recipes, tools disabled, schema checked, pinned version | Unsupported; never delegate to Codex |
+| Isolated title/summary | Separate ephemeral runner, bounded recipes, tools disabled, schema checked, pinned version | Scheduled runner: unsupported. Interactive app profile: separate `--print --no-session-persistence` process with no tools, MCP servers, settings, skills or slash commands, `--json-schema` structured output re-validated by the app, pinned version; never delegated to Codex |
 | Models/effort discovery | Supported | No discovery; app-owned catalog over the configured model string. Documented `--effort` levels are forwarded; an unknown level is rejected |
 | Token usage/account limits | Available where exposed by engine | Not normalized by current runner; unsupported, not zero |
 | Browser/workflow registration | App-owned browser launch settings and workflow roots; arbitrary live tool-server registration is explicitly unsupported | Unsupported by current runner |
@@ -38,7 +38,7 @@ capability switch.
 
 Evidence: `Sources/ContextDesk/DeskModel.swift`, `JobScheduling.swift`,
 `Sources/ContextCore/Models.swift`, `Sources/ClaudeAdapter/ClaudeJobRunner.swift`,
-`Sources/CodexAdapter/ArchiveSummaryRunner.swift`, `BrowserConfiguration.swift`, `Sources/ContextCore/ProviderPlugin.swift`
+`Sources/CodexAdapter/ArchiveSummaryRunner.swift`, `Sources/ClaudeAdapter/ClaudeGeneration.swift`, `BrowserConfiguration.swift`, `Sources/ContextCore/ProviderPlugin.swift`
 and `RequestRoute.swift`. Claude runner pins `2.1.292`; both interactive and isolated
 Codex paths now require `0.158.0-alpha.2.1`. The installed CLI reports that version.
 The interactive adapter checks the initialize response before advertising capabilities;

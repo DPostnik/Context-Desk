@@ -14,6 +14,8 @@ struct DeskView: View {
     @State private var expandedProjects: Set<UUID> = []
     @State private var collapsedSearchProjects: Set<UUID> = []
     @State private var visibleChatCounts: [UUID: Int] = [:]
+    @State private var selection = ChatSelection()
+    @State private var archivingSelection = false
     private let chatPageSize = 5
     private var sidebarAnimation: Animation? { reduceMotion ? nil : .spring(response: 0.36, dampingFraction: 0.9) }
     @State private var newTitle = ""
@@ -50,6 +52,9 @@ struct DeskView: View {
         }
         .onChange(of: model.chatID) { _, _ in
             revealSelectedChat()
+        }
+        .onChange(of: activeChatIDs) { _, ids in
+            selection.prune(keeping: ids)
         }
         .popover(isPresented: $showingNotifications) {
             notificationsPanel
@@ -124,6 +129,7 @@ struct DeskView: View {
                         }.buttonStyle(PointerButtonStyle(base: .plain))
                     }.padding(.horizontal, 12).padding(.bottom, 8)
                 }
+                if !selection.isEmpty { selectionBar }
                 Button { showingLimits = true } label: {
                     Label(L10n.text("Usage и лимиты", "Usage and limits"), systemImage: "chart.bar")
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -261,6 +267,11 @@ struct DeskView: View {
                     } label: {
                         Label(L10n.text("Скопировать путь", "Copy path"), systemImage: "doc.on.doc")
                     }
+                    Button {
+                        selection.select(model.state.orderedChats(projectID: project.id, archived: false).map(\.id))
+                    } label: {
+                        Label(L10n.text("Выделить все чаты", "Select all chats"), systemImage: "checkmark.circle")
+                    }.disabled(!model.state.chats.contains { $0.projectID == project.id && !$0.isArchived })
                     Divider()
                     Button(L10n.text("Переместить выше", "Move up")) {
                         adjacentProjectMove(project, offset: -1)?()
@@ -353,6 +364,13 @@ struct DeskView: View {
 
     private func chatActions(_ chat: Chat, reorder: Bool) -> [ChatRowAction] {
         var actions: [ChatRowAction] = []
+        if selection.contains(chat.id) && selection.ids.count > 1 {
+            let count = selection.ids.count
+            return [
+                ChatRowAction(title: L10n.text("Архивировать выбранные (\(count))", "Archive selected (\(count))"), enabled: canArchiveSelection) { archiveSelection() },
+                ChatRowAction(title: L10n.text("Снять выделение", "Deselect all")) { selection.clear() }
+            ]
+        }
         if reorder {
             let siblings = model.state.orderedChats(projectID: chat.projectID, archived: chat.isArchived)
             if let index = siblings.firstIndex(where: { $0.id == chat.id }) {
@@ -393,7 +411,13 @@ struct DeskView: View {
                     .accessibilityHidden(true) // The overlay exposes the row as one accessible button.
                     .overlay {
                         ChatRow(chat: chat, enabled: !model.isChangingChat(chat.id), activate: {
+                            selection.clear()
                             Task { await model.openChat(chat) }
+                        }, select: { gesture in
+                            switch gesture {
+                            case .toggle: selection.toggle(chat.id, current: model.chatID, eligible: activeChatIDs)
+                            case .extend: selection.extend(to: chat.id, in: model.state.orderedChats(projectID: chat.projectID, archived: false).map(\.id), current: model.chatID)
+                            }
                         }, move: { model.moveChat($0, to: chat.id) }, targeted: { targeted in
                             if targeted { dropTargetChatID = chat.id }
                             else if dropTargetChatID == chat.id { dropTargetChatID = nil }
@@ -402,13 +426,58 @@ struct DeskView: View {
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(dropTargetChatID == chat.id ? Color.accentColor : .clear, lineWidth: 2).allowsHitTesting(false))
             }
         }
-        .background(model.chatID == chat.id && !model.showingJobs && !model.showingArchive ? DeskPalette.selection : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+        .background(chatBackground(chat, favorite: favorite), in: RoundedRectangle(cornerRadius: 8))
         .disabled(model.isChangingChat(chat.id))
+    }
+
+    private var activeChatIDs: Set<String> {
+        Set(model.state.chats.lazy.filter { !$0.isArchived }.map(\.id))
+    }
+    private var canArchiveSelection: Bool {
+        !archivingSelection && selection.ids.allSatisfy { model.canDeleteChat($0) }
+    }
+    private func chatBackground(_ chat: Chat, favorite: Bool) -> Color {
+        if !favorite && selection.contains(chat.id) { return Color.accentColor.opacity(0.18) }
+        return model.chatID == chat.id && !model.showingJobs && !model.showingArchive ? DeskPalette.selection : .clear
+    }
+    private func archiveSelection() {
+        // Archive in sidebar order so partial failures are predictable.
+        let ids = model.state.projects.flatMap { model.state.orderedChats(projectID: $0.id, archived: false) }
+            .map(\.id).filter(selection.contains)
+        guard !ids.isEmpty, !archivingSelection else { return }
+        archivingSelection = true
+        Task {
+            await model.archiveChats(ids)
+            archivingSelection = false
+        }
+    }
+    private var selectionBar: some View {
+        let count = selection.ids.count
+        return HStack(spacing: 8) {
+            Text(L10n.text("Выбрано: \(count)", "Selected: \(count)")).font(.callout.weight(.medium))
+            Spacer(minLength: 0)
+            if archivingSelection { ProgressView().controlSize(.small) }
+            Button { archiveSelection() } label: {
+                Label(L10n.text("В архив", "Archive"), systemImage: "archivebox")
+            }.buttonStyle(DeskButtonStyle()).disabled(!canArchiveSelection)
+                .help(canArchiveSelection ? L10n.text("Архивировать выбранные чаты", "Archive the selected chats") : L10n.text("Дождись завершения работы в выбранных чатах", "Wait until the selected chats are idle"))
+            Button { selection.clear() } label: { Image(systemName: "xmark") }
+                .buttonStyle(PointerButtonStyle(base: .plain)).keyboardShortcut(.cancelAction).disabled(archivingSelection)
+                .help(L10n.text("Снять выделение (Esc)", "Deselect all (Esc)"))
+                .accessibilityLabel(L10n.text("Снять выделение", "Deselect all"))
+        }
+        .padding(10).background(DeskPalette.subtle, in: RoundedRectangle(cornerRadius: 10))
+        .padding(.horizontal, 12)
     }
 
     private func chatLabel(_ chat: Chat, favorite: Bool) -> some View {
             HStack(spacing: 8) {
-                Image(systemName: chat.isArchived ? "archivebox" : "bubble.left").foregroundStyle(.secondary)
+                if !favorite && selection.contains(chat.id) {
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.accentColor)
+                        .accessibilityLabel(L10n.text("Выбран", "Selected"))
+                } else {
+                    Image(systemName: chat.isArchived ? "archivebox" : "bubble.left").foregroundStyle(.secondary)
+                }
                 VStack(alignment: .leading, spacing: 3) {
                     Text(chat.title)
                         .lineLimit(2, reservesSpace: true)
@@ -536,7 +605,7 @@ struct ChatView: View {
                 }.padding()
             }
             if model.currentAgent == .appClaude {
-                Text(L10n.text("Claude: стандартный режим — только файлы проекта, без команд и сети. Полный доступ разрешает команды и сеть. Плагины, браузер, автоматические итоги и метрики пока недоступны.", "Claude: standard mode allows project files only, without commands or network. Full access allows commands and network. Plugins, browser, automatic summaries and metrics are not available yet."))
+                Text(L10n.text("Claude: стандартный режим — только файлы проекта, без команд и сети. Полный доступ разрешает команды и сеть. Плагины, браузер и метрики пока недоступны.", "Claude: standard mode allows project files only, without commands or network. Full access allows commands and network. Plugins, browser and metrics are not available yet."))
                     .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 24).padding(.vertical, 6)
             }
             if let notice = model.localHistoryNotice {
@@ -710,7 +779,7 @@ struct ChatHistoryView: View {
         } else {
             let renderedItems = transcript.items
             NativeTranscript(items: renderedItems, conversationID: model.chatID, followOutput: followOutput,
-                             isWorking: model.busy, unreadCompletionID: model.selectedChat?.unreadCompletionID,
+                             isWorking: model.busy, workingStatus: model.workingStatus, unreadCompletionID: model.selectedChat?.unreadCompletionID,
                              unreadResponseItemID: model.chatID.flatMap { model.unreadResponseItems[$0] }) { threadID, completionID in
                 guard transcript.items == renderedItems else { return }
                 model.markResponseRead(threadID: threadID, completionID: completionID)

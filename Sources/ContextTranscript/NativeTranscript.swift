@@ -9,14 +9,15 @@ public struct NativeTranscript: NSViewRepresentable {
     let conversationID: String?
     let followOutput: Bool
     let isWorking: Bool
+    let workingStatus: String?
     let unreadCompletionID: String?
     let unreadResponseItemID: String?
     let onReadToEnd: ((String, String) -> Void)?
-    public init(items: [TranscriptItem], conversationID: String?, followOutput: Bool, isWorking: Bool = false,
+    public init(items: [TranscriptItem], conversationID: String?, followOutput: Bool, isWorking: Bool = false, workingStatus: String? = nil,
                 unreadCompletionID: String? = nil, unreadResponseItemID: String? = nil, onReadToEnd: ((String, String) -> Void)? = nil) {
         self.unreadCompletionID = unreadCompletionID; self.onReadToEnd = onReadToEnd
         self.unreadResponseItemID = unreadResponseItemID
-        self.isWorking = isWorking
+        self.isWorking = isWorking; self.workingStatus = workingStatus
         self.items = items; self.conversationID = conversationID; self.followOutput = followOutput
     }
     public func makeNSView(context: Context) -> TranscriptScrollView { TranscriptScrollView(positions: .session) }
@@ -26,7 +27,7 @@ public struct NativeTranscript: NSViewRepresentable {
     public func updateNSView(_ view: TranscriptScrollView, context: Context) {
         view.onReadToEnd = onReadToEnd
         view.update(items: items, conversationID: conversationID, followOutput: followOutput,
-                    isWorking: isWorking, unreadCompletionID: unreadCompletionID, unreadResponseItemID: unreadResponseItemID)
+                    isWorking: isWorking, workingStatus: workingStatus, unreadCompletionID: unreadCompletionID, unreadResponseItemID: unreadResponseItemID)
     }
 }
 
@@ -97,13 +98,13 @@ public struct NativeTranscript: NSViewRepresentable {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    public func update(items: [TranscriptItem], conversationID: String?, followOutput: Bool, isWorking: Bool = false,
+    public func update(items: [TranscriptItem], conversationID: String?, followOutput: Bool, isWorking: Bool = false, workingStatus: String? = nil,
                        unreadCompletionID: String? = nil, unreadResponseItemID: String? = nil) {
         self.unreadResponseItemID = unreadResponseItemID
         self.unreadCompletionID = unreadCompletionID
         var items = Self.groupActivities(items, isWorking: isWorking)
         if isWorking {
-            items.append(TranscriptItem(id: "local-working", kind: "loading", text: ""))
+            items.append(TranscriptItem(id: "local-working", kind: "loading", text: workingStatus ?? ""))
         }
         if workingIndicator.isHidden == isWorking { workingIndicator.isHidden = !isWorking }
         workingIndicator.isWorking = isWorking

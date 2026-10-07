@@ -111,17 +111,17 @@ import Testing
                                          access: .fullAccess, model: "", effort: nil).contains("--effort"))
 }
 
-@Test func claudeDefaultsAreOpus55AtHighAndRunnableOnThePin() {
+@Test func claudeDefaultsAreOpus55AtMediumAndRunnableOnThePin() {
     #expect(ClaudeModel.defaultID == "claude-opus-5-5")
-    #expect(ClaudeEffort.defaultLevel == .high)
+    #expect(ClaudeEffort.defaultLevel == .medium)
     #expect(ClaudeModel.entry(for: ClaudeModel.defaultID)?.isSupported() == true)
     #expect(ClaudeModel.resolved(nil) == "claude-opus-5-5")
     #expect(ClaudeModel.resolved("") == "claude-opus-5-5")
     #expect(ClaudeModel.resolved("  ") == "claude-opus-5-5")
     #expect(ClaudeModel.resolved("claude-haiku-4-5") == "claude-haiku-4-5")
     #expect(ClaudeModel.resolved(" claude-future-9 ") == "claude-future-9")
-    #expect(ClaudeEffort.resolved(nil) == "high")
-    #expect(ClaudeEffort.resolved("") == "high")
-    #expect(ClaudeEffort.resolved("ultra") == "high")
+    #expect(ClaudeEffort.resolved(nil) == "medium")
+    #expect(ClaudeEffort.resolved("") == "medium")
+    #expect(ClaudeEffort.resolved("ultra") == "medium")
     #expect(ClaudeEffort.resolved("low") == "low")
 }

@@ -46,7 +46,7 @@ public enum ClaudeEffort: String, CaseIterable, Hashable, Sendable {
     }
 
     /// The composer's level when none is chosen.
-    public static let defaultLevel: ClaudeEffort = .high
+    public static let defaultLevel: ClaudeEffort = .medium
 
     /// Composer resolution: an unset, blank or unrecognised value means the default level.
     public static func resolved(_ configured: String?) -> String {

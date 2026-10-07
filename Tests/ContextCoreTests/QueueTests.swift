@@ -367,3 +367,33 @@ private func parallelChatFixture() throws -> (URL, URL) {
     #expect(try JSONDecoder().decode(Chat.self, from: legacy).isArchived == false)
     await connection.stop()
 }
+
+@Test @MainActor func bulkArchiveSkipsBusyChatsAndReportsFailuresOnce() async throws {
+    let (folder, executable) = try parallelChatFixture()
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let connection = CodexConnection()
+    try await connection.start(executable: executable, home: folder)
+    let store = AppStore(file: folder.appendingPathComponent("state.sqlite"))
+    let model = DeskModel(connection: CodexIntegration(client: CodexClient(transport: connection)), store: store, summaryExecutable: executable, summaryHome: folder)
+    let project = Project(path: folder.path)
+    model.state.projects = [project]; model.projectID = project.id
+    model.state.defaultRoute = .direct; model.connected = true; model.authenticated = true
+    model.state.chats = ["a", "b", "c", "failed-archive"].map { Chat(id: $0, projectID: project.id, title: $0, model: "") }
+    model.chatID = "b"; model.draft = "Working"
+    await model.send()
+    model.chatID = "a"
+    await model.archiveChats(["a", "b", "failed-archive", "c"])
+    await model.summaryTask?.value
+    #expect(model.isArchived("a") && model.isArchived("c"))
+    #expect(!model.isArchived("b") && !model.isArchived("failed-archive"))
+    #expect(model.isBusy(threadID: "b"))
+    // The open chat was archived: the workspace stays in the project instead of jumping to the archive.
+    #expect(model.chatID == nil && !model.showingArchive)
+    #expect(model.error?.contains("2") == true)
+    #expect(model.error?.contains("Archive rejected") == true)
+    let saved = try await store.load().chats
+    #expect(saved.filter(\.isArchived).map(\.id).sorted() == ["a", "c"])
+    let requests = try await connection.request("test/requests").array
+    #expect(requests.filter { $0["method"].string == "thread/archive" }.map { $0["params"]["threadId"].string } == ["a", "failed-archive", "c"])
+    await connection.stop()
+}

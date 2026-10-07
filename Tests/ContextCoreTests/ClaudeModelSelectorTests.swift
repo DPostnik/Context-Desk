@@ -23,7 +23,7 @@ import Testing
     #expect(model.currentAgent == .appClaude)
     #expect(ClaudeModel.title(for: model.currentModel) == "Opus 5.5")
     #expect(ClaudeModel.requirementNote(for: model.currentModel) == nil)
-    #expect(model.claudeEffort == "high")
+    #expect(model.claudeEffort == "medium")
     let host = NSHostingView(rootView: DeskView(model: model).environment(\.locale, L10n.locale).preferredColorScheme(.light))
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 760),
                           styleMask: [.titled], backing: .buffered, defer: false)
@@ -80,7 +80,7 @@ import Testing
     let project = model.state.addProject(path: "/tmp/ExampleProject")
     model.state.defaultConnection = .appClaude
     model.selectProject(project)
-    #expect(model.claudeEffort == "high")
+    #expect(model.claudeEffort == "medium")
     #expect(model.effort == "medium")
 
     model.selectClaudeEffort("low")
@@ -92,11 +92,11 @@ import Testing
     #expect(model.claudeEffort == "low")
 
     model.selectClaudeEffort("")
-    #expect(model.claudeEffort == "high")
+    #expect(model.claudeEffort == "medium")
 }
 
 /// The user's real state before this change: a legacy blank model and no effort. Both must
-/// resolve to Opus 5.5 at high, and a new chat must store them explicitly.
+/// resolve to Opus 5.5 at medium, and a new chat must store them explicitly.
 @Test @MainActor func claudeDefaultsApplyToLegacyBlankState() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
