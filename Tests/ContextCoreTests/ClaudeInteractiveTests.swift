@@ -54,7 +54,7 @@ private func interactiveFixture(_ root: URL) throws -> URL {
         elif value['type']=='user':
             record=json.loads((home/'contextdesk-sessions'/(sid+'.json')).read_text())
             assert record['active'] and record['sent']
-            with (home/'submitted').open('a') as f: f.write(json.dumps({'prompt':value['message']['content'],'args':sys.argv})+'\n')
+            with (home/'submitted').open('a') as f: f.write(json.dumps({'prompt':value['message']['content'],'args':sys.argv,'pid':os.getpid()})+'\n')
             prompt=value['message']['content']
             if prompt=='broken': print('invalid-json',flush=True); continue
             if prompt=='unknown': out({'type':'control_request','request_id':'unknown','request':{'subtype':'unexpected_action'}}); continue
@@ -86,10 +86,10 @@ private func waitFor(_ condition: @escaping () async -> Bool) async throws {
     }
     throw ClientFailure("Fixture timed out")
 }
-private func interactiveRequest(context: AgentContext, root: URL, session: AgentSessionReference? = nil, prompt: String = "hello", id: UUID = UUID()) -> AgentExecutionRequest {
+private func interactiveRequest(context: AgentContext, root: URL, session: AgentSessionReference? = nil, prompt: String = "hello", id: UUID = UUID(), model: String = "") -> AgentExecutionRequest {
     .init(id: id, conversation: ConversationID(), session: session, kind: .interactive, prompt: prompt,
           projectPath: root.path, permissions: .workspaceWrite(root: root.path, network: false, approval: .ask),
-          model: .init(context: context, model: ""), route: .direct)
+          model: .init(context: context, model: model), route: .direct)
 }
 
 @Test func claudeInteractivePersistsStreamsResumesAndRejectsReplay() async throws {
@@ -135,6 +135,35 @@ private func interactiveRequest(context: AgentContext, root: URL, session: Agent
     let sent = try String(contentsOf: home.appendingPathComponent("submitted"), encoding: .utf8).split(separator: "\n")
     try #require(sent.count == 2)
     #expect(sent[1].contains("--resume"))
+    await adapter.disconnect()
+}
+
+@Test func claudeInteractiveKeepsProcessWarmAcrossTurnsUntilSettingsChange() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let binary = try interactiveFixture(root), home = root.appendingPathComponent("home")
+    let adapter = ClaudeIntegration(), events = ClaudeEvents()
+    let reader = Task { for await event in adapter.events { await events.append(event) } }
+    defer { reader.cancel() }
+    let descriptor = try await adapter.connect(.init(executable: binary, home: home)).value()
+    let session = try await adapter.prepare(interactiveRequest(context: descriptor.context, root: root)).value()
+    func turn(_ model: String, expected: Int) async throws {
+        _ = try await adapter.submit(interactiveRequest(context: descriptor.context, root: root, session: session, model: model)).value()
+        try await waitFor { await events.completionCount() == expected }
+    }
+    try await turn("", expected: 1)
+    try await turn("", expected: 2)
+    try await turn("claude-other", expected: 3)
+    let sent = try String(contentsOf: home.appendingPathComponent("submitted"), encoding: .utf8).split(separator: "\n")
+        .map { try JSONDecoder().decode(JSONValue.self, from: Data($0.utf8)) }
+    try #require(sent.count == 3)
+    // The second turn is written to the first process; a model change starts a resumed one.
+    #expect(sent[0]["pid"] == sent[1]["pid"])
+    #expect(sent[2]["pid"] != sent[1]["pid"])
+    #expect(sent[2]["args"].array.contains(.string("--resume")))
+    #expect(sent[2]["args"].array.contains(.string("claude-other")))
+    let history = try await adapter.history(session, context: descriptor.context).value()
+    #expect(history.count == 3 && history.allSatisfy { $0.items.map(\.kind) == ["user", "assistant"] })
     await adapter.disconnect()
 }
 

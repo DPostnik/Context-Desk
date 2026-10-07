@@ -18,6 +18,13 @@ public actor ClaudeIntegration: AgentIntegration {
     private var consumed = Set<UUID>()
     private var submitting = Set<String>()
     private var seenRequests: [String: Set<String>] = [:]
+    /// Launch arguments of each live process; a turn reuses a process only with identical settings.
+    private var launches: [String: [String]] = [:]
+    /// Processes kept warm between turns, like the native app's one-process-per-chat model.
+    private var idle: [String: (token: UUID, since: Date)] = [:]
+    private var pendingSaves = Set<String>()
+    static let idleTimeout: Duration = .seconds(600)
+    static let warmLimit = 8
     private struct Session: Codable {
         var version = 1
         let id: String
@@ -68,7 +75,7 @@ public actor ClaudeIntegration: AgentIntegration {
     public func disconnect() async {
         for wire in wires.values { await wire.close() }
         for id in Array(wires.keys) { finish(id, outcome: .uncertain) }
-        wires.removeAll(); readers.removeAll(); interactions.removeAll(); seenRequests.removeAll()
+        wires.removeAll(); readers.removeAll(); interactions.removeAll(); seenRequests.removeAll(); launches.removeAll(); idle.removeAll()
         sessions.removeAll(); messageIDs.removeAll(); interrupted.removeAll(); meters.removeAll()
         home = nil; executable = nil; signedIn = false; accountIdentity = nil
         context = .init(connection: .appClaude, accountRevision: UUID())
@@ -88,7 +95,7 @@ public actor ClaudeIntegration: AgentIntegration {
             if let previous = accountIdentity, previous != identity {
                 for wire in wires.values { await wire.close() }
                 for id in Array(wires.keys) { finish(id, outcome: .uncertain) }
-                wires.removeAll(); interactions.removeAll()
+                wires.removeAll(); interactions.removeAll(); idle.removeAll()
                 context = .init(connection: .appClaude, accountRevision: UUID())
                 sink.yield(.init(session: nil, payload: .accountChanged(error: nil)))
             }
@@ -101,6 +108,9 @@ public actor ClaudeIntegration: AgentIntegration {
         do {
             switch action {
             case .beginSignIn:
+                // Warm processes are idle here; the next turn starts cold and re-checks the account.
+                for wire in wires.values { await wire.close() }
+                wires.removeAll(); idle.removeAll()
                 func quote(_ text: String) -> String { "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'" }
                 let path = home.appendingPathComponent("Sign in to Claude.command")
                 let env = ClaudeProfile.environment(home: home).sorted { $0.key < $1.key }.map { quote($0.key + "=" + $0.value) }.joined(separator: " ")
@@ -155,31 +165,37 @@ public actor ClaudeIntegration: AgentIntegration {
             guard record.active == nil, record.cwd == request.projectPath else { return .rejected(.invalidInput) }
             let expectedAccess: AccessMode = { if case .unrestricted = request.permissions { return .fullAccess }; return .standard }()
             sessions[id]?.access = expectedAccess
-            _ = try await account().value()
-            guard request.model.context == context, signedIn else { return .rejected(.staleContext) }
+            idle[id] = nil
+            let launch = Self.arguments(id: id, resumed: false, access: expectedAccess, model: request.model.model, effort: request.model.effort)
             let wire: ClaudeWire
-            if let current = wires[id] { wire = current }
+            if let current = wires[id], launches[id] == launch { wire = current }
             else {
+                if let stale = wires.removeValue(forKey: id) { await stale.close() }
+                // The account is verified whenever a process starts; a warm process keeps its signed-in identity.
+                _ = try await account().value()
+                guard request.model.context == context, signedIn else { return .rejected(.staleContext) }
                 wire = ClaudeWire()
                 let arguments = Self.arguments(id: id, resumed: record.sent, access: expectedAccess,
                                                model: request.model.model, effort: request.model.effort)
                 try await wire.start(executable: executable, arguments: arguments, environment: ClaudeProfile.environment(home: home), cwd: URL(fileURLWithPath: record.cwd))
-                wires[id] = wire
+                wires[id] = wire; launches[id] = launch
                 seenRequests[id] = []
                 readers[id] = Task { [weak self] in for await value in wire.frames { await self?.receive(value, session: id, wire: wire) } }
                 _ = try await wire.control(.object(["subtype": .string("initialize"), "hooks": .null]))
             }
             guard request.model.context == context, signedIn, wires[id] === wire else { await wire.close(); return .rejected(.staleContext) }
             let turn = request.id.uuidString
-            sessions[id]?.active = turn; sessions[id]?.sent = true; sessions[id]?.current = []
-            try save(id) // Durable uncertain claim before a byte of the user turn is sent.
+            let prompt = Self.decorated(TranscriptItem(id: "user:" + turn, kind: "user", text: request.prompt), turn: turn)
+            sessions[id]?.active = turn; sessions[id]?.sent = true; sessions[id]?.current = [prompt]
+            pendingSaves.remove(id)
+            try save(id) // Durable uncertain claim, including the prompt, before a byte of the user turn is sent.
             delivered = true
             let meter = ClaudeUsageMeter(base: record.tokens, window: record.contextWindow, last: record.lastContext)
             meters[id] = meter
             // Turn-less report: the cumulative baseline for this turn's response tokens.
             sink.yield(.init(session: reference(id), payload: .usage(turn: nil, total: meter.total, snapshot: meter.snapshot())))
             sink.yield(.init(session: reference(id), payload: .started(turn: turn)))
-            emit(TranscriptItem(id: "user:" + turn, kind: "user", text: request.prompt), session: id)
+            sink.yield(.init(session: reference(id), payload: .item(prompt)))
             try await wire.send(.object(["type": .string("user"), "session_id": .string(id), "uuid": .string(UUID().uuidString),
                 "message": .object(["role": .string("user"), "content": .string(request.prompt)])]))
             return .success(.init(context: context, requestID: request.id, session: reference(id), turnID: turn))
@@ -249,7 +265,7 @@ public actor ClaudeIntegration: AgentIntegration {
         if let native = value["session_id"].string, native != id { await wire.close(); return }
         switch value["type"].string {
         case "transport_closed":
-            wires.removeValue(forKey: id); finish(id, outcome: .uncertain)
+            wires.removeValue(forKey: id); idle[id] = nil; finish(id, outcome: .uncertain)
         case "control_request": await permission(value, session: id, wire: wire)
         case "stream_event":
             guard let turn = sessions[id]?.active else { return }
@@ -282,13 +298,16 @@ public actor ClaudeIntegration: AgentIntegration {
             }
         case "result":
             guard value["session_id"].string == id, value["is_error"].bool != nil else { await wire.close(); return }
-            wires.removeValue(forKey: id)
+            guard sessions[id]?.active != nil else { return }
+            let outcome: AgentExecutionOutcome = interrupted.contains(id) ? .cancelled : value["is_error"].bool == true ? .failed : .completed
+            // Only a clean completion keeps the process; errors and interrupts restart from native history.
+            if outcome != .completed { wires.removeValue(forKey: id) }
             if let turn = sessions[id]?.active, var meter = meters[id] {
                 meter.complete(result: value); meters[id] = meter
                 sink.yield(.init(session: reference(id), payload: .usage(turn: turn, total: meter.total, snapshot: meter.snapshot())))
             }
-            finish(id, outcome: interrupted.contains(id) ? .cancelled : value["is_error"].bool == true ? .failed : .completed)
-            await wire.close()
+            finish(id, outcome: outcome)
+            if outcome == .completed { await park(id, wire: wire) } else { await wire.close() }
         case "system":
             if value["subtype"].string == "init", let model = value["model"].string { meters[id]?.model = model }
         default: break // Notifications are data; only recognized control requests can obtain an answer.
@@ -364,20 +383,57 @@ public actor ClaudeIntegration: AgentIntegration {
         meters[id] = meter
         sink.yield(.init(session: reference(id), payload: .usage(turn: turn, total: meter.total, snapshot: meter.snapshot())))
     }
+    private static func decorated(_ value: TranscriptItem, turn: String) -> TranscriptItem {
+        var item = value; item.turnID = turn; item.agentName = "Claude"; return item
+    }
     private func emit(_ value: TranscriptItem, session id: String) {
         guard let turn = sessions[id]?.active else { return }
-        var item = value; item.turnID = turn; item.agentName = "Claude"
+        let item = Self.decorated(value, turn: turn)
         TranscriptItem.merge(item, into: &sessions[id]!.current)
+        scheduleSave(id)
+        sink.yield(.init(session: reference(id), payload: .item(item)))
+    }
+    /// Coalesces in-turn item writes: the record holds the whole chat history, so one
+    /// write per tool call would stall the stream. Turn start and finish still save synchronously.
+    private func scheduleSave(_ id: String) {
+        guard pendingSaves.insert(id).inserted else { return }
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            await self?.flushSave(id)
+        }
+    }
+    private func flushSave(_ id: String) {
+        guard pendingSaves.remove(id) != nil else { return }
         do { try save(id) } catch {
             sink.yield(.init(session: reference(id), payload: .diagnostic(error.localizedDescription)))
             if let wire = wires[id] { Task { await wire.close() } }
         }
-        sink.yield(.init(session: reference(id), payload: .item(item)))
+    }
+    private func park(_ id: String, wire: ClaudeWire) async {
+        guard wires[id] === wire else { return }
+        let token = UUID(); idle[id] = (token, Date())
+        Task { [weak self] in
+            try? await Task.sleep(for: Self.idleTimeout)
+            await self?.expireIdle(id, token: token)
+        }
+        let surplus = idle.count - Self.warmLimit
+        if surplus > 0 {
+            for (oldest, _) in idle.sorted(by: { $0.value.since < $1.value.since }).prefix(surplus) {
+                if let entry = idle[oldest] { await expireIdle(oldest, token: entry.token) }
+            }
+        }
+    }
+    private func expireIdle(_ id: String, token: UUID) async {
+        guard idle[id]?.token == token else { return }
+        idle[id] = nil
+        guard sessions[id]?.active == nil, let wire = wires.removeValue(forKey: id) else { return }
+        await wire.close()
     }
     private func finish(_ id: String, outcome: AgentExecutionOutcome) {
         guard let turn = sessions[id]?.active else { return }
         let history = AgentHistoryTurn(id: turn, items: sessions[id]?.current ?? [], startedAt: nil, completedAt: Date(), duration: nil, isComplete: false)
         sessions[id]?.turns.append(history); sessions[id]?.active = nil; sessions[id]?.current = []
+        pendingSaves.remove(id)
         if var meter = meters.removeValue(forKey: id) {
             meter.abandon() // No-op after a terminal result; otherwise observed calls still count.
             sessions[id]?.tokens = meter.base; sessions[id]?.contextWindow = meter.window; sessions[id]?.lastContext = meter.last
@@ -421,6 +477,7 @@ public actor ClaudeIntegration: AgentIntegration {
     public func setArchived(_ archived: Bool, session: AgentSessionReference, context: AgentContext) -> AgentResult<Void> { checked(session, context: context) ? .success(()) : .rejected(.wrongConnection) }
     public func delete(_ session: AgentSessionReference, context: AgentContext) async -> AgentResult<Void> {
         guard checked(session, context: context), sessions[session.nativeID]?.active == nil else { return .rejected(.wrongConnection) }
+        idle[session.nativeID] = nil
         if let wire = wires.removeValue(forKey: session.nativeID) { await wire.close() }
         // Native execution files stay in the isolated engine home; app deletion only hides the chat.
         return .success(())
