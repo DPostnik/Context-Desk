@@ -1141,25 +1141,44 @@ private struct ChatRunState {
         } catch { self.error = error.localizedDescription }
     }
     func generateChatTitle(_ id: String, firstMessage: String, model: String, route: RequestRoute) {
-        guard supportsSummaries(id), titleTasks[id] == nil, !manuallyNamedChatIDs.contains(id),
-              state.chats.contains(where: { $0.id == id }) else { return }
-        guard let client = try? clientForChat(id) else { return }
+        let log = AppLog.chatTitle
+        let connection = state.chats.first { $0.id == id }?.nativeSession?.connection.agent.rawValue ?? "none"
+        let skip: String? = !state.chats.contains(where: { $0.id == id }) ? "chat not found"
+            : !supportsSummaries(id) ? "connection \(connection) does not support generation"
+            : titleTasks[id] != nil ? "generation already running"
+            : manuallyNamedChatIDs.contains(id) ? "chat was renamed manually" : nil
+        if let skip { log.info("Skipped title for chat \(id, privacy: .public): \(skip, privacy: .public)"); return }
+        let client: AgentClient
+        do { client = try clientForChat(id) } catch {
+            log.error("Skipped title for chat \(id, privacy: .public): no client: \(error.localizedDescription, privacy: .public)")
+            return
+        }
         let runner = AgentGenerationRunner(integration: client.integration)
         let environment = generationEnvironment(for: id, workspace: ".title-workspace")
         titleRunners[id] = runner
+        log.info("Generating title for chat \(id, privacy: .public) on \(connection, privacy: .public), model \(model, privacy: .public)")
         titleTasks[id] = Task { [weak self] in
             guard let self else { return }
             defer { self.titleTasks[id] = nil; self.titleRunners[id] = nil }
+            let started = Date()
             do {
                 let title = try await runner.title(source: self.sessionForChat(id), firstMessage: firstMessage, model: model, route: route,
                     environment: environment)
                 try Task.checkCancellation()
-                guard let index = self.state.chats.firstIndex(where: { $0.id == id }) else { return }
+                guard let index = self.state.chats.firstIndex(where: { $0.id == id }) else {
+                    log.info("Discarded title for chat \(id, privacy: .public): chat was removed")
+                    return
+                }
                 self.state.chats[index].title = title
                 self.persist()
+                log.info("Title ready for chat \(id, privacy: .public) in \(Date().timeIntervalSince(started), format: .fixed(precision: 1), privacy: .public)s")
+            } catch is CancellationError {
+                log.info("Title cancelled for chat \(id, privacy: .public)")
             } catch {
                 // Keep the neutral placeholder. Never retry an uncertain background request
                 // or interrupt the user's main conversation with a naming failure.
+                let rejection = (error as? AgentOperationFailure)?.rejection.map { String(describing: $0) } ?? "none"
+                log.error("Title failed for chat \(id, privacy: .public) after \(Date().timeIntervalSince(started), format: .fixed(precision: 1), privacy: .public)s, rejection \(rejection, privacy: .public): \(error.localizedDescription, privacy: .public)")
             }
         }
     }

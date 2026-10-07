@@ -1,0 +1,9 @@
+import os
+
+/// Unified-log categories for background work that never surfaces errors in the UI.
+/// Read with `log stream --predicate 'subsystem == "local.daniil.contextdesk"' --level info`.
+/// Prompts and generated text are never logged: only IDs, states, timings and adapter diagnostics.
+enum AppLog {
+    static let subsystem = "local.daniil.contextdesk"
+    static let chatTitle = Logger(subsystem: subsystem, category: "chat-title")
+}
