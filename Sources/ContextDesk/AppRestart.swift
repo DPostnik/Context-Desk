@@ -59,8 +59,11 @@ enum RestartFailure: LocalizedError {
         guard !requested, !terminating else { return }
         requested = true
         // Leave the requesting tool time to return before examining the host's busy state.
+        // terminate() must run from the run loop, not from a main-actor job: with .terminateLater it
+        // spins a nested run loop until the delegate's Task replies, and that Task cannot start
+        // while the serial main queue is still inside the job that called terminate().
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.restartIfIdle() }
+            MainActor.assumeIsolated { self?.restartIfIdle() }
         }
     }
 
