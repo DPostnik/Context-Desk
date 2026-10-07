@@ -1,3 +1,4 @@
+@_spi(NativeProtocol) import CodexAdapter
 import Foundation
 import Testing
 import AgentContract
@@ -91,4 +92,76 @@ import ContextCore
     try RestartContinuation(chatIDs: ["a"], requestedAt: now).save(to: url)
     #expect(RestartContinuation.take(from: url, now: now.addingTimeInterval(RestartContinuation.maximumAge + 1)).isEmpty)
     #expect(!FileManager.default.fileExists(atPath: url.path))
+}
+
+@Test @MainActor func restartCollectsSeveralRequestingChatsUntilCancelled() {
+    let project = UUID()
+    let first = Chat(session: .init(connection: .appClaude, nativeID: "claude-1"), projectID: project, title: "First", model: "")
+    let second = Chat(id: "thread-2", projectID: project, title: "Second", model: "")
+    let restart = AppRestartController()
+    restart.record(requester: [RestartContinuation.claudeSessionKey: "claude-1"], chats: [first, second])
+    restart.record(requester: [RestartContinuation.codexThreadKey: "thread-2"], chats: [first, second])
+    restart.record(requester: [RestartContinuation.claudeSessionKey: "claude-1"], chats: [first, second])
+    restart.record(requester: [RestartContinuation.codexThreadKey: "unknown"], chats: [first, second])
+    restart.record(requester: nil, chats: [first, second])
+    #expect(restart.requested)
+    #expect(restart.continuationChatIDs == [first.id, second.id])
+    #expect(restart.continuationTitles == [first.id: "First", second.id: "Second"])
+    restart.cancel()
+    #expect(restart.continuationChatIDs.isEmpty && restart.continuationTitles.isEmpty)
+    restart.terminating = true
+    restart.record(requester: [RestartContinuation.codexThreadKey: "thread-2"], chats: [first, second])
+    #expect(restart.continuationChatIDs.isEmpty)
+}
+
+@Test @MainActor func restartContinuationIsDeliveredToEveryRequestingChat() async throws {
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let executable = folder.appendingPathComponent("engine.py")
+    try Data(#"""
+    #!\#(fixturePython)
+    import sys, json
+    requests = []
+    turns = 0
+    for line in sys.stdin:
+        m = json.loads(line)
+        if 'id' not in m: continue
+        method = m['method']
+        result = {'userAgent': 'codex/0.158.0-alpha.2.1 fixture'}
+        if method == 'turn/start':
+            turns += 1
+            result = {'turn': {'id': 'v' + str(turns)}}
+        if method == 'test/requests': result = requests
+        else: requests.append(m)
+        print(json.dumps({'id': m['id'], 'result': result}), flush=True)
+    """#.utf8).write(to: executable)
+    try installFixtureExecutable(at: executable)
+    let connection = CodexConnection()
+    try await connection.start(executable: executable, home: folder)
+    let model = DeskModel(connection: CodexIntegration(client: CodexClient(transport: connection)),
+                          store: AppStore(file: folder.appendingPathComponent("state.sqlite")), summaryExecutable: executable, summaryHome: folder)
+    model.state.defaultRoute = .direct
+    let project = Project(path: folder.path)
+    model.state.projects = [project]
+    var archived = Chat(id: "c", projectID: project.id, title: "Archived", model: "")
+    archived.archived = true
+    model.state.chats = [Chat(id: "a", projectID: project.id, title: "A", model: ""),
+                         Chat(id: "b", projectID: project.id, title: "B", model: ""), archived]
+    model.connected = true; model.authenticated = true
+    #expect(!model.hasDeliverableQueue)
+    model.continueAfterRestart(["a", "b", "c", "missing"])
+    #expect(Set(model.queuedMessages.map(\.threadID)) == ["a", "b"])
+    #expect(model.queuedMessages.allSatisfy { $0.text == RestartContinuation.message })
+    // Until the queued continuations are sent, a further restart must wait.
+    #expect(model.hasDeliverableQueue)
+    var started: [JSONValue] = []
+    for _ in 0..<200 {
+        started = try await connection.request("test/requests").array.filter { $0["method"].string == "turn/start" }
+        if started.count == 2 && model.queuedMessages.isEmpty { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(started.count == 2)
+    #expect(model.queuedMessages.isEmpty)
+    #expect(!model.hasDeliverableQueue)
 }

@@ -147,6 +147,13 @@ private struct RestartMenu: View {
                ? L10n.text("Перезапуск ожидает завершения задач…", "Restart waiting for tasks…")
                : L10n.text("Перезапустить после завершения задач", "Restart after tasks finish")) { restart.enqueueRestart() }
             .disabled(restart.requested)
+        if !restart.continuationChatIDs.isEmpty {
+            Section(L10n.text("Продолжат после перезапуска", "Will continue after restart")) {
+                ForEach(restart.continuationChatIDs, id: \.self) { id in
+                    Text(restart.continuationTitles[id] ?? id)
+                }
+            }
+        }
         Button(L10n.text("Отменить ожидающий перезапуск", "Cancel pending restart")) { restart.cancel() }
             .disabled(!restart.requested)
     }

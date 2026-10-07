@@ -87,7 +87,9 @@ struct RestartContinuation: Codable, Equatable {
     private var timer: Timer?
     @Published private(set) var requested = false
     var terminating = false
-    private(set) var continuationChatIDs: [String] = []
+    @Published private(set) var continuationChatIDs: [String] = []
+    /// Titles captured at request time, shown in the restart menu.
+    private(set) var continuationTitles: [String: String] = [:]
 
     // Positional arguments keep bundle paths out of shell source. Never kill or reopen a live owner.
     nonisolated static let helperScript = """
@@ -107,9 +109,14 @@ struct RestartContinuation: Codable, Equatable {
     }
 
     @objc private func receive(_ notification: Notification) {
+        record(requester: notification.userInfo, chats: delegate?.model?.state.chats ?? [])
+    }
+
+    /// Several chats may ask before the app becomes idle; each one is continued after the single restart.
+    func record(requester info: [AnyHashable: Any]?, chats: [Chat]) {
         guard !terminating else { return }
-        if let chat = RestartContinuation.chatID(requestedBy: notification.userInfo, in: delegate?.model?.state.chats ?? []),
-           !continuationChatIDs.contains(chat) {
+        if let chat = RestartContinuation.chatID(requestedBy: info, in: chats), !continuationChatIDs.contains(chat) {
+            continuationTitles[chat] = chats.first { $0.id == chat }?.title
             continuationChatIDs.append(chat)
         }
         enqueueRestart()
@@ -130,7 +137,7 @@ struct RestartContinuation: Codable, Equatable {
     func cancel() {
         guard !terminating else { return }
         requested = false; timer?.invalidate(); timer = nil
-        continuationChatIDs = []
+        continuationChatIDs = []; continuationTitles = [:]
     }
 
     /// Written only once the restart is certain, so a cancelled request never continues a chat later.
@@ -164,6 +171,6 @@ struct RestartContinuation: Codable, Equatable {
 
 extension DeskModel {
     var readyForRestart: Bool {
-        !isBootstrapping && !anyBusy && !connecting && !claudeConnecting && pending.isEmpty
+        !isBootstrapping && !anyBusy && !connecting && !claudeConnecting && pending.isEmpty && !hasDeliverableQueue
     }
 }

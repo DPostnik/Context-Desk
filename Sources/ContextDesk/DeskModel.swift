@@ -943,6 +943,10 @@ private struct ChatRunState {
         persist()
         for id in queued { scheduleQueue(threadID: id) }
     }
+    /// A chat whose unpaused queue will send next; a restart in that gap would leave it paused.
+    var hasDeliverableQueue: Bool {
+        queuedMessages.contains { message in runs[message.threadID].map { !$0.queuePaused } ?? false }
+    }
     func resumeQueue() {
         guard let thread = chatID, chatIsAvailable(thread), !isChangingChat(thread), !isArchived(thread) else { return }
         runs[thread, default: ChatRunState()].queuePaused = false
