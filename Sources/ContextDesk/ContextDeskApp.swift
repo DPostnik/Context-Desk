@@ -119,6 +119,9 @@ struct ContextDeskApp: App {
                 RestartMenu(restart: delegate.restart)
                 Divider()
             }
+            CommandMenu(L10n.text("Браузеры", "Browsers")) {
+                RunningBrowsersMenu(model: model)
+            }
             CommandGroup(replacing: .help) {
                 SettingsLink { Text("Язык / Language…") }
             }
@@ -174,5 +177,27 @@ private struct StartupLoadingView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(DeskPalette.canvas)
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// Names the chat behind each running Chrome for Testing; choosing one opens the chat and shows its browser.
+struct RunningBrowsersMenu: View {
+    @ObservedObject var model: DeskModel
+    var body: some View {
+        let chats = model.state.chats.filter { model.runningBrowserChats[$0.id] != nil }
+        if chats.isEmpty {
+            Text(L10n.text("Нет открытых браузеров чатов", "No chat browsers are open"))
+        } else {
+            Text(L10n.text("Открыто браузеров: \(chats.count)", "Open browsers: \(chats.count)"))
+            ForEach(chats) { chat in
+                let project = model.state.projects.first { $0.id == chat.projectID }?.name
+                Button([chat.title, project].compactMap { $0 }.joined(separator: " · ")) {
+                    Task {
+                        await model.openChat(chat)
+                        model.showBrowser(chatID: chat.id)
+                    }
+                }
+            }
+        }
     }
 }

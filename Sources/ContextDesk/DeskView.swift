@@ -378,6 +378,9 @@ struct DeskView: View {
                 ChatRowAction(title: L10n.text("Снять выделение", "Deselect all")) { selection.clear() }
             ]
         }
+        if model.runningBrowserChats[chat.id] != nil {
+            actions.append(ChatRowAction(title: L10n.text("Показать браузер этого чата", "Show this chat’s browser")) { model.showBrowser(chatID: chat.id) })
+        }
         if reorder {
             let siblings = model.state.orderedChats(projectID: chat.projectID, archived: chat.isArchived)
             if let index = siblings.firstIndex(where: { $0.id == chat.id }) {
@@ -493,6 +496,12 @@ struct DeskView: View {
                         Text(project.name).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                             .help(project.path)
                     }
+                }
+                if model.runningBrowserChats[chat.id] != nil {
+                    Image(systemName: "globe").font(.caption2).foregroundStyle(.teal)
+                        .help(L10n.text("Браузер этого чата открыт. Показать его можно из контекстного меню чата или меню «Браузеры».",
+                                        "This chat’s browser is open. Show it from the chat’s context menu or the Browsers menu."))
+                        .accessibilityLabel(L10n.text("Браузер открыт", "Browser is open"))
                 }
                 if chat.isPinned {
                     Image(systemName: "pin.fill").font(.caption2).foregroundStyle(.secondary)

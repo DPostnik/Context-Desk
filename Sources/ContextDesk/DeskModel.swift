@@ -41,6 +41,8 @@ private struct ChatRunState {
     private var configuringRemoteChats: Set<String> = []
     @Published var configuringBrowserChats: Set<String> = []
     @Published var newChatBrowserProfiles: [UUID: UUID] = [:]
+    /// Chat ID -> PID of its running Chrome for Testing; refreshed by `startBrowserActivityMonitor`.
+    @Published var runningBrowserChats: [String: Int32] = [:]
     @Published private(set) var plugins: [ProviderPlugin] = []
     @Published private(set) var pluginIssues: [String] = []
     @Published private(set) var pluginStatuses: [String: PluginStatus] = [:]
@@ -222,6 +224,7 @@ private struct ChatRunState {
         await restoreSummaryQueue()
         for chat in state.chats where chat.hasUnreadResponse {
             let project = state.projects.first { $0.id == chat.projectID }
+        startBrowserActivityMonitor()
             notices.append(DeskNotice(threadID: chat.id, title: L10n.text("Непрочитанный ответ", "Unread response"),
                                       detail: [project?.name, chat.title].compactMap { $0 }.joined(separator: " · "),
                                       completionID: chat.unreadCompletionID))

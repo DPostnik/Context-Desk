@@ -113,6 +113,29 @@ public struct BrowserProfileStore: Sendable {
         return try read().profiles.values.filter { $0.name != nil && $0.project == path && $0.connection == connection }
             .sorted { ($0.name ?? "").localizedStandardCompare($1.name ?? "") == .orderedAscending }
     }
+    /// Session keys whose bound profile has a live Chrome for Testing, with that Chrome's PID.
+    /// Read-only status for the UI: never launches, adopts or signals a process.
+    public func runningBrowsers(executablePath: (Int32) -> String? = BrowserProfileStore.executablePath) -> [String: Int32] {
+        guard let catalog = try? read() else { return [:] }
+        let chromeRoot = root.appendingPathComponent("chrome-for-testing").path + "/"
+        var result: [String: Int32] = [:]
+        for (key, binding) in catalog.bindings {
+            let record = environment(binding.environment).appendingPathComponent("testing-chrome-owner.json")
+            guard let bytes = try? Data(contentsOf: record), bytes.count <= 65_536,
+                  let owner = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any],
+                  let pid = (owner["pid"] as? NSNumber)?.int32Value, pid > 0,
+                  let executable = owner["executable"] as? String,
+                  executable.hasPrefix(chromeRoot), executable.hasSuffix("/Contents/MacOS/Google Chrome for Testing"),
+                  executablePath(pid) == executable else { continue }
+            result[key] = pid
+        }
+        return result
+    }
+    public static func executablePath(_ pid: Int32) -> String? {
+        var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+        let length = proc_pidpath(pid, &buffer, UInt32(buffer.count))
+        return length > 0 ? String(cString: buffer) : nil
+    }
     public func owns(_ profile: BrowserProfile, session: AgentSessionReference) -> Bool { profile.owner == Self.key(session) }
 
     /// Reserve before thread/start; no browser tool may dispatch before native acknowledgement.

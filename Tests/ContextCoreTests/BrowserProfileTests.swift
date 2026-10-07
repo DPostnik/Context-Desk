@@ -135,3 +135,23 @@ private struct ProfileFixture {
     #expect(descriptor([.interactiveSessions, .browserProfiles]).validate(request(.interactive)) == nil)
     #expect(descriptor([.scheduledExecution, .browserProfiles]).validate(request(.scheduled)) == .invalidInput)
 }
+
+@Test func runningBrowsersReportOnlyVerifiedChromeForTestingOfBoundSessions() throws {
+    let f = ProfileFixture(); defer { f.cleanup() }
+    let first = try f.start(f.a), second = try f.start(f.b)
+    let chrome = f.root.appendingPathComponent("chrome-for-testing/154/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing").path
+    func record(_ grant: BrowserProfileGrant, pid: Int, executable: String) throws {
+        let directory = f.store.environment(grant.environment)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: ["pid": pid, "executable": executable])
+            .write(to: directory.appendingPathComponent("testing-chrome-owner.json"))
+    }
+    try record(first, pid: 101, executable: chrome)
+    try record(second, pid: 202, executable: chrome)
+    // PID 202 now belongs to another program: it is not reported as this chat's browser.
+    let paths: [Int32: String] = [101: chrome, 202: "/bin/sleep"]
+    #expect(f.store.runningBrowsers { paths[$0] } == [BrowserProfileStore.key(f.a): 101])
+    try record(second, pid: 202, executable: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+    #expect(f.store.runningBrowsers { _ in "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" }.isEmpty)
+    #expect(BrowserProfileStore.executablePath(getpid()) != nil)
+}
