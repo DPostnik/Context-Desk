@@ -15,10 +15,65 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / '.build/local-build'
+LOG = OUT / 'test-last.log'
+# Lines worth showing in compact test output; everything goes to LOG.
+SHOWN = re.compile(r'error:|fatal error|✘|Test run with|Expectation failed|recorded an issue|Fatal|Crash|signal [0-9]|exited with')
+SHOWN_LIMIT = 60
+FAILED_TEST = re.compile(r'✘ Test (\w+)\(.*\) (?:with \d+ test cases? )?failed after')
+RETRY_LIMIT = 8
 
 
 def run(args, **kwargs):
     return subprocess.run([str(x) for x in args], check=True, **kwargs)
+
+
+def run_logged(args, verbose, log):
+    """Run a test-task command, keeping the full output in LOG and printing a compact view."""
+    args = [str(x) for x in args]
+    log.write('$ ' + ' '.join(args) + '\n')
+    log.flush()
+    process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors='replace')
+    shown = 0
+    failed = set()
+    for line in process.stdout:
+        log.write(line)
+        if match := FAILED_TEST.search(line):
+            failed.add(match[1])
+        if verbose:
+            print(line, end='', flush=True)
+        elif SHOWN.search(line):
+            shown += 1
+            if shown <= SHOWN_LIMIT:
+                print(re.sub(r'\x1b\[[0-9;]*m', '', line).rstrip()[:400], flush=True)
+            elif shown == SHOWN_LIMIT + 1:
+                print(f'... more failures in {LOG.relative_to(ROOT)}', flush=True)
+    log.flush()
+    if process.wait() != 0:
+        error = subprocess.CalledProcessError(process.returncode, args)
+        error.failed_tests = failed
+        raise error
+
+
+def run_tests(execute, command, filters, serial=False):
+    """Run tests once; retry only the failed test functions once, serially, and say so.
+
+    Some process-based fixtures have fixed deadlines that a fully parallel run can
+    exceed. A serial pass separates that from a real regression without
+    rerunning the whole suite.
+    """
+    flags = [x for value in filters for x in ('--filter', value)] + (['--no-parallel'] if serial else [])
+    try:
+        execute(command + flags)
+        return
+    except subprocess.CalledProcessError as error:
+        failed = sorted(getattr(error, 'failed_tests', ()))
+        if serial or not failed or len(failed) > RETRY_LIMIT:
+            raise
+    print(f'Retrying {len(failed)} failed test(s) once, serially: {", ".join(failed)}', flush=True)
+    retry = ['--filter', r'\.(?:' + '|'.join(failed) + r')\(', '--no-parallel']
+    execute(command + retry)
+    print(f'FLAKY (failed in parallel, passed serially): {", ".join(failed)}. '
+          'Not a regression in the tested code; do not rerun the suite. Report it.', flush=True)
 
 
 def capture(args):
@@ -33,9 +88,31 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('task', choices=['build', 'test'])
     parser.add_argument('--direct', action='store_true', help='Explicitly exercise the direct compiler fallback')
+    parser.add_argument('--filter', action='append', default=[], help='Swift Testing filter regex (repeatable); a test file name such as QueueTests selects that file')
+    parser.add_argument('--changed', action='store_true', help='Run only test files affected by changes relative to --base (heuristic)')
+    parser.add_argument('--base', default='HEAD', help='Git revision for --changed (default: HEAD, i.e. uncommitted changes)')
+    parser.add_argument('--verbose', action='store_true', help='Stream full test output instead of failures and the summary')
     args = parser.parse_args()
     os.chdir(ROOT)
     OUT.mkdir(parents=True, exist_ok=True)
+    filters = list(args.filter)
+    if args.changed:
+        from affected_tests import select
+        stems, reason = select(args.base)
+        if stems == []:
+            print(f'NO TESTS RUN: {reason}. Use --base REV for committed changes or omit --changed for the full suite.')
+            return
+        if stems is None:
+            print(f'Selection: full suite ({reason}).', flush=True)
+        else:
+            print(f'Selection: {reason}: {", ".join(stems)}', flush=True)
+            filters.append(r'(?:^|[/.])(?:' + '|'.join(stems) + r')\.swift:')
+    if args.task == 'test':
+        log = LOG.open('w')
+        verbose = args.verbose
+        execute = lambda command: run_logged(command, verbose, log)
+    else:
+        execute = run
     compiler = capture(['xcrun', '--find', 'swiftc'])
     swift = capture(['xcrun', '--find', 'swift'])
     developer = Path(capture(['xcode-select', '-p']))
@@ -68,7 +145,10 @@ def main():
             (OUT / 'sdk-probe-error.log').write_text(result.stderr)
     if sdk is None:
         raise RuntimeError('No compatible SDK. See .build/local-build/sdk-probe-error.log. Install a matching Xcode/Command Line Tools release or set CONTEXTDESK_SDK.')
-    print(f'Compiler: {version}\nSDK: {sdk}', flush=True)
+    if args.task == 'build' or args.verbose:
+        print(f'Compiler: {version}\nSDK: {sdk}', flush=True)
+    if args.task == 'test':
+        log.write(f'Compiler: {version}\nSDK: {sdk}\n')
     health = subprocess.run([swift, 'package', '--version'], capture_output=True, text=True)
     direct = args.direct or health.returncode != 0
     if health.returncode != 0:
@@ -114,7 +194,7 @@ def main():
                 command += ['-Xswiftc', '-plugin-path', '-Xswiftc', macros]
             if has_testing_framework:
                 command += ['-Xswiftc', '-F', '-Xswiftc', frameworks, '-Xlinker', '-F', '-Xlinker', frameworks, '-Xlinker', '-rpath', '-Xlinker', frameworks, '-Xlinker', '-rpath', '-Xlinker', testing_libraries]
-            run(command)
+            run_tests(execute, command, filters)
     else:
         resolved = json.loads((ROOT / 'Package.resolved').read_text())
         pins = resolved['pins']
@@ -134,9 +214,10 @@ def main():
             if args.task == 'test':
                 modules.append(('ContextDesk', 'Sources/ContextDesk'))
             for name, folder in modules:
-                print(f'Compiling {name}', flush=True)
+                if args.task == 'build' or args.verbose:
+                    print(f'Compiling {name}', flush=True)
                 flags = ['-Xfrontend', '-entry-point-function-name', '-Xfrontend', 'ContextDesk_main'] if name == 'ContextDesk' else []
-                run(base + flags + ['-emit-library', '-static', '-emit-module', '-module-name', name, '-emit-module-path', work / (name + '.swiftmodule'), '-o', work / ('lib' + name + '.a')] + sources(folder))
+                execute(base + flags + ['-emit-library', '-static', '-emit-module', '-module-name', name, '-emit-module-path', work / (name + '.swiftmodule'), '-o', work / ('lib' + name + '.a')] + sources(folder))
             libraries = ['-lClaudeAdapter', '-lCodexAdapter', '-lContextTranscript', '-lContextCore', '-lTOMLDecoder', '-lAgentContract']
             if args.task == 'build':
                 run(base + ['-module-name', 'ContextDesk'] + sources('Sources/ContextDesk') + libraries + ['-o', work / 'ContextDesk'])
@@ -146,8 +227,8 @@ def main():
                 # New Testing releases also expose a CInt-returning overload. Keep
                 # the process-exiting entry point, including its failing exit status.
                 runner.write_text('import Testing\n@main struct Runner { static func main() async { let _: Never = await Testing.__swiftPMEntryPoint() } }\n')
-                run(base + test_flags + ['-module-name', 'ContextCoreTests'] + sources('Tests/ContextCoreTests') + [runner, '-lContextDesk'] + libraries + ['-o', work / 'Tests'])
-                run([work / 'Tests'])
+                execute(base + test_flags + ['-module-name', 'ContextCoreTests'] + sources('Tests/ContextCoreTests') + [runner, '-lContextDesk'] + libraries + ['-o', work / 'Tests'])
+                run_tests(execute, [work / 'Tests'], filters)
     if args.task == 'build':
         digest = hashlib.sha256()
         browser_resources = [ROOT / 'BrowserRuntime' / name for name in
@@ -161,5 +242,9 @@ def main():
 if __name__ == '__main__':
     try:
         main()
-    except (subprocess.CalledProcessError, RuntimeError) as error:
+    except subprocess.CalledProcessError as error:
+        if LOG.exists() and sys.argv[1:2] == ['test']:
+            sys.exit(f'FAILED (exit {error.returncode}). Full log: {LOG.relative_to(ROOT)} — read it instead of rerunning.')
+        sys.exit(str(error))
+    except RuntimeError as error:
         sys.exit(str(error))
