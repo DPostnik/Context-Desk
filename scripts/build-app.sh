@@ -39,7 +39,19 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 </dict></array>
 </dict></plist>
 PLIST
-codesign --force --sign - "$app"
+# A stable identity keeps the designated requirement unchanged across builds, so macOS
+# privacy grants (Screen Recording, Accessibility, Keychain "Always Allow") survive rebuilds.
+# Ad-hoc signatures pin grants to the cdhash, which changes on every build.
+identity="${CONTEXT_DESK_SIGN_IDENTITY:-}"
+if [[ -z "$identity" ]]; then
+  identity="$(security find-identity -v -p codesigning | awk '/"Apple Development: /{print $2; exit}')"
+fi
+if [[ -n "$identity" && "$identity" != "-" ]]; then
+  codesign --force --timestamp=none --sign "$identity" "$app"
+else
+  print -u2 "warning: no Apple Development identity; signing ad-hoc, so macOS privacy grants reset on every build"
+  codesign --force --sign - "$app"
+fi
 codesign --verify --deep --strict "$app"
 python3 - "$app" <<'PY'
 from pathlib import Path
