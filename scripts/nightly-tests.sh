@@ -24,14 +24,16 @@ echo "Nightly full suite: $BRANCH @ $commit, $(date)" >>"$log"
 start=$SECONDS
 (cd "$WORK" && zsh scripts/test.sh --verbose) >>"$log" 2>&1
 code=$?
-summary=$(grep -E 'Test run with|FAILED|error:' "$log" | tail -1)
-[[ $code == 0 ]] && result=passed || result=failed
+summary=$(grep -m1 ' Test run with ' "$log" || grep -E '^FAILED|error:' "$log" | tail -1)
+flaky=$(grep -m1 '^FLAKY' "$log" | sed 's/\. Not a regression.*//')
+if [[ $code != 0 ]]; then result=failed; elif [[ -n $flaky ]]; then result=flaky; else result=passed; fi
+[[ -n $flaky ]] && summary="$summary | $flaky"
 echo "$result $commit $(date +%Y-%m-%dT%H:%M:%S) $((SECONDS - start))s ${summary}" >"$LOGS/latest-status"
 ln -sf "$log" "$LOGS/latest.log"
 # Keep two weeks of logs.
 ls -1t "$LOGS"/*.log(N) | tail -n +15 | xargs rm -f 2>/dev/null
 
-if [[ $code != 0 ]]; then
-  osascript -e "display notification \"$commit: ${summary//\"/}\" with title \"Context Desk: nightly tests failed\"" >/dev/null 2>&1
+if [[ $result != passed ]]; then
+  osascript -e "display notification \"$commit: ${summary//\"/}\" with title \"Context Desk: nightly tests $result\"" >/dev/null 2>&1
 fi
 exit $code
