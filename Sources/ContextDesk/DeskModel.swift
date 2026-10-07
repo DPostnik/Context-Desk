@@ -1128,6 +1128,7 @@ private struct ChatRunState {
             if let i = state.chats.firstIndex(where: { $0.id == id }) { state.chats[i].updated = Date(); persist() }
         } catch {
             if let scheduledRun { await finishJob(scheduledRun, status: .uncertain, output: error.localizedDescription) }
+            AppLog.delivery.error("Delivery unconfirmed for chat \(runKey, privacy: .public): \(error.localizedDescription, privacy: .public)")
             setDelivery(localID, phase: L10n.text("Доставка не подтверждена", "Delivery unconfirmed"))
             self.error = error.localizedDescription + L10n.text(" Сообщение не отправлено повторно.", " The message was not sent again.")
             runs[runKey, default: ChatRunState()].queuePaused = true

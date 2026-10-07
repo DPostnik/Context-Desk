@@ -35,6 +35,7 @@ private func interactiveFixture(_ root: URL) throws -> URL {
     if '--version' in sys.argv:
         print('2.1.292 (Claude Code)'); sys.exit(0)
     if sys.argv[1:3] == ['auth','status']:
+        if (home/'auth-delay').exists(): time.sleep(float((home/'auth-delay').read_text()))
         if (home/'invalid-auth').exists(): print('{}'); sys.exit(1)
         print(json.dumps({'loggedIn':True,'apiProvider':'firstParty','authMethod':'oauth','email':(home/'account').read_text() if (home/'account').exists() else 'fixture'})); sys.exit(0)
     if sys.argv[1:3] == ['auth','logout']: sys.exit(0)
@@ -177,6 +178,27 @@ private func interactiveRequest(context: AgentContext, root: URL, session: Agent
     let second = try store.ownedGrant(session: session)
     #expect(second.environment != first.environment)
     #expect(try lease(await turn(3)) == second.generation.uuidString.lowercased())
+}
+
+@Test func claudeSendDuringAnotherAccountCheckIsDelivered() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let binary = try interactiveFixture(root), home = root.appendingPathComponent("home")
+    let adapter = ClaudeIntegration(), events = ClaudeEvents()
+    let reader = Task { for await event in adapter.events { await events.append(event) } }
+    defer { reader.cancel() }
+    let descriptor = try await adapter.connect(.init(executable: binary, home: home)).value()
+    let session = try await adapter.prepare(interactiveRequest(context: descriptor.context, root: root)).value()
+    // A background title/summary re-check is still probing the login when the user sends.
+    try Data("1.5".utf8).write(to: home.appendingPathComponent("auth-delay"))
+    let check = Task { await adapter.account() }
+    try await Task.sleep(for: .milliseconds(300))
+    _ = try await adapter.prepare(interactiveRequest(context: descriptor.context, root: root, session: session)).value()
+    _ = try await adapter.submit(interactiveRequest(context: descriptor.context, root: root, session: session)).value()
+    try await waitFor { await events.completion() != nil }
+    #expect(await events.completion() == .completed)
+    guard case .success(let account) = await check.value else { Issue.record("Account re-check failed"); return }
+    #expect(account.authenticated)
 }
 
 @Test func claudeInteractivePersistsStreamsResumesAndRejectsReplay() async throws {

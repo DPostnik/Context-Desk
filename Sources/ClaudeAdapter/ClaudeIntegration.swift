@@ -97,12 +97,13 @@ public actor ClaudeIntegration: AgentIntegration {
     public func account() async -> AgentResult<AgentAccountInfo> {
         guard let home, let executable else { return .unavailable }
         let epoch = context
-        signedIn = false
+        // The last confirmed state stays visible while the probe runs: actor reentrancy would otherwise
+        // reject a concurrent send or resume as signed out. A changed login still bumps the context below.
         do {
             let (_, data) = try await ClaudeProfile.command(executable: executable, home: home, arguments: ["auth", "status", "--json"])
             guard context == epoch else { return .rejected(.staleContext) }
             let value = try JSONDecoder().decode(JSONValue.self, from: data)
-            guard let loggedIn = value["loggedIn"].bool else { return .rejected(.invalidResponse) }
+            guard let loggedIn = value["loggedIn"].bool else { signedIn = false; return .rejected(.invalidResponse) }
             // Only the isolated first-party account is supported; never inherit alternate API routes.
             signedIn = loggedIn && value["apiProvider"].string == "firstParty"
             let identity = signedIn ? [value["email"].string ?? "", value["orgId"].string ?? "", value["authMethod"].string ?? ""].joined(separator: "|") : "signed-out"
