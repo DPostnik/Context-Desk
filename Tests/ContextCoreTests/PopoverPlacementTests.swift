@@ -1,6 +1,9 @@
+import AppKit
 import CoreGraphics
+import Foundation
 import SwiftUI
 import Testing
+import ContextCore
 @testable import ContextDesk
 
 struct PopoverPlacementTests {
@@ -27,4 +30,19 @@ struct PopoverPlacementTests {
         #expect(placement.edge == .top)
         #expect(placement.listHeight == 560 - 90 - PopoverPlacement.chromeHeight)
     }
+}
+
+/// The limits popover keeps one height in every state, within the space `PopoverPlacement` reserves.
+@Test @MainActor func limitsPopoverHeightIsStableAndFitsReservedSpace() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let model = DeskModel(store: AppStore(file: root.appendingPathComponent("state.sqlite")),
+                          jobStore: JobStore(file: root.appendingPathComponent("jobs.json")))
+    func height(_ list: CGFloat) -> CGFloat {
+        NSHostingView(rootView: AccountLimitsView(model: model, maxListHeight: list)).fittingSize.height
+    }
+    let full = height(PopoverPlacement.preferredListHeight)
+    #expect(full - PopoverPlacement.preferredListHeight <= PopoverPlacement.chromeHeight)
+    let short = height(PopoverPlacement.minimumListHeight)
+    #expect(full - short == PopoverPlacement.preferredListHeight - PopoverPlacement.minimumListHeight)
 }
