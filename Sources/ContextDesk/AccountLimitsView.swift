@@ -3,6 +3,7 @@ import ContextCore
 
 struct AccountLimitsView: View {
     @ObservedObject var model: DeskModel
+    var maxListHeight: CGFloat = 340
     @Environment(\.dismiss) private var dismiss
 
     @State private var agent: AgentConnectionID?
@@ -64,7 +65,7 @@ struct AccountLimitsView: View {
                     }
                     // A rigid height: data often arrives after the popover is sized, and a flexible
                     // scroll view is then squeezed to nothing instead of growing the popover.
-                    .frame(height: min(listHeight, 340))
+                    .frame(height: min(listHeight, maxListHeight))
                     Text(L10n.text("Проверено: \(localDate(snapshot.fetchedAt))", "Checked: \(localDate(snapshot.fetchedAt))"))
                         .font(.caption).foregroundStyle(.secondary)
                 } else if refreshing {

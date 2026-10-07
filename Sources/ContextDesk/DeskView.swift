@@ -21,6 +21,8 @@ struct DeskView: View {
     @State private var newTitle = ""
     @State private var showingNotifications = false
     @State private var showingLimits = false
+    @State private var limitsPlacement = PopoverPlacement.fallback
+    @State private var limitsAnchor = ScreenFrameProbe()
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
@@ -130,12 +132,12 @@ struct DeskView: View {
                     }.padding(.horizontal, 12).padding(.bottom, 8)
                 }
                 if !selection.isEmpty { selectionBar }
-                Button { showingLimits = true } label: {
+                Button { limitsPlacement = limitsAnchor.placement; showingLimits = true } label: {
                     Label(L10n.text("Usage и лимиты", "Usage and limits"), systemImage: "chart.bar")
                         .frame(maxWidth: .infinity, alignment: .leading)
-                }.buttonStyle(DeskButtonStyle()).padding(.horizontal, 12)
-                    .popover(isPresented: $showingLimits, arrowEdge: .trailing) {
-                        AccountLimitsView(model: model)
+                }.buttonStyle(DeskButtonStyle()).background(ScreenFrameReader(probe: limitsAnchor)).padding(.horizontal, 12)
+                    .popover(isPresented: $showingLimits, arrowEdge: limitsPlacement.edge) {
+                        AccountLimitsView(model: model, maxListHeight: limitsPlacement.listHeight)
                     }
                 HStack {
                     Circle().fill(model.currentAgentConnected ? Color.primary : .secondary).frame(width: 6, height: 6)
