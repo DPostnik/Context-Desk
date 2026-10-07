@@ -28,6 +28,17 @@ class ScheduleClientTests(unittest.TestCase):
             self.assertEqual(update['prompt'], prompt.read_text())
             self.assertTrue(update['enabled'] and update['confirmSourceDisabled'])
 
+    def test_external_policy_consent_is_explicit(self):
+        job = {'id': 'B39B21BF-187C-4C45-8F94-F98F70F8643F', 'engine': 'claude', 'enabled': True}
+        args = ['client', 'update', '--job-id', job['id'], '--accept-external-policy']
+        with patch('sys.argv', args), patch.object(client, 'send', side_effect=[{'jobs': [job]}, {'jobs': []}]) as send, contextlib.redirect_stdout(io.StringIO()):
+            client.main()
+        self.assertEqual(send.call_args_list[1].args[0], {'operation': 'update', 'expected': job, 'acceptExternalPolicy': True})
+        with patch('sys.argv', args + ['--revoke-external-policy']), patch.object(client, 'send') as send, contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                client.main()
+        send.assert_not_called()
+
     def test_model_pair_is_explicit_and_does_not_enable_job(self):
         job = {'id': 'B39B21BF-187C-4C45-8F94-F98F70F8643F', 'model': 'gpt-6-sol', 'effort': 'high', 'enabled': False}
         args = ['client', 'update', '--job-id', job['id'], '--model', 'gpt-6-astra', '--effort', 'medium']

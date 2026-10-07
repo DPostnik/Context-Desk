@@ -71,6 +71,9 @@ def main():
     mode.add_argument('--enable', action='store_true')
     mode.add_argument('--pause', action='store_true')
     update.add_argument('--confirm-source-disabled', action='store_true', help=message('Подтвердить проверенную паузу оригинала', 'Confirm the verified original pause'))
+    policy = update.add_mutually_exclusive_group()
+    policy.add_argument('--accept-external-policy', action='store_true', help=message('Согласие пользователя на внешние правила Claude для этого задания', 'User consent to external Claude policy for this task'))
+    policy.add_argument('--revoke-external-policy', action='store_true', help=message('Отозвать согласие на внешние правила Claude', 'Revoke consent to external Claude policy'))
     args = parser.parse_args()
     if args.command == 'status':
         key = str(uuid.UUID(args.request_id)).upper()
@@ -81,7 +84,8 @@ def main():
         print(json.dumps({'id': key, 'status': state})); return
     if args.command == 'update' and ((args.model is None) != (args.effort is None)):
         parser.error(message('Укажи --model и --effort вместе', 'Specify --model and --effort together'))
-    if args.command == 'update' and not (args.prompt_file or args.enable or args.pause or args.confirm_source_disabled or args.model):
+    if args.command == 'update' and not (args.prompt_file or args.enable or args.pause or args.confirm_source_disabled or args.model
+                                     or args.accept_external_policy or args.revoke_external_policy):
         parser.error(message('Не указано изменение', 'No change specified'))
     prompt = args.prompt_file.read_text() if args.command in ('update', 'import') and args.prompt_file else None
     reply = send({'operation': 'catalog' if args.command in ('catalog', 'import') else 'list'})
@@ -111,6 +115,8 @@ def main():
             request['enabled'] = args.enable
         if args.confirm_source_disabled:
             request['confirmSourceDisabled'] = True
+        if args.accept_external_policy or args.revoke_external_policy:
+            request['acceptExternalPolicy'] = args.accept_external_policy
         reply = send(request)
     print(json.dumps(reply, ensure_ascii=False, indent=2))
 

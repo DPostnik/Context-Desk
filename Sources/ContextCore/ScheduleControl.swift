@@ -15,6 +15,8 @@ public struct ScheduleControlRequest: Codable, Sendable {
     public var prompt: String?
     public var enabled: Bool?
     public var confirmSourceDisabled: Bool?
+    /// Explicit user-authorized per-task consent for an external CLI engine (Claude only).
+    public var acceptExternalPolicy: Bool?
     public var browserSessionImport: ChromeSessionImportPolicy?
     public var clearBrowserSessionImport: Bool?
 }
@@ -62,6 +64,10 @@ public enum ScheduleControl {
                 job.browserSessionImport = try ChromeSessionImportPolicy(profile: policy.profile, site: policy.site)
             } else { job.browserSessionImport = nil }
         } else if request.browserSessionImport != nil || request.clearBrowserSessionImport != nil { throw invalid }
+        if let accepted = request.acceptExternalPolicy {
+            guard request.operation == "update", job.engine == .claude else { throw invalid }
+            job.acceptsExternalPolicy = accepted
+        }
         if let prompt = request.prompt { job.prompt = prompt }
         if let enabled = request.enabled { job.enabled = enabled }
         if request.confirmSourceDisabled == true {
@@ -70,7 +76,11 @@ public enum ScheduleControl {
             }
             job.sourceDisabled = true
         }
-        if job.enabled && job.source != nil && !originalPaused {
+        // An enabled task whose pause was already confirmed keeps that confirmation for edits that do
+        // not change enablement; a missing source definition must not freeze its instructions/settings.
+        let confirmedRunning = request.enabled == nil && request.confirmSourceDisabled == nil
+            && request.expected?.enabled == true && request.expected?.sourceDisabled == true
+        if job.enabled && job.source != nil && !originalPaused && !confirmedRunning {
             throw ClientFailure(L10n.text("Исходное расписание должно оставаться на паузе.", "The original schedule must remain paused."))
         }
         try job.validate()
@@ -106,7 +116,7 @@ public enum ScheduleControl {
             do {
                 let data = try Data(contentsOf: claim)
                 guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      Set(object.keys).isSubset(of: ["version", "id", "expires", "operation", "browserSessionImport", "clearBrowserSessionImport", "expected", "prompt", "enabled", "confirmSourceDisabled", "importRequest", "model", "effort"]) else { throw invalid }
+                      Set(object.keys).isSubset(of: ["version", "id", "expires", "operation", "browserSessionImport", "clearBrowserSessionImport", "expected", "prompt", "enabled", "confirmSourceDisabled", "acceptExternalPolicy", "importRequest", "model", "effort"]) else { throw invalid }
                 let request = try JSONDecoder().decode(ScheduleControlRequest.self, from: data)
                 guard request.version == 1, request.id == id, request.expires > now,
                       request.expires.timeIntervalSince(now) <= 600,
@@ -117,14 +127,14 @@ public enum ScheduleControl {
                 if request.operation == "list" || request.operation == "catalog" {
                     guard request.expected == nil, request.prompt == nil, request.enabled == nil,
                           request.confirmSourceDisabled == nil, request.importRequest == nil,
-                          request.model == nil, request.effort == nil else { throw invalid }
+                          request.acceptExternalPolicy == nil, request.model == nil, request.effort == nil else { throw invalid }
                 }
                 if request.operation == "import" {
                     guard let imported = object["importRequest"] as? [String: Any],
                           Set(imported.keys).isSubset(of: ["sourceID", "sourceDigest", "projectID", "timeZone", "model", "effort", "recurring", "prompt"]),
                           request.importRequest != nil, request.expected == nil, request.prompt == nil,
                           request.enabled == nil, request.confirmSourceDisabled == nil,
-                          request.model == nil, request.effort == nil else { throw invalid }
+                          request.acceptExternalPolicy == nil, request.model == nil, request.effort == nil else { throw invalid }
                 } else if request.importRequest != nil { throw invalid }
                 var completed = ScheduleControlReply(id: id, status: "completed", jobs: try await handle(request))
                 if request.operation == "catalog" { completed.catalog = try catalog() }

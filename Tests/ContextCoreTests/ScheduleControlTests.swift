@@ -224,3 +224,29 @@ private func importFixture(_ root: URL, rule: String = "FREQ=DAILY;BYHOUR=9;BYMI
         if operation == "update" { #expect(reply.jobs?.first?.model == "gpt-6-astra") }
     }
 }
+
+@Test func scheduleControlSetsExternalPolicyOnlyForClaudeTasks() throws {
+    var job = ManagedJob(); job.name = "Claude"; job.prompt = "run"; job.projectID = UUID()
+    job.engine = .claude; job.model = "claude-opus-5-5"; job.effort = "low"
+    var request = try controlRequest(job: job); request.acceptExternalPolicy = true; request.model = "claude-opus-5-5"; request.effort = "medium"
+    let accepted = try ScheduleControl.updated(request, originalPaused: false)
+    #expect(accepted.acceptsExternalPolicy == true && accepted.effort == "medium" && accepted.engine == .claude)
+    #expect(accepted.projectID == job.projectID && accepted.route == job.route && accepted.enabled == job.enabled)
+    request = try controlRequest(job: accepted); request.acceptExternalPolicy = false
+    #expect(try ScheduleControl.updated(request, originalPaused: false).acceptsExternalPolicy == false)
+    var codex = job; codex.engine = .codex
+    request = try controlRequest(job: codex); request.acceptExternalPolicy = true
+    #expect(throws: (any Error).self) { try ScheduleControl.updated(request, originalPaused: false) }
+}
+
+@Test func scheduleControlEditsConfirmedEnabledTaskWithoutSourceDefinition() throws {
+    var job = ManagedJob(); job.name = "Imported"; job.prompt = "run"; job.projectID = UUID(); job.source = "codex:gone"
+    job.engine = .claude; job.enabled = true; job.sourceDisabled = true
+    var request = try controlRequest(job: job); request.acceptExternalPolicy = true
+    #expect(try ScheduleControl.updated(request, originalPaused: false).acceptsExternalPolicy == true)
+    request = try controlRequest(job: job); request.enabled = true
+    #expect(throws: (any Error).self) { try ScheduleControl.updated(request, originalPaused: false) }
+    var unconfirmed = job; unconfirmed.sourceDisabled = false
+    request = try controlRequest(job: unconfirmed); request.prompt = "new"
+    #expect(throws: (any Error).self) { try ScheduleControl.updated(request, originalPaused: false) }
+}
