@@ -235,6 +235,7 @@ private struct ChatRunState {
         await connect()
         if state.defaultConnection == .appClaude || state.chats.contains(where: { $0.nativeSession?.connection == .appClaude }) { await connectClaude() }
         await startScheduler()
+        continueAfterRestart(RestartContinuation.take())
         let settings = await UNUserNotificationCenter.current().notificationSettings()
         notificationStatus = settings.authorizationStatus == .authorized ? L10n.text("Уведомления включены", "Notifications are on") : L10n.text("Уведомления не включены", "Notifications are off")
     }
@@ -922,6 +923,25 @@ private struct ChatRunState {
                 self.error = error.localizedDescription
             }
         }
+    }
+    /// Queues the fixed continuation message for chats that requested the restart; it is
+    /// delivered like any queued message, with the chat's own model, route and failure handling.
+    func continueAfterRestart(_ chatIDs: [String]) {
+        var queued: [String] = []
+        for id in chatIDs {
+            guard let chat = state.chats.first(where: { $0.id == id }), !chat.isArchived, chatIsAvailable(id) else { continue }
+            let claude = chat.nativeSession?.connection == .appClaude
+            state.queuedMessages = queuedMessages + [QueuedMessage(id: "local-user:" + UUID().uuidString, threadID: id,
+                projectID: chat.projectID, text: RestartContinuation.message,
+                model: claude ? ClaudeModel.resolved(chat.model) : chat.model,
+                effort: claude ? ClaudeEffort.resolved(chat.effort ?? state.claudeEffort) : chat.effort ?? "medium")]
+            runs[id, default: ChatRunState()].queuePaused = false
+            queued.append(id)
+        }
+        guard !queued.isEmpty else { return }
+        AppLog.lifecycle.notice("Restart continuation queued for \(queued.count, privacy: .public) chat(s)")
+        persist()
+        for id in queued { scheduleQueue(threadID: id) }
     }
     func resumeQueue() {
         guard let thread = chatID, chatIsAvailable(thread), !isChangingChat(thread), !isArchived(thread) else { return }

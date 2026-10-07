@@ -42,10 +42,12 @@ import UserNotifications
                         sender.reply(toApplicationShouldTerminate: false)
                         return
                     }
+                    restart.saveContinuation()
                     try restart.launchHelper()
                 } catch {
                     restart.terminating = false
                     restart.cancel()
+                    try? FileManager.default.removeItem(at: RestartContinuation.file)
                     disarmShutdownDeadline("restart preparation failed")
                     model?.error = L10n.text("Не удалось подготовить перезапуск: ", "Could not prepare restart: ") + error.localizedDescription
                     sender.reply(toApplicationShouldTerminate: false)
