@@ -96,6 +96,8 @@ private struct ChatRunState {
     private var historyRefreshTasks: [String: Task<Void, Never>] = [:]
     private var historyEventRevisions: [String: Int] = [:]
     @Published var pending: [PendingAction] = []
+    /// Chats that asked for the pending restart; mirrored from AppRestartController for the sidebar.
+    @Published var restartWaitingChatIDs: [String] = []
     @Published var usage: [String: UsageSnapshot] = [:]
     @Published var models: [AgentModelInfo] = []
     @Published var draftEffort = "medium"
@@ -946,6 +948,24 @@ private struct ChatRunState {
     /// A chat whose unpaused queue will send next; a restart in that gap would leave it paused.
     var hasDeliverableQueue: Bool {
         queuedMessages.contains { message in runs[message.threadID].map { !$0.queuePaused } ?? false }
+    }
+    /// What keeps the app from being idle, listed in the Restart menu while a restart waits.
+    var restartBlockers: [String] {
+        func title(_ id: String) -> String { state.chats.first { $0.id == id }?.title ?? L10n.text("новый чат", "new chat") }
+        var reasons: Set<String> = []
+        if isBootstrapping || connecting || claudeConnecting { reasons.insert(L10n.text("Подключение к агентам", "Connecting to agents")) }
+        for (id, run) in runs where run.running || run.sending {
+            reasons.insert(id.hasPrefix("job:") ? L10n.text("Запуск задания", "Scheduled run starting") : L10n.text("Выполняется: ", "Running: ") + title(id))
+        }
+        for action in pending { reasons.insert(L10n.text("Ждёт твоего действия: ", "Waiting for your action: ") + title(action.threadID)) }
+        for message in queuedMessages where runs[message.threadID].map({ !$0.queuePaused }) ?? false {
+            reasons.insert(L10n.text("Сообщение в очереди: ", "Queued message: ") + title(message.threadID))
+        }
+        for run in jobLedger.runs where run.status.active { reasons.insert(L10n.text("Задание: ", "Scheduled task: ") + run.name) }
+        if summaryTask != nil { reasons.insert(L10n.text("Сводка архива", "Archive summary")) }
+        if preparingHandoff || creatingHandoff { reasons.insert(L10n.text("Передача контекста", "Context handoff")) }
+        if !deletingChatIDs.isEmpty || !archivingChatIDs.isEmpty { reasons.insert(L10n.text("Архивирование или удаление чатов", "Archiving or deleting chats")) }
+        return reasons.sorted()
     }
     func resumeQueue() {
         guard let thread = chatID, chatIsAvailable(thread), !isChangingChat(thread), !isArchived(thread) else { return }

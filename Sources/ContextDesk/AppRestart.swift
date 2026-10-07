@@ -87,7 +87,11 @@ struct RestartContinuation: Codable, Equatable {
     private var timer: Timer?
     @Published private(set) var requested = false
     var terminating = false
-    @Published private(set) var continuationChatIDs: [String] = []
+    @Published private(set) var continuationChatIDs: [String] = [] {
+        didSet { delegate?.model?.restartWaitingChatIDs = continuationChatIDs }
+    }
+    /// Why the app is not idle yet; refreshed by the restart timer.
+    @Published private(set) var blockers: [String] = []
     /// Titles captured at request time, shown in the restart menu.
     private(set) var continuationTitles: [String: String] = [:]
 
@@ -137,7 +141,7 @@ struct RestartContinuation: Codable, Equatable {
     func cancel() {
         guard !terminating else { return }
         requested = false; timer?.invalidate(); timer = nil
-        continuationChatIDs = []; continuationTitles = [:]
+        continuationChatIDs = []; continuationTitles = [:]; blockers = []
     }
 
     /// Written only once the restart is certain, so a cancelled request never continues a chat later.
@@ -148,8 +152,10 @@ struct RestartContinuation: Codable, Equatable {
     }
 
     private func restartIfIdle() {
-        guard requested, !terminating, let model = delegate?.model,
-              model.readyForRestart else { return }
+        guard requested, !terminating, let model = delegate?.model else { return }
+        let reasons = model.restartBlockers
+        if reasons != blockers { blockers = reasons }
+        guard model.readyForRestart else { return }
         NSApplication.shared.terminate(nil)
     }
 

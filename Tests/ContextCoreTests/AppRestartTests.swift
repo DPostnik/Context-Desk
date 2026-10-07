@@ -155,6 +155,8 @@ import ContextCore
     #expect(model.queuedMessages.allSatisfy { $0.text == RestartContinuation.message })
     // Until the queued continuations are sent, a further restart must wait.
     #expect(model.hasDeliverableQueue)
+    #expect(model.restartBlockers.contains(L10n.text("Сообщение в очереди: ", "Queued message: ") + "A"))
+    #expect(model.restartBlockers.contains(L10n.text("Сообщение в очереди: ", "Queued message: ") + "B"))
     var started: [JSONValue] = []
     for _ in 0..<200 {
         started = try await connection.request("test/requests").array.filter { $0["method"].string == "turn/start" }

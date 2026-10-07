@@ -241,7 +241,12 @@ struct DeskView: View {
                         Image(systemName: model.projectID == project.id ? "folder.fill" : "folder")
                         Text(project.name).fontWeight(.semibold).lineLimit(1)
                         Spacer(minLength: 0)
-                        if model.state.chats.contains(where: { $0.projectID == project.id && !$0.isArchived && $0.hasUnreadResponse }) {
+                        let projectChats = model.state.chats.filter { $0.projectID == project.id && !$0.isArchived }
+                        if projectChats.contains(where: { chat in model.pending.contains { $0.threadID == chat.id } || model.restartWaitingChatIDs.contains(chat.id) }) {
+                            Circle().fill(.yellow).frame(width: 7, height: 7)
+                                .help(L10n.text("Есть чаты, которые ждут действия или перезапуска", "Chats are waiting for action or a restart"))
+                                .accessibilityLabel(L10n.text("Есть чаты, которые ждут действия или перезапуска", "Chats are waiting for action or a restart"))
+                        } else if projectChats.contains(where: \.hasUnreadResponse) {
                             Circle().fill(.blue).frame(width: 7, height: 7)
                                 .help(L10n.text("Есть непрочитанные ответы", "Unread responses"))
                                 .accessibilityLabel(L10n.text("Есть непрочитанные ответы", "Unread responses"))
@@ -494,10 +499,20 @@ struct DeskView: View {
                         .accessibilityLabel(L10n.text("В избранном", "In favorites"))
                 }
                 Spacer(minLength: 0)
-                if model.pending.contains(where: { $0.threadID == chat.id }) || chat.hasUnreadResponse {
+                // Yellow: the chat waits for the user or for the app restart. Blue: an unread response.
+                if model.restartWaitingChatIDs.contains(chat.id) {
+                    Image(systemName: "arrow.clockwise.circle.fill").font(.caption).foregroundStyle(.yellow)
+                        .help(L10n.text("Ждёт перезапуска приложения", "Waiting for the app restart"))
+                        .accessibilityLabel(L10n.text("Ждёт перезапуска приложения", "Waiting for the app restart"))
+                }
+                if model.pending.contains(where: { $0.threadID == chat.id }) {
+                    Circle().fill(.yellow).frame(width: 7, height: 7)
+                        .help(L10n.text("Требуется действие", "Action required"))
+                        .accessibilityLabel(L10n.text("Требуется действие", "Action required"))
+                } else if chat.hasUnreadResponse {
                     Circle().fill(.blue).frame(width: 7, height: 7)
-                        .help(chat.hasUnreadResponse ? L10n.text("Непрочитанный ответ", "Unread response") : L10n.text("Требуется действие", "Action required"))
-                        .accessibilityLabel(chat.hasUnreadResponse ? L10n.text("Непрочитанный ответ", "Unread response") : L10n.text("Требуется действие", "Action required"))
+                        .help(L10n.text("Непрочитанный ответ", "Unread response"))
+                        .accessibilityLabel(L10n.text("Непрочитанный ответ", "Unread response"))
                 }
                 if model.isBusy(threadID: chat.id) { ProgressView().controlSize(.small) }
             }.font(.callout).padding(.horizontal, 16).padding(.vertical, 4)
