@@ -178,7 +178,8 @@ public actor ClaudeIntegration: AgentIntegration {
             else {
                 wire = ClaudeWire()
                 let arguments = Self.arguments(id: id, resumed: record.sent, access: expectedAccess,
-                                               model: request.model.model, effort: request.model.effort)
+                                               model: request.model.model, effort: request.model.effort,
+                                               projectInstructions: ProjectInstructions.prompt(projectPath: record.cwd))
                 try await wire.start(executable: executable, arguments: arguments, environment: ClaudeProfile.environment(home: home), cwd: URL(fileURLWithPath: record.cwd))
                 wires[id] = wire
                 seenRequests[id] = []
@@ -205,7 +206,8 @@ public actor ClaudeIntegration: AgentIntegration {
             return failed(error, uncertain: delivered)
         }
     }
-    static func arguments(id: String, resumed: Bool, access: AccessMode, model: String, effort: String?) -> [String] {
+    static func arguments(id: String, resumed: Bool, access: AccessMode, model: String, effort: String?,
+                          projectInstructions: String? = nil) -> [String] {
         var args = ["--print", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
                     "--permission-prompt-tool", "stdio", "--setting-sources", "", "--safe-mode", "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}",
                     resumed ? "--resume" : "--session-id", id]
@@ -215,7 +217,8 @@ public actor ClaudeIntegration: AgentIntegration {
         if !model.isEmpty { args += ["--model", model] }
         // Only a documented level is forwarded; an unset value leaves the CLI default in place.
         if let level = ClaudeEffort.accepted(effort) { args += ["--effort", level.rawValue] }
-        args += ["--append-system-prompt", AgentAutonomy.instructions()]
+        // `--setting-sources ""` also skips the project's CLAUDE.md, so project rules come in here.
+        args += ["--append-system-prompt", ([AgentAutonomy.instructions()] + [projectInstructions].compactMap { $0 }).joined(separator: "\n\n")]
         return args
     }
     public func cancel(_ execution: AgentExecutionHandle) async -> AgentResult<AgentCancellation> {
