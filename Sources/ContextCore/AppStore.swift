@@ -173,13 +173,16 @@ public actor AppStore {
 
     /// The archive flag and durable pending work must commit together.
     public func saveArchivingChat(_ state: SavedState, summary: ArchiveSummaryRecord?) throws {
+        try saveArchivingChats(state, summaries: summary.map { [$0] } ?? [])
+    }
+    public func saveArchivingChats(_ state: SavedState, summaries: [ArchiveSummaryRecord]) throws {
         try withDatabase { db in
             guard sqlite3_exec(db, "BEGIN IMMEDIATE", nil, nil, nil) == SQLITE_OK else {
                 throw ClientFailure(L10n.text("Не удалось сохранить архив", "Could not save archive"))
             }
             do {
                 try put(db: db, key: "app", bytes: JSONEncoder().encode(ConversationIdentity.migrated(state)))
-                if let summary { try put(db: db, key: "archiveSummary:" + summary.threadID, bytes: JSONEncoder().encode(summary)) }
+                for summary in summaries { try put(db: db, key: "archiveSummary:" + summary.threadID, bytes: JSONEncoder().encode(summary)) }
                 guard sqlite3_exec(db, "COMMIT", nil, nil, nil) == SQLITE_OK else {
                     throw ClientFailure(L10n.text("Не удалось сохранить архив", "Could not save archive"))
                 }

@@ -8,6 +8,7 @@ import UserNotifications
     weak var model: DeskModel?
     let keepAwake = KeepAwake()
     let restart = AppRestartController()
+    private var shutdownDeadline: DispatchWorkItem?
     func applicationDidFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
         NSApplication.shared.setActivationPolicy(.regular)
@@ -27,6 +28,8 @@ import UserNotifications
             if alert.runModal() != .alertFirstButtonReturn { return .terminateCancel }
         }
         restart.terminating = true
+        AppLog.lifecycle.notice("Quit started (restart requested: \(self.restart.requested, privacy: .public))")
+        armShutdownDeadline()
         Task {
             if restart.requested {
                 do {
@@ -35,6 +38,7 @@ import UserNotifications
                     // Saving suspends; work may have arrived in the meantime.
                     guard model.readyForRestart else {
                         restart.terminating = false
+                        disarmShutdownDeadline("work arrived while saving")
                         sender.reply(toApplicationShouldTerminate: false)
                         return
                     }
@@ -42,6 +46,7 @@ import UserNotifications
                 } catch {
                     restart.terminating = false
                     restart.cancel()
+                    disarmShutdownDeadline("restart preparation failed")
                     model?.error = L10n.text("Не удалось подготовить перезапуск: ", "Could not prepare restart: ") + error.localizedDescription
                     sender.reply(toApplicationShouldTerminate: false)
                     return
@@ -50,6 +55,23 @@ import UserNotifications
             await model?.shutdown(); sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
+    }
+    // Quit runs in terminateLater state where the app ignores input and Cmd+Q, so a stalled
+    // shutdown step would otherwise need Force Quit. The deadline runs off the main thread.
+    private func armShutdownDeadline() {
+        shutdownDeadline?.cancel()
+        let item = DispatchWorkItem(block: Self.exitAfterStalledShutdown)
+        shutdownDeadline = item
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 15, execute: item)
+    }
+    // Nonisolated so the off-main deadline never asserts main-actor isolation.
+    nonisolated private static func exitAfterStalledShutdown() {
+        AppLog.lifecycle.fault("Shutdown did not finish within 15 s; exiting without the remaining steps")
+        _exit(0)
+    }
+    private func disarmShutdownDeadline(_ reason: String) {
+        shutdownDeadline?.cancel(); shutdownDeadline = nil
+        AppLog.lifecycle.notice("Quit cancelled: \(reason, privacy: .public)")
     }
     func applicationWillTerminate(_ notification: Notification) { keepAwake.stop() }
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {

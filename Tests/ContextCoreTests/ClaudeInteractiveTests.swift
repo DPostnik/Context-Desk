@@ -281,6 +281,8 @@ private func interactiveRequest(context: AgentContext, root: URL, session: Agent
     await model.renameChat(chat.id, title: "Claude review")
     await model.setChatArchived(chat.id, archived: true)
     #expect(model.isArchived(chat.id))
+    #expect(model.archiveSummaries[chat.id] == nil)
+    await model.queueMissingArchiveSummaries()
     await model.summaryTask?.value
     // A chat without turns has nothing to summarize: the record completes without a model call.
     #expect(model.archiveSummaries[chat.id]?.status == .ready)
@@ -479,6 +481,7 @@ private func completedClaudeSession(_ adapter: ClaudeIntegration, binary: URL, h
     model.claudeConnected = true; model.claudeAuthenticated = true
     #expect(model.canGenerateSummary(chat.id))
     await model.setChatArchived(chat.id, archived: true)
+    await model.queueMissingArchiveSummaries()
     await model.summaryTask?.value
     let record = try #require(model.archiveSummaries[chat.id])
     #expect(record.status == .ready)

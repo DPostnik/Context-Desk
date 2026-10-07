@@ -189,25 +189,61 @@ func summaryRunnerRoutesAndFailsClosed(mode: String, version: String) async thro
     model.state.chats = [Chat(id: "source", projectID: project.id, title: "Report", model: "fixture-model")]
     model.connected = true; model.authenticated = true
     await model.setChatArchived("source", archived: true)
+    // Archiving alone never spends allowance on a summary.
+    #expect(model.archiveSummaries["source"] == nil)
+    #expect(model.summaryTask == nil)
+    await model.queueMissingArchiveSummaries()
     await model.summaryTask?.value
     #expect(model.archiveSummaries["source"]?.status == .ready)
     #expect(try await store.loadArchiveSummaries()["source"]?.status == .ready)
     let original = try Data(contentsOf: home.appendingPathComponent("source.json"))
     await model.setChatArchived("source", archived: false)
     await model.setChatArchived("source", archived: true)
+    #expect(model.archiveSummaries["source"]?.status == .stale)
+    #expect(try await store.loadArchiveSummaries()["source"]?.status == .stale)
+    #expect(model.summaryTask == nil)
+    await model.retryArchiveSummary("source")
     await model.summaryTask?.value
+    #expect(model.archiveSummaries["source"]?.status == .ready)
     #expect(try Data(contentsOf: home.appendingPathComponent("source.json")) == original)
     var calls = try String(contentsOf: home.appendingPathComponent("calls.jsonl"), encoding: .utf8)
     #expect(calls.components(separatedBy: #""method": "turn/start""#).count - 1 == 1)
     await model.setChatArchived("source", archived: false)
     try JSONEncoder().encode(history("Correction: prepare monthly report")).write(to: home.appendingPathComponent("source.json"))
     await model.setChatArchived("source", archived: true)
+    await model.retryArchiveSummary("source")
     await model.summaryTask?.value
     #expect(model.archiveSummaries["source"]?.status == .ready)
     calls = try String(contentsOf: home.appendingPathComponent("calls.jsonl"), encoding: .utf8)
     #expect(calls.components(separatedBy: #""method": "turn/start""#).count - 1 == 2)
     #expect(model.state.chats.count == 1)
     #expect(model.items.isEmpty)
+    await model.shutdown()
+}
+
+@Test @MainActor func bulkArchiveConfirmsEveryChatWithoutQueueingSummaries() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let home = root.appendingPathComponent("codex")
+    let executable = try fixture(home)
+    let connection = CodexConnection()
+    try await connection.start(executable: executable, home: home)
+    let store = AppStore(file: root.appendingPathComponent("metadata.sqlite"))
+    let model = DeskModel(connection: CodexIntegration(client: CodexClient(transport: connection)), store: store, pluginDirectory: root.appendingPathComponent("plugins"),
+                          summaryResources: skills, summaryExecutable: executable, summaryHome: home)
+    let project = Project(path: root.path)
+    model.state.projects = [project]
+    model.state.chats = ["first", "second", "third"].map { Chat(id: $0, projectID: project.id, title: $0, model: "fixture-model") }
+    model.connected = true; model.authenticated = true
+    await model.archiveChats(["first", "second", "third"])
+    #expect(model.error == nil)
+    #expect(model.state.chats.allSatisfy { $0.isArchived })
+    let saved = try await store.load()
+    #expect(saved.chats.allSatisfy { $0.isArchived })
+    #expect(model.archiveSummaries.isEmpty && model.summaryTask == nil)
+    let calls = try String(contentsOf: home.appendingPathComponent("calls.jsonl"), encoding: .utf8)
+    #expect(calls.components(separatedBy: "thread/archive").count - 1 == 3)
+    #expect(!calls.contains("turn/start"))
     await model.shutdown()
 }
 

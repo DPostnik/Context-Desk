@@ -716,20 +716,43 @@ private struct ChatRunState {
         !isChangingChat(id) && summaryActiveThread != id && !isBusy(threadID: id) &&
         runs[id]?.sending != true && !pending.contains(where: { $0.threadID == id })
     }
-    /// Archives one chat at a time; failures keep the remaining chats and are reported once.
+    /// Confirms all chats with their agents concurrently, then commits the confirmed ones in one save.
+    /// Failures keep the remaining chats and are reported once.
     func archiveChats(_ ids: [String]) async {
-        var failed = 0
-        var firstError: String?
-        for id in ids where !isArchived(id) {
-            error = nil
-            if !(await setChatArchived(id, archived: true, revealArchive: false)) {
-                failed += 1
-                if firstError == nil { firstError = error }
-            }
+        let ids = ids.filter { !isArchived($0) }
+        var failures: [String?] = []
+        var targets: [(id: String, client: AgentClient, session: AgentSessionReference)] = []
+        for id in ids {
+            guard canDeleteChat(id), let client = try? clientForChat(id), let session = try? sessionForChat(id) else { failures.append(nil); continue }
+            targets.append((id, client, session))
         }
+        let targetIDs = Set(targets.map(\.id))
+        archivingChatIDs.formUnion(targetIDs)
+        for id in targetIDs { runs[id, default: ChatRunState()].queuePaused = true }
+        defer { archivingChatIDs.subtract(targetIDs) }
+        let results = await withTaskGroup(of: (String, String?).self) { group in
+            for target in targets {
+                group.addTask {
+                    do { try await target.client.setArchived(true, session: target.session); return (target.id, nil) }
+                    catch { return (target.id, error.localizedDescription) }
+                }
+            }
+            var results: [String: String?] = [:]
+            for await (id, failure) in group { results[id] = failure }
+            return results
+        }
+        var confirmed: [String] = []
+        for target in targets {
+            if let failure = results[target.id] ?? nil {
+                failures.append(L10n.text("Не удалось подтвердить архивирование: ", "Could not confirm archiving: ") + failure)
+            } else { confirmed.append(target.id) }
+        }
+        applyArchived(confirmed, archived: true, revealArchive: false)
+        await saveArchived(confirmed)
         if selectedChatIsArchived { newChat() }
-        if failed > 0 {
-            error = L10n.text("Не удалось заархивировать чатов: \(failed) из \(ids.count).", "Could not archive \(failed) of \(ids.count) chats.") + (firstError.map { " " + $0 } ?? "")
+        if !failures.isEmpty {
+            let first = failures.compactMap { $0 }.first
+            error = L10n.text("Не удалось заархивировать чатов: \(failures.count) из \(ids.count).", "Could not archive \(failures.count) of \(ids.count) chats.") + (first.map { " " + $0 } ?? "")
         }
     }
     @discardableResult
@@ -744,28 +767,35 @@ private struct ChatRunState {
             self.error = (archived ? L10n.text("Не удалось подтвердить архивирование: ", "Could not confirm archiving: ") : L10n.text("Не удалось подтвердить восстановление: ", "Could not confirm restoring: ")) + error.localizedDescription
             return false
         }
-        guard let index = state.chats.firstIndex(where: { $0.id == id }) else { return false }
-        state.chats[index].archived = archived
-        if chatID == id {
-            if !archived { archiveViewingChat = false }
-            else if revealArchive { openArchive() }
-        }
-        state.chats[index].sidebarOrder = nil
-        loadedThreads.remove(id)
-        do {
-            var summary: ArchiveSummaryRecord?
-            if archived && supportsSummaries(id) {
-                var record = archiveSummaries[id] ?? ArchiveSummaryRecord(threadID: id, projectID: state.chats[index].projectID)
-                // An unknown outcome remains stopped even if the chat is archived again.
-                if record.status != .uncertain { record.enqueue() }
-                summary = record
-            }
-            try await store.saveArchivingChat(state, summary: summary)
-            if let summary { archiveSummaries[id] = summary }
-            startSummaryQueue()
-        }
-        catch { self.error = L10n.text("Статус чата изменён у агента, но не удалось сохранить его в приложении: ", "The chat status changed in the agent, but could not be saved in the app: ") + error.localizedDescription }
+        guard state.chats.contains(where: { $0.id == id }) else { return false }
+        applyArchived([id], archived: archived, revealArchive: revealArchive)
+        await saveArchived([id])
         return true
+    }
+    /// Applies agent-confirmed status changes in memory. Summaries are never queued here:
+    /// they are generated only on explicit request from the archive.
+    private func applyArchived(_ ids: [String], archived: Bool, revealArchive: Bool) {
+        for id in ids {
+            guard let index = state.chats.firstIndex(where: { $0.id == id }) else { continue }
+            state.chats[index].archived = archived
+            if chatID == id {
+                if !archived { archiveViewingChat = false }
+                else if revealArchive { openArchive() }
+            }
+            state.chats[index].sidebarOrder = nil
+            loadedThreads.remove(id)
+            // A summary from an earlier archive may no longer match the conversation.
+            if archived, var record = archiveSummaries[id], record.status == .ready {
+                record.status = .stale
+                record.issue = L10n.text("Чат восстанавливали из архива, итог может быть устаревшим", "The chat was restored from the archive; the summary may be outdated")
+                archiveSummaries[id] = record
+            }
+        }
+    }
+    private func saveArchived(_ ids: [String]) async {
+        guard !ids.isEmpty else { return }
+        do { try await store.saveArchivingChats(state, summaries: ids.compactMap { archiveSummaries[$0] }) }
+        catch { self.error = L10n.text("Статус чата изменён у агента, но не удалось сохранить его в приложении: ", "The chat status changed in the agent, but could not be saved in the app: ") + error.localizedDescription }
     }
     func deleteChat(_ id: String) async {
         guard canDeleteChat(id) else { return }
@@ -1315,22 +1345,27 @@ private struct ChatRunState {
         }
     }
     func shutdown() async {
+        // Each awaited step is logged so a stalled quit names the step that never returned.
+        let log = AppLog.lifecycle
+        func step(_ name: String) { log.notice("Shutdown step: \(name, privacy: .public)") }
         flushDeltas()
         photoCleanupTask?.cancel(); photoCleanupTask = nil
-        await mobileRemote.disable()
+        step("mobile remote"); await mobileRemote.disable()
         historyBackfillTask?.cancel()
         for task in historyRefreshTasks.values { task.cancel() }
+        step("chat titles (\(titleTasks.count))")
         for id in Array(titleTasks.keys) { await cancelChatTitle(id) }
-        await stopScheduler()
+        step("scheduler"); await stopScheduler()
         summaryTask?.cancel()
-        await cancelHandoffPreparation()
-        await summaryRunner.stop()
+        step("handoff"); await cancelHandoffPreparation()
+        step("summary runners"); await summaryRunner.stop()
         await claudeSummaryRunner.stop()
-        await summaryTask?.value
-        await connection.stop()
-        await claudeConnection.stop()
+        step("summary queue"); await summaryTask?.value
+        step("Codex connection"); await connection.stop()
+        step("Claude connection"); await claudeConnection.stop()
         claudeEventTask?.cancel()
-        await stopPlugins()
+        step("plugins"); await stopPlugins()
+        step("done")
     }
     func saveAgentChoice() { persist() }
     func selectAgent(_ agent: AgentConnectionID) {

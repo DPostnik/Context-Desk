@@ -6,4 +6,5 @@ import os
 enum AppLog {
     static let subsystem = "local.daniil.contextdesk"
     static let chatTitle = Logger(subsystem: subsystem, category: "chat-title")
+    static let lifecycle = Logger(subsystem: subsystem, category: "lifecycle")
 }
