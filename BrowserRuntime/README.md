@@ -31,9 +31,18 @@ Existing profiles are never adopted. Website cookies are copied only by an expli
 The component is disabled by default. Turning it off also requires Apply or restart.
 
 Browser data lives in `~/Library/Application Support/Context Desk/browser/`.
+File uploads also accept files inside the current thread's project directory,
+supplied by the host as the MCP process working directory. The adapter forwards
+that canonical directory separately from browser storage to Chrome DevTools;
+the upstream path and symlink checks remain enabled. Updating this setting in
+code requires rebuilding and reconnecting the adapter; an existing process keeps
+its original roots. No file copying into browser storage is needed.
 `records/` contains private page checkpoints, action IDs and call/byte/time metrics.
 Records persist until you delete them; they may contain job or other page data.
 No automatic action replay or automatic continuation after reconnect is performed.
+Closing an owned tab sends one close action, then briefly polls the page inventory
+to confirm disappearance. An unconfirmed close stops the executor for review;
+the close action is never automatically repeated.
 Each chat has its own persistent profile, Chrome process and executor. Operations
 are serialized within one environment and run concurrently across environments.
 After Chrome exits, call `browser_open` explicitly to start a new task with the
@@ -72,9 +81,18 @@ Chrome остаётся открытым при переподключении �
 тоже применяется кнопкой или после перезапуска.
 
 Данные находятся в `~/Library/Application Support/Context Desk/browser/`.
+Загрузка файлов также доступна из папки проекта текущего чата, которую приложение
+задаёт как рабочий каталог MCP-процесса. Адаптер передаёт её канонический путь
+в Chrome DevTools отдельно от служебной папки браузера. Проверки путей и симлинков
+остаются включены. После изменения кода нужны сборка и переподключение адаптера:
+уже работающий процесс сохраняет прежние разрешённые каталоги. Копировать файлы
+в служебную папку браузера не требуется.
 В `records/` сохраняются контрольные точки страниц, ID действий и счётчики
 вызовов, объёма ответов и времени. Записи хранятся до ручного удаления и могут
-содержать данные вакансий или других страниц. Действия не повторяются автоматически;
+содержать данные вакансий или других страниц. Закрытие своей вкладки отправляется
+один раз; затем адаптер короткое время перечитывает список вкладок для подтверждения.
+Если закрытие не подтверждено, executor останавливается для проверки, без повтора
+команды закрытия. Действия не повторяются автоматически;
 после переподключения задача не продолжается сама. Рабочей вкладкой владеет одна
 задача. У каждого чата свой профиль, процесс Chrome и исполнитель; операции
 разных сред выполняются параллельно.

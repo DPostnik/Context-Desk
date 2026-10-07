@@ -1,0 +1,57 @@
+{
+  "kind": "production-browser-adapter-check",
+  "model_called": false,
+  "scheduler_run": false,
+  "profile": "temporary-synthetic-only",
+  "chrome_devtools_mcp": "1.10.1",
+  "runs": [
+    {
+      "snapshot": "1",
+      "pages": 2,
+      "cards": 4,
+      "matching": [
+        "W-101",
+        "W-103"
+      ],
+      "new": [
+        "W-101",
+        "W-103"
+      ],
+      "seen": [
+        "W-101",
+        "W-103"
+      ]
+    },
+    {
+      "snapshot": "1",
+      "pages": 2,
+      "cards": 4,
+      "matching": [
+        "W-101",
+        "W-103"
+      ],
+      "new": [],
+      "seen": [
+        "W-101",
+        "W-103"
+      ]
+    },
+    {
+      "snapshot": "2",
+      "pages": 2,
+      "cards": 4,
+      "matching": [
+        "W-101",
+        "W-104"
+      ],
+      "new": [
+        "W-104"
+      ],
+      "seen": [
+        "W-101",
+        "W-103",
+        "W-104"
+      ]
+    }
+  ]
+}

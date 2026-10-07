@@ -20,7 +20,7 @@ public struct AgentModelInfo: Hashable, Sendable {
 
 }
 
-public struct AgentHistoryTurn: Sendable {
+public struct AgentHistoryTurn: Codable, Sendable {
     public let id: String?
     public let items: [TranscriptItem]
     public let isComplete: Bool

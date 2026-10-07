@@ -162,7 +162,7 @@ public struct AgentExecutionHandle: Codable, Hashable, Sendable {
 }
 
 public enum AgentAuthenticationAction: Sendable { case beginSignIn, signOut }
-public enum AgentAuthenticationStep: Sendable { case complete, openURL(URL), externalCLIRequired }
+public enum AgentAuthenticationStep: Sendable { case complete, openURL(URL), openLocalSignIn(URL), externalCLIRequired }
 public enum AgentCancellation: Sendable { case confirmed, requested, uncertain, alreadyFinished }
 
 /// One adapter instance per connection. Implementations must validate immediately before dispatch.

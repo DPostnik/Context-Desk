@@ -419,3 +419,16 @@ import ContextTranscript
     view.update(items: [TranscriptItem(id: "u", kind: "user", text: "> user content")], conversationID: "other", followOutput: false)
     #expect(controls().isEmpty)
 }
+
+@Test @MainActor func claudeTranscriptPreservesAgentInLiveAndPortableHistory() {
+    let source = AgentSessionReference(connection: .appClaude, nativeID: "fixture")
+    let snapshot = AgentTranscriptSnapshot(conversation: ConversationID("claude"), source: source,
+        revision: "r1", capturedAt: Date(), completeness: .partial,
+        items: [.init(id: "assistant", kind: .assistant, text: "Claude answer"), .init(id: "tool", kind: .activity, text: "Read file")])
+    let items = LocalHistory.items(snapshot)
+    #expect(items.allSatisfy { $0.agentName == "Claude" })
+    let view = TranscriptScrollView()
+    view.update(items: items, conversationID: "claude", followOutput: false)
+    #expect(view.transcript.string.contains("Claude"))
+    #expect(!view.transcript.string.contains("Codex"))
+}

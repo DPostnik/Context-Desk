@@ -11,6 +11,7 @@ struct ProjectHeader<Content: View>: NSViewRepresentable {
     let targeted: (Bool) -> Void
     let moveUp: (() -> Void)?
     let moveDown: (() -> Void)?
+    var remove: (() -> Void)? = nil
     @ViewBuilder var content: Content
 
     func makeNSView(context: Context) -> ProjectHeaderView {
@@ -37,6 +38,7 @@ struct ProjectHeader<Content: View>: NSViewRepresentable {
         view.targeted = targeted
         view.moveUp = moveUp
         view.moveDown = moveDown
+        view.remove = remove
         view.setAccessibilityElement(true)
         view.setAccessibilityRole(.button)
         view.setAccessibilityLabel(project.name)
@@ -151,6 +153,7 @@ class SidebarRowView: NSView, NSDraggingSource {
 }
 
 class ProjectHeaderView: SidebarRowView {
+    var remove: (() -> Void)?
     static let pasteboardType = NSPasteboard.PasteboardType("com.contextdesk.project-order")
     var projectID = UUID()
     var move: (UUID) -> Bool = { _ in false }
@@ -173,8 +176,13 @@ class ProjectHeaderView: SidebarRowView {
         up.target = self; up.isEnabled = moveUp != nil
         let down = menu.addItem(withTitle: L10n.text("Переместить ниже", "Move down"), action: #selector(performMoveDown), keyEquivalent: "")
         down.target = self; down.isEnabled = moveDown != nil
+        menu.addItem(.separator())
+        let removeItem = menu.addItem(withTitle: L10n.text("Убрать проект из списка", "Remove project from list"), action: #selector(performRemove), keyEquivalent: "")
+        removeItem.target = self; removeItem.isEnabled = remove != nil
+        removeItem.toolTip = L10n.text("Файлы и чаты сохранятся. Вернуть проект можно через «Добавить проект».", "Files and chats are kept. Restore it with Add project.")
         return menu
     }
     @objc private func performMoveUp() { moveUp?() }
     @objc private func performMoveDown() { moveDown?() }
+    @objc private func performRemove() { remove?() }
 }

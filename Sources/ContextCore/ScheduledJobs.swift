@@ -1,7 +1,7 @@
 import Foundation
 import TOMLDecoder
 
-public struct ScheduledJob: Identifiable, Sendable {
+public struct ScheduledJob: Identifiable, Codable, Sendable {
     public var id: String
     public var name: String
     public var status: String
@@ -31,6 +31,16 @@ public enum ScheduledJobs {
         var reasoning_effort: String?
         var cwds: [String]?
     }
+    static func decode(_ bytes: Data, id: String) throws -> ScheduledJob {
+        let d = try TOMLDecoder().decode(Definition.self, from: bytes)
+        guard d.id == id else { throw ScheduleControl.invalid }
+        let known = d.kind == "cron" || d.kind == "heartbeat"
+        return ScheduledJob(id: id, name: d.name, status: d.status ?? "UNKNOWN",
+                    kind: d.kind ?? "unknown", schedule: readableSchedule(d.rrule ?? ""),
+                    prompt: d.prompt ?? "", targetThread: d.target_thread_id,
+                    issue: known && (d.version == nil || d.version == 1) ? nil : L10n.text("Неизвестный формат; показаны доступные поля", "Unknown format; showing available fields"),
+                    rawRule: d.rrule ?? "", model: d.model ?? "", effort: d.reasoning_effort ?? "", paths: d.cwds ?? [])
+    }
     public static func read(directory: URL) -> [ScheduledJob] {
         let folders = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
         return folders.compactMap { folder in
@@ -39,13 +49,7 @@ public enum ScheduledJobs {
             do {
                 let bytes = try Data(contentsOf: file)
                 guard bytes.count < 2 * 1024 * 1024 else { throw ClientFailure(L10n.text("Слишком большой файл задания", "The job file is too large")) }
-                let d = try TOMLDecoder().decode(Definition.self, from: bytes)
-                let known = d.kind == "cron" || d.kind == "heartbeat"
-                return ScheduledJob(id: folder.lastPathComponent, name: d.name, status: d.status ?? "UNKNOWN",
-                                    kind: d.kind ?? "unknown", schedule: readableSchedule(d.rrule ?? ""),
-                                    prompt: d.prompt ?? "", targetThread: d.target_thread_id,
-                                    issue: known && (d.version == nil || d.version == 1) ? nil : L10n.text("Неизвестный формат; показаны доступные поля", "Unknown format; showing available fields"),
-                                    rawRule: d.rrule ?? "", model: d.model ?? "", effort: d.reasoning_effort ?? "", paths: d.cwds ?? [])
+                return try decode(bytes, id: folder.lastPathComponent)
             } catch {
                 return ScheduledJob(id: folder.lastPathComponent, name: folder.lastPathComponent, status: "UNKNOWN",
                                     kind: "unknown", schedule: L10n.text("Нет данных", "No data"), prompt: "", issue: L10n.text("Не удалось прочитать определение задания", "Could not read the job definition"))

@@ -1,0 +1,32 @@
+name: Bug report
+description: Report a reproducible problem with Context Desk.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: "Use a synthetic example. Do not attach credentials, raw chat history, private project paths, or your Application Support directory."
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: macOS, chip, Swift/Xcode version, Codex version, Context Desk commit, and optional integrations in use.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include the command or demo step that failed, with identifying details removed.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Redacted evidence
+      description: Minimal error text or a cropped, reviewed screenshot. Remove account details and local paths.

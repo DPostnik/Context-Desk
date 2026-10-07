@@ -8,7 +8,10 @@ public struct ScheduleControlRequest: Codable, Sendable {
     public var id: UUID
     public var expires: Date
     public var operation: String
+    public var importRequest: ScheduleImport?
     public var expected: ManagedJob?
+    public var model: String?
+    public var effort: String?
     public var prompt: String?
     public var enabled: Bool?
     public var confirmSourceDisabled: Bool?
@@ -22,6 +25,7 @@ public struct ScheduleControlReply: Codable, Sendable {
     public var status: String
     public var jobs: [ManagedJob]?
     public var message: String?
+    public var catalog: ScheduleCatalog?
     public init(id: UUID, status: String, jobs: [ManagedJob]? = nil, message: String? = nil) {
         self.id = id; self.status = status; self.jobs = jobs; self.message = message
     }
@@ -43,6 +47,14 @@ public enum ScheduleControl {
     }
     public static func updated(_ request: ScheduleControlRequest, originalPaused: Bool) throws -> ManagedJob {
         guard ["update", "browser-import"].contains(request.operation), var job = request.expected else { throw invalid }
+        guard (request.model == nil) == (request.effort == nil) else { throw invalid }
+        if let model = request.model, let effort = request.effort {
+            guard !model.isEmpty, model.count <= 128,
+                  model == model.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !model.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }),
+                  ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"].contains(effort) else { throw invalid }
+            job.model = model; job.effort = effort
+        }
         if request.operation == "browser-import" {
             guard (request.browserSessionImport != nil) != (request.clearBrowserSessionImport == true),
                   request.prompt == nil, request.enabled == nil, request.confirmSourceDisabled == nil else { throw invalid }
@@ -67,6 +79,7 @@ public enum ScheduleControl {
 
     /// Transport consumes bounded JSON, never commands or executable text.
     @MainActor public static func drain(directory: URL, now: Date = Date(),
+        catalog: () throws -> ScheduleCatalog = { ScheduleCatalog() },
         handle: (ScheduleControlRequest) async throws -> [ManagedJob]) async throws {
         let fm = FileManager.default
         try fm.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -93,19 +106,29 @@ public enum ScheduleControl {
             do {
                 let data = try Data(contentsOf: claim)
                 guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      Set(object.keys).isSubset(of: ["version", "id", "expires", "operation", "browserSessionImport", "clearBrowserSessionImport", "expected", "prompt", "enabled", "confirmSourceDisabled"]) else { throw invalid }
+                      Set(object.keys).isSubset(of: ["version", "id", "expires", "operation", "browserSessionImport", "clearBrowserSessionImport", "expected", "prompt", "enabled", "confirmSourceDisabled", "importRequest", "model", "effort"]) else { throw invalid }
                 let request = try JSONDecoder().decode(ScheduleControlRequest.self, from: data)
                 guard request.version == 1, request.id == id, request.expires > now,
                       request.expires.timeIntervalSince(now) <= 600,
-                      ["list", "update", "browser-import"].contains(request.operation) else { throw invalid }
+                      ["list", "update", "catalog", "import", "browser-import"].contains(request.operation) else { throw invalid }
                 if request.operation == "browser-import", !Set(object.keys).isSubset(of: ["version", "id", "expires", "operation", "expected", "browserSessionImport", "clearBrowserSessionImport"]) { throw invalid }
                 if request.operation != "browser-import", request.browserSessionImport != nil || request.clearBrowserSessionImport != nil { throw invalid }
                 if let policy = object["browserSessionImport"] as? [String: Any], Set(policy.keys) != Set(["profile", "site"]) { throw invalid }
-                if request.operation == "list" {
+                if request.operation == "list" || request.operation == "catalog" {
                     guard request.expected == nil, request.prompt == nil, request.enabled == nil,
-                          request.confirmSourceDisabled == nil else { throw invalid }
+                          request.confirmSourceDisabled == nil, request.importRequest == nil,
+                          request.model == nil, request.effort == nil else { throw invalid }
                 }
-                reply = ScheduleControlReply(id: id, status: "completed", jobs: try await handle(request))
+                if request.operation == "import" {
+                    guard let imported = object["importRequest"] as? [String: Any],
+                          Set(imported.keys).isSubset(of: ["sourceID", "sourceDigest", "projectID", "timeZone", "model", "effort", "recurring", "prompt"]),
+                          request.importRequest != nil, request.expected == nil, request.prompt == nil,
+                          request.enabled == nil, request.confirmSourceDisabled == nil,
+                          request.model == nil, request.effort == nil else { throw invalid }
+                } else if request.importRequest != nil { throw invalid }
+                var completed = ScheduleControlReply(id: id, status: "completed", jobs: try await handle(request))
+                if request.operation == "catalog" { completed.catalog = try catalog() }
+                reply = completed
             } catch {
                 reply = ScheduleControlReply(id: id, status: error is ScheduleControlUncertain ? "uncertain" : "rejected", message: error.localizedDescription)
             }

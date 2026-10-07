@@ -193,6 +193,17 @@ public actor JobStore {
         }
         return value
     }
+    public func insertImported(_ job: ManagedJob) throws -> JobLedger {
+        try job.validate()
+        var value = try load()
+        guard !job.enabled, !job.sourceDisabled, job.nextRun == nil, let source = job.source,
+              !value.jobs.contains(where: { $0.id == job.id || $0.source == source }) else {
+            throw ClientFailure(L10n.text("Это расписание уже импортировано или копия не выключена.", "This schedule is already imported or the copy is not disabled."))
+        }
+        value.jobs.append(job)
+        do { try commit(value) } catch { throw ScheduleControlUncertain() }
+        return value
+    }
     public func remove(_ id: UUID) throws -> JobLedger {
         var value = try load()
         guard !value.runs.contains(where: { $0.jobID == id && $0.status.active }) else { throw Self.busy }

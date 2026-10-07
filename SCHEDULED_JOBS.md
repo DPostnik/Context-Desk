@@ -15,9 +15,9 @@ Context Desk owns a local scheduler under the user's authorization of 2026-09-27
 
 **Codex:** creates a fresh normal app chat per run, using the task's saved model, effort and route, and the project's current permissions. Existing chat selection and draft remain intact. Approval and user-input requests use the normal chat UI. History links to the resulting chat; deleting that chat removes access to its transcript, not the task's run metadata. The app's dedicated Codex home remains authoritative; external threads, credentials and settings are not imported.
 
-**Claude Code:** uses the installed CLI, pinned to the verified `2.1.260` print JSON protocol. It uses existing Claude authentication and project/user permission rules in place; it does not copy credentials. `dontAsk` and `--permission-prompts none` deny actions requiring new approvals. There is no bypass/auto-approval flag. Permission denials are reported as blocked without changing the schedule. Results are retained in the task history, not as resumable Codex chats (`--no-session-persistence`). The runner passes prompts through stdin without a shell, limits each run to one hour and 8 MiB of output, and supports stopping. Stopping after dispatch leaves an uncertain outcome because terminating the CLI cannot confirm all side effects. Full Claude interactive conversation support is separate work.
+**Claude Code:** uses the installed CLI, pinned to the verified `2.1.292` print JSON protocol. It uses existing Claude authentication and project/user permission rules in place; it does not copy credentials. `dontAsk` and `--permission-prompts none` deny actions requiring new approvals. There is no bypass/auto-approval flag. Permission denials are reported as blocked without changing the schedule. Results are retained in the task history, not as resumable Codex chats (`--no-session-persistence`). The runner passes prompts through stdin without a shell, limits each run to one hour and 8 MiB of output, and supports stopping. Stopping after dispatch leaves an uncertain outcome because terminating the CLI cannot confirm all side effects. Full Claude interactive conversation support is separate work.
 
-Claude tasks require a full-access project **and** explicit per-task consent to external Claude policy in the editor. Standard project restrictions are rejected before dispatch, even if consent is checked. Existing/imported tasks receive no automatic consent. The CLI controls account and routing; it is not a verified direct or app-optimizer route. App optimizer routes and reasoning-effort overrides are rejected. The editor exposes these capability limits in Russian and English.
+Claude tasks require a full-access project **and** explicit per-task consent to external Claude policy in the editor. Standard project restrictions are rejected before dispatch, even if consent is checked. Existing/imported tasks receive no automatic consent. The CLI controls account and routing; it is not a verified direct or app-optimizer route. App optimizer routes are rejected. A reasoning-effort override is forwarded to the CLI when it names a documented level (low, medium, high, xhigh, max); any other nonempty value is rejected before dispatch. The editor exposes these capability limits in Russian and English.
 
 Both engines now run through the typed `AgentScheduledExecutor` contract. The separate `ClaudeAdapter` target owns the native print runner; Codex retains app chat bookkeeping and uses `AgentIntegration` for execution. No engine fallback or automatic retry is introduced.
 
@@ -32,8 +32,8 @@ Source contracts: [Claude Desktop scheduled tasks](https://code.claude.com/docs/
 ## Chat control — 2026-09-27
 
 The bundled [schedule-control skill](Skills/schedule-control/SKILL.md) lets an
-authorized agent list existing app-owned jobs, edit their instructions, enable
-or pause them without Apple Events. Its Python client sends private, expiring
+authorized agent list app-owned jobs, import recurring Codex definitions, edit
+instructions, enable or pause jobs without Apple Events. Its Python client sends private, expiring
 JSON requests to the running scheduler; it never edits the ledger directly.
 The app preserves project/model/route/permission settings and uses its existing
 JobStore and routine validation. Enabling a Codex import independently verifies
@@ -50,5 +50,31 @@ Receipts stay in the private home with no automatic retention policy yet.
 The scheduler polls every 15 seconds. The client waits up to 40 seconds per
 request, with a 60-second expiry. The app must be open and the Mac awake. New
 builds need Cmd+Q and reopen before their control channel is available. This
-feature does not add immediate execution, creation, deletion or external
-scheduler management; use the editor for existing operations outside its scope.
+feature does not add immediate execution, deletion or external scheduler
+management. Recurring Codex imports are supported as described below; other
+creation and schedule changes use the editor.
+
+
+## Recurring imports from chats — 2026-09-27
+
+The control client now supports `catalog` (source definitions with digests and
+existing project IDs) and `import --source-id ID --project-id UUID --time-zone ZONE
+--model MODEL --effort EFFORT --recurring [--prompt-file FILE]`. Imports always
+start disabled. The running owner validates the selected source digest, source
+identity, known format, exact recurring rule, existing project, explicit inherited
+model/effort, and unique source before saving. It never imports source sessions or
+credentials. A successful import reply is not a run result.
+
+The user's standing authorization permits agents to choose ongoing routines,
+pause originals through an available supported source tool and enable verified
+copies without another per-task confirmation. The source-disabled flag records
+verified state. Finite pilots and one-time tasks remain excluded. The new channel
+rejects unsupported expiry rules rather than removing them.
+
+The source app's `automation_update` tool is a separate capability; this app does
+not provide or emulate it. If it is not available, stop with the copy disabled.
+Never replace it with direct edits of external definitions or guessed IPC. When
+available, verify both source pause and absence of an active/uncertain source run,
+then enable and inspect the destination response. No automatic pause retry or
+source resume/rollback follows an uncertain result. Current Context Desk import
+support is implemented independently of that external capability limitation.

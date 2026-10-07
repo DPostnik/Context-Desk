@@ -9,7 +9,7 @@ import ClaudeAdapter
     #expect(en.contains("Autonomy in Context Desk"))
     #expect(ru.contains("Не считай молчание согласием"))
     #expect(en.contains("Silence is not consent"))
-    let arguments = ClaudeJobRunner.arguments(model: "model")
+    let arguments = ClaudeJobRunner.arguments(model: "model", effort: nil)
     #expect(arguments.contains("dontAsk"))
     #expect(!arguments.contains("bypassPermissions"))
     #expect(arguments.filter { $0 == "--append-system-prompt" }.count == 1)

@@ -12,7 +12,7 @@ private func claudeFixture(_ root: URL, body: String) throws -> URL {
     #!/usr/bin/python3
     import sys,json,pathlib,time
     if '--version' in sys.argv:
-        print('2.1.260 (Claude Code)'); sys.exit(0)
+        print('2.1.292 (Claude Code)'); sys.exit(0)
     pathlib.Path('sent').write_text(sys.stdin.read())
 
     """ + body).utf8).write(to: file)

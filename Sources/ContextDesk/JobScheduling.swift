@@ -140,14 +140,28 @@ import ContextCore
 @MainActor extension DeskModel {
     func processScheduleControl(directory: URL = Locations.root.appendingPathComponent("schedule-control"), originals: URL = Locations.automations) async {
         do {
-            try await ScheduleControl.drain(directory: directory) { request in
+            try await ScheduleControl.drain(directory: directory, catalog: {
+                try ScheduleImports.catalog(directory: originals, projects: self.state.projects.map { ScheduleProject(id: $0.id, path: $0.path) })
+            }) { request in
                 guard self.schedulerReady, !self.schedulerStopping else { throw ScheduleControl.invalid }
-                if request.operation == "list" { return try await self.jobStore.load().jobs }
+                if request.operation == "list" || request.operation == "catalog" { return try await self.jobStore.load().jobs }
+                if request.operation == "import" {
+                    guard let input = request.importRequest,
+                          let project = self.state.projects.first(where: { $0.id == input.projectID }),
+                          FileManager.default.fileExists(atPath: project.path) else { throw ScheduleControl.invalid }
+                    let job = try ScheduleImports.prepare(input, directory: originals, project: ScheduleProject(id: project.id, path: project.path))
+                    do { self.jobLedger = try await self.jobStore.insertImported(job) }
+                    catch {
+                        if error is ScheduleControlUncertain { self.schedulerReady = false }
+                        throw error
+                    }
+                    return self.jobLedger.jobs
+                }
                 let source = request.expected?.source
                 let paused = source.map { source in
-                    ScheduledJobs.read(directory: originals).contains {
-                        "codex:" + $0.id == source && $0.status == "PAUSED" && $0.issue == nil
-                    }
+                    guard source.hasPrefix("codex:"),
+                          let snapshot = try? ScheduleImports.source(String(source.dropFirst(6)), directory: originals) else { return false }
+                    return snapshot.definition.status == "PAUSED"
                 } ?? false
                 let job = try ScheduleControl.updated(request, originalPaused: paused)
                 guard let project = self.state.projects.first(where: { $0.id == job.projectID }),

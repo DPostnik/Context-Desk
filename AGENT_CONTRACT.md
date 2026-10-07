@@ -8,7 +8,7 @@ native method names, arbitrary JSON or permission-answer payloads.
 Execution paths use explicit app/native identity mapping (stage 2). Stage 3 is
 implemented: `CodexIntegration` conforms to this contract, and production uses
 `AgentClient` for interactive work, scheduled Codex submissions, history,
-interactions and background generation. Stage 4 now routes the scheduler through typed executors; stage 5 local history is in progress; stage 6 supports current execution paths (see `PORTABLE_WORK.md`). Interactive
+interactions and background generation. Stage 4 now routes the scheduler through typed executors; stage 5 includes local history and a locally implemented interactive Claude adapter awaiting authenticated acceptance; stage 6 supports current execution paths (see `PORTABLE_WORK.md`). Interactive
 Claude, portable transcript collection/backfill, general optimizer compatibility
 and externally installable agent modules are not delivered by extraction.
 
@@ -30,7 +30,7 @@ capability switch.
 | Native history/archive | Read/archive/unarchive supported | Unsupported with no session persistence |
 | Portable local transcript | Not yet implemented | Not yet implemented |
 | Isolated title/summary | Separate ephemeral runner, bounded recipes, tools disabled, schema checked, pinned version | Unsupported; never delegate to Codex |
-| Models/effort discovery | Supported | Unsupported; configured model string only |
+| Models/effort discovery | Supported | No discovery; app-owned catalog over the configured model string. Documented `--effort` levels are forwarded; an unknown level is rejected |
 | Token usage/account limits | Available where exposed by engine | Not normalized by current runner; unsupported, not zero |
 | Browser/workflow registration | App-owned browser launch settings and workflow roots; arbitrary live tool-server registration is explicitly unsupported | Unsupported by current runner |
 | Optimization route | Explicit direct or available Responses plugin; engine-specific configuration | External CLI configuration; neither verified direct nor verified optimizer route |
@@ -39,7 +39,7 @@ capability switch.
 Evidence: `Sources/ContextDesk/DeskModel.swift`, `JobScheduling.swift`,
 `Sources/ContextCore/Models.swift`, `Sources/ClaudeAdapter/ClaudeJobRunner.swift`,
 `Sources/CodexAdapter/ArchiveSummaryRunner.swift`, `BrowserConfiguration.swift`, `Sources/ContextCore/ProviderPlugin.swift`
-and `RequestRoute.swift`. Claude runner pins `2.1.260`; both interactive and isolated
+and `RequestRoute.swift`. Claude runner pins `2.1.292`; both interactive and isolated
 Codex paths now require `0.158.0-alpha.2.1`. The installed CLI reports that version.
 The interactive adapter checks the initialize response before advertising capabilities;
 isolated generation additionally verifies its own configuration and empty tool inventory.
@@ -410,7 +410,7 @@ The scheduler no longer dispatches or stops native runners by engine-specific br
 `CodexScheduledExecutor` is app orchestration: it validates the bound job and descriptor,
 then preserves chat creation, durable session/turn links and existing typed integration
 submission/events. Deferred results stay active until the matching event; the executor
-remains available for stop. `ClaudeAdapter` owns CLI discovery, pinned `2.1.260` checks,
+remains available for stop. `ClaudeAdapter` owns CLI discovery, pinned `2.1.292` checks,
 arguments, process capture and decoding. Core/UI cannot access its runner outside the
 composition root. The direct-build module/link recipe includes the separate target.
 
@@ -419,7 +419,9 @@ scheduled execution and interruption only. Each one-shot executor gets an epheme
 context; this is not a verified external account identity or account-management API.
 No credentials are copied and CLI routing is not represented as verified direct routing.
 A legacy direct route means no app optimizer, with external routing disclosed in UI;
-non-direct app routes are rejected. Nonempty effort overrides are rejected.
+non-direct app routes are rejected. Effort overrides are forwarded to the CLI as
+`--effort` when they name a documented level (low, medium, high, xhigh, max); any other
+nonempty value is rejected before dispatch.
 Explicit external-policy consent is stored as an optional field, absent on legacy/imported
 jobs. Only a full-access project plus that consent creates `externalPolicyDenyPrompts`.
 Standard workspace/network restrictions always fail closed, even with the consent flag.
@@ -452,8 +454,8 @@ only item events and successful history reads are persisted, so an interrupted s
 can leave incomplete text until a later successful read. Snapshot notices disclose this
 and distinguish missing local data from an empty conversation.
 
-This delivers the first local-history slice of stage 5, not interactive Claude or
-full two-engine acceptance. Live-provider/UI verification remains separate from the
+This describes the first local-history slice of stage 5. The interactive Claude
+follow-up is documented below; full two-engine live acceptance is still pending. Live-provider/UI verification remains separate from the
 synthetic adapter and model regression tests.
 
 ## Portable work and optimizer compatibility (stage 6)
@@ -475,3 +477,82 @@ claim of multi-agent compatibility. Both application setup and the plugin runtim
 reject incompatible profiles before process launch. Runtime route availability and
 pinned adapter-version checks remain independent requirements. No new provider
 combination or savings guarantee is inferred from a manifest.
+
+## Interactive Claude subscription profile (stage 5, local validation)
+
+The app now composes `ClaudeIntegration` alongside the existing Codex integration.
+New chats explicitly select an agent. Native references, pending interactions,
+queues, stop/history/archive operations and disconnect cleanup resolve by connection;
+a Codex failure does not reset a Claude turn. Titles, archive summaries, browser,
+workflows and model discovery remain unavailable for interactive Claude.
+Context/token usage (2026-10-07) is decoded inside `ClaudeAdapter` from main-thread
+stream-json usage blocks: occupancy is the latest call's uncached + cache-created +
+cache-read input plus output; the window comes from the terminal `result`'s
+`modelUsage[model].contextWindow`. `result.usage` is per turn, while `modelUsage`
+accumulates across `--resume`, so only its window is read. Cumulative counters, window
+and last occupancy persist in the adapter session record; subagent calls are excluded.
+The model field accepts an explicit Claude model or an empty engine default.
+Scheduled Claude jobs retain their existing external-CLI path and consent rules.
+
+Authentication uses the installed official Claude Code **2.1.292** binary. Settings
+opens a generated local `.command` running `claude auth login --claudeai`, with an
+allowlisted environment and `CLAUDE_CONFIG_DIR` inside the app-owned home. The user
+completes the subscription login in Terminal and clicks **Check sign-in**. No API-key
+entry, copied credentials, custom OAuth client, external profile import or Console
+login is provided. According to the [official authentication documentation](https://code.claude.com/docs/en/iam),
+`CLAUDE_CONFIG_DIR` scopes the macOS Keychain entry as well as credential files.
+This is a personal official-CLI integration; it is not a claim of authorization to
+redistribute a third-party subscription-authentication service.
+
+Execution uses the CLI's stream-json input/output, partial events, stdio permission
+control, initialize and interrupt messages. Native protocol stays in `ClaudeAdapter`.
+The bridge is based on the [official SDK control implementation](https://github.com/anthropics/claude-agent-sdk-python/blob/main/src/claude_agent_sdk/_internal/query.py)
+and checked against the pinned local CLI. Each user turn starts a process, with an
+explicit session UUID for the first turn and `--resume` for later turns. There is no
+automatic replay. Unknown control requests, malformed JSON, mismatched sessions and
+transport loss stop the process. Dispatched work without a terminal result is uncertain.
+Interrupt acknowledgment alone does not imply completion; a missing terminal result
+closes the process after a grace period and remains uncertain.
+
+Standard access deliberately offers **project files only**, not shell execution:
+`--restricted --tools Read,Glob,Grep,Write,Edit,AskUserQuestion`, default permissions,
+no app-added network tools. Full access uses the project's explicit unrestricted
+mode. Both use safe mode, empty user/project/local setting sources and strict empty
+MCP configuration. No app optimizer route is available. Permission responses allow
+only the exact tool input once; native permission-update suggestions are not applied.
+Only single-selection/free-text question schemas are supported; multi-select and
+unknown controls fail closed. Account checks precede dispatch, and a changed account
+invalidates old requests and interaction tokens. A malformed account response cannot
+reuse an earlier signed-in state.
+
+Adapter records in `claude/contextdesk-sessions` persist a claim before prompt bytes
+are written. Item events and terminal turns feed the shared SQLite snapshots. Claude
+snapshots are partial: the app retains normalized text/tool activity, not a complete
+native execution log, and interrupted text deltas may be absent. Native files remain
+in the isolated profile for resume. Archive/rename operate on app metadata; deleting
+a chat hides it locally and does not purge native CLI history or the source handoff.
+
+Validation distinguishes protocol fixtures from an authenticated provider session:
+fixture tests cover durable dispatch, streaming, resume, replay rejection, approval
+and question correlation, outside-project denial, unknown/malformed frames,
+interruption, changed/invalid authentication, scoped disconnects and Claude handoff/
+archive metadata. The installed CLI returned a successful initialize control response
+with the production standard-mode flags in an empty isolated profile; isolated auth
+status reported signed out. **Real subscription sign-in and the two-engine live
+start/interrupt/resume/archive acceptance check are deferred because the user has no Claude subscription.** The user confirmed that the sign-in action opened an Anthropic page offering a subscription. This verifies the observed navigation, not authentication or provider execution.
+
+### Available final verification, 2026-09-27
+
+The final local build and 164 regression tests passed. Native production views were
+rendered with fixture stores in Russian and English; this is not a claim of full UI
+automation. The archive banner no longer claims a local snapshot necessarily exists.
+
+Live Codex checks using only the app-owned profile verified response/history,
+context retention after a fresh connection, rename/archive/restore, and readable
+SQLite snapshots after engine disconnect. A streaming interruption received both
+an acknowledgment and the matching cancelled event. An earlier immediate interrupt
+RPC returned an error despite a native interrupted record; that attempt was not
+retried or counted as an acknowledged stop. Existing queues, permissions and native
+references were not transferred, and only newly created test sessions were archived.
+Claude's subscription-dependent acceptance remains deferred. Detailed local evidence
+and limitations are recorded in `docs/validation-stage5-2026-09-27.md`.

@@ -91,28 +91,28 @@ struct DeskView: View {
                     .padding(.horizontal, 12)
                 ScrollView {
                     VStack(alignment: .leading, spacing: 4) {
-                        if model.state.chats.contains(where: { $0.isPinned && !$0.isArchived }) {
+                        if !model.state.visiblePinnedChats.isEmpty {
                             Text(L10n.text("Избранное", "Favorites"))
                                 .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                                 .padding(.horizontal, 8).padding(.top, 8).padding(.bottom, 4)
-                            ForEach(model.state.chats.filter { chat in
-                                chat.isPinned && !chat.isArchived && (search.isEmpty || chat.title.localizedCaseInsensitiveContains(search)
+                            ForEach(model.state.visiblePinnedChats.filter { chat in
+                                (search.isEmpty || chat.title.localizedCaseInsensitiveContains(search)
                                     || model.state.projects.contains { $0.id == chat.projectID && ($0.name.localizedCaseInsensitiveContains(search) || $0.path.localizedCaseInsensitiveContains(search)) })
                             }) { chat in
                                 chatEntry(chat, favorite: true)
                             }
                             Divider().padding(.vertical, 6)
                         }
-                        Text(L10n.text("Папки проектов", "Project folders"))
+                        Text(L10n.text("Проекты", "Projects"))
                             .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                             .padding(.horizontal, 8).padding(.top, 8).padding(.bottom, 4)
-                        ForEach(model.state.projects.filter { project in
+                        ForEach(model.state.visibleProjects.filter { project in
                             search.isEmpty || project.name.localizedCaseInsensitiveContains(search) || project.path.localizedCaseInsensitiveContains(search) || model.state.chats.contains { $0.projectID == project.id && !$0.isArchived && $0.title.localizedCaseInsensitiveContains(search) }
                         }) { project in
                             projectEntries(project)
                         }
                         Button { model.openProject() } label: {
-                            Label(L10n.text("Добавить папки…", "Add folders…"), systemImage: "folder.badge.plus")
+                            Label(L10n.text("Добавить проект…", "Add project…"), systemImage: "folder.badge.plus")
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.horizontal, 8).padding(.vertical, 10).contentShape(Rectangle())
                         }.buttonStyle(PointerButtonStyle(base: .plain))
@@ -132,8 +132,8 @@ struct DeskView: View {
                         AccountLimitsView(model: model)
                     }
                 HStack {
-                    Circle().fill(model.connected ? Color.primary : .secondary).frame(width: 6, height: 6)
-                    Text(model.connecting ? L10n.text("Подключение…", "Connecting…") : model.accountLabel).font(.caption).lineLimit(1)
+                    Circle().fill(model.currentAgentConnected ? Color.primary : .secondary).frame(width: 6, height: 6)
+                    Text(model.currentAgent == .appClaude ? (model.claudeAuthenticated ? L10n.text("Claude · подключён", "Claude · connected") : L10n.text("Claude · вход не выполнен", "Claude · not signed in")) : (model.connecting ? L10n.text("Подключение…", "Connecting…") : model.accountLabel)).font(.caption).lineLimit(1)
                     Spacer()
                     SettingsLink { Image(systemName: "gearshape") }.buttonStyle(PointerButtonStyle(base: .plain))
                 }.padding(14)
@@ -154,15 +154,9 @@ struct DeskView: View {
                     ArchiveView(model: model)
                 } else if model.showingJobs {
                     JobsView(model: model)
-                } else if !model.authenticated && model.chatID == nil {
-                    EmptyState(icon: "person.crop.circle", title: model.connected ? L10n.text("Войди в аккаунт", "Sign in") : L10n.text("Не удалось подключиться", "Could not connect"),
-                               text: model.connected ? model.accountLabel + L10n.text(". Войди через ChatGPT, чтобы начать работу.", ". Sign in with ChatGPT to get started.") : L10n.text("Повтори подключение к Codex, чтобы начать работу.", "Reconnect to Codex to get started."))
-                    Button(model.connecting ? L10n.text("Подключение…", "Connecting…") : (model.connected ? L10n.text("Войти через ChatGPT", "Sign in with ChatGPT") : L10n.text("Подключиться", "Connect"))) {
-                        Task { if model.connected { await model.login() } else { await model.connect() } }
-                    }.buttonStyle(DeskButtonStyle()).disabled(model.connecting).padding(.bottom, 60)
                 } else if model.selectedProject == nil {
-                    EmptyState(icon: "folder", title: L10n.text("С какой папкой работаем?", "Which folder are we working in?"), text: L10n.text("Проект — это папка на компьютере. Добавь свои проекты, и чаты появятся под каждой папкой слева.", "A project is a folder on your computer. Add your projects, and chats will appear under each folder on the left."))
-                    Button(L10n.text("Добавить папки…", "Add folders…")) { model.openProject() }.buttonStyle(DeskButtonStyle()).padding(.bottom, 60)
+                    EmptyState(icon: "folder", title: L10n.text("С каким проектом работаем?", "Which project are we working on?"), text: L10n.text("Проект — это папка на компьютере. Добавь свои проекты, и чаты появятся под каждой папкой слева.", "A project is a folder on your computer. Add your projects, and chats will appear under each folder on the left."))
+                    Button(L10n.text("Добавить проект…", "Add project…")) { model.openProject() }.buttonStyle(DeskButtonStyle()).padding(.bottom, 60)
                 } else { ChatView(model: model) }
             }.navigationTitle(model.showingArchive ? L10n.text("Архив", "Archive") : model.showingJobs ? L10n.text("Расписание", "Schedule") : (model.selectedChat?.title ?? L10n.text("Новый чат", "New chat")))
     }
@@ -198,9 +192,10 @@ struct DeskView: View {
             }.padding(20).frame(width: 350)
     }
     private func adjacentProjectMove(_ project: Project, offset: Int) -> (() -> Void)? {
-        guard let index = model.state.projects.firstIndex(where: { $0.id == project.id }),
-              model.state.projects.indices.contains(index + offset) else { return nil }
-        let targetID = model.state.projects[index + offset].id
+        let projects = model.state.visibleProjects
+        guard let index = projects.firstIndex(where: { $0.id == project.id }),
+              projects.indices.contains(index + offset) else { return nil }
+        let targetID = projects[index + offset].id
         return { _ = model.moveProject(project.id, to: targetID) }
     }
 
@@ -227,7 +222,8 @@ struct DeskView: View {
                 }, targeted: { targeted in
                     if targeted { dropTargetProjectID = project.id }
                     else if dropTargetProjectID == project.id { dropTargetProjectID = nil }
-                }, moveUp: adjacentProjectMove(project, offset: -1), moveDown: adjacentProjectMove(project, offset: 1)) {
+                }, moveUp: adjacentProjectMove(project, offset: -1), moveDown: adjacentProjectMove(project, offset: 1),
+                   remove: { Task { await model.hideProject(project.id) } }) {
                     HStack(spacing: 9) {
                         Image(systemName: "chevron.right")
                             .font(.caption.weight(.semibold))
@@ -272,6 +268,11 @@ struct DeskView: View {
                     Button(L10n.text("Переместить ниже", "Move down")) {
                         adjacentProjectMove(project, offset: 1)?()
                     }.disabled(adjacentProjectMove(project, offset: 1) == nil)
+                    Divider()
+                    Button { Task { await model.hideProject(project.id) } } label: {
+                        Label(L10n.text("Убрать проект из списка", "Remove project from list"), systemImage: "minus.circle")
+                    }
+                    .help(L10n.text("Файлы и чаты сохранятся. Вернуть проект можно через «Добавить проект».", "Files and chats are kept. Restore it with Add project."))
                 } label: {
                     Image(systemName: "ellipsis").frame(width: 28, height: 28).contentShape(Rectangle())
                 }
@@ -523,13 +524,20 @@ struct ChatView: View {
                 }
             }.padding(.horizontal, 24).padding(.vertical, 12)
                 .overlay(alignment: .bottom) { DeskPalette.border.frame(height: 0.5) }
-            if !model.authenticated {
+            if !model.currentAgentAuthenticated {
                 HStack {
-                    Text(L10n.text("Войди через ChatGPT, чтобы начать чат.", "Sign in with ChatGPT to start a chat.")).font(.callout)
+                    Text(model.currentAgent == .appClaude ? L10n.text("Войди по подписке Claude в отдельный профиль приложения.", "Sign in with your Claude subscription in the app’s separate profile.") : L10n.text("Войди через ChatGPT, чтобы начать чат.", "Sign in with ChatGPT to start a chat.")).font(.callout)
                     Spacer()
-                    Button(model.connected ? L10n.text("Войти", "Sign in") : L10n.text("Подключиться", "Connect")) { Task { if model.connected { await model.login() } else { await model.connect() } } }
-                        .buttonStyle(DeskButtonStyle()).disabled(model.connecting)
+                    Button(model.currentAgentConnected ? L10n.text("Войти", "Sign in") : L10n.text("Подключиться", "Connect")) { Task { await model.loginCurrentAgent() } }
+                        .buttonStyle(DeskButtonStyle()).disabled(model.connecting || model.claudeConnecting)
+                    if model.currentAgent == .appClaude && model.claudeConnected {
+                        Button(L10n.text("Проверить вход", "Check sign-in")) { Task { await model.refreshClaudeAccount() } }
+                    }
                 }.padding()
+            }
+            if model.currentAgent == .appClaude {
+                Text(L10n.text("Claude: стандартный режим — только файлы проекта, без команд и сети. Полный доступ разрешает команды и сеть. Плагины, браузер, автоматические итоги и метрики пока недоступны.", "Claude: standard mode allows project files only, without commands or network. Full access allows commands and network. Plugins, browser, automatic summaries and metrics are not available yet."))
+                    .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 24).padding(.vertical, 6)
             }
             if let notice = model.localHistoryNotice {
                 Text(notice).font(.caption).foregroundStyle(.secondary)
@@ -556,7 +564,7 @@ struct ChatView: View {
             }
             if model.selectedChatIsArchived, let chat = model.selectedChat {
                 HStack {
-                    Label(L10n.text("Чат в архиве. История сохранена.", "This chat is archived. Its history is saved."), systemImage: "archivebox")
+                    Label(L10n.text("Чат в архиве.", "This chat is archived."), systemImage: "archivebox")
                     Spacer()
                     Button(L10n.text("Восстановить", "Restore")) { Task { await model.setChatArchived(chat.id, archived: false) } }
                         .disabled(!model.canDeleteChat(chat.id))
@@ -607,14 +615,27 @@ struct ChatView: View {
                     }.pointingHandCursor().labelsHidden().fixedSize().disabled(model.busy || model.sending)
                         .help(L10n.text("В новом чате задаёт режим по умолчанию для проекта; в существующем — переопределение этого чата. Полный доступ: команды, файлы и сеть без подтверждений агента. Применяется со следующего сообщения.", "In a new chat, sets the project default; in an existing chat, overrides its permissions. Full access allows commands, files, and network access without agent approvals. Applies from the next message."))
                     Spacer()
-                    if !model.models.isEmpty {
+                    if model.chatID == nil {
+                        Picker(L10n.text("Провайдер", "Provider"), selection: Binding(get: { model.currentAgent }, set: { model.selectAgent($0) })) {
+                            Text("Codex").tag(AgentConnectionID.originalCodex)
+                            Text("Claude").tag(AgentConnectionID.appClaude)
+                        }.pointingHandCursor().labelsHidden().fixedSize().disabled(model.sending)
+                            .help(L10n.text("Провайдер нового чата", "Provider for the new chat"))
+                    } else {
+                        Text(model.currentAgentName).font(.caption.bold())
+                            .help(L10n.text("Провайдер этого чата", "Provider for this chat"))
+                    }
+                    if model.currentAgent == .appClaude {
+                        ClaudeModelSelector(model: model)
+                        ClaudeEffortPicker(model: model)
+                    } else if !model.models.isEmpty {
                         Picker(L10n.text("Модель", "Model"), selection: Binding(get: { model.currentModel }, set: { model.selectModel($0) })) {
                             Text(L10n.text("Авто", "Auto")).tag("")
                             if !model.currentModel.isEmpty && !model.models.contains(where: { $0.id == model.currentModel }) {
                                 Text(model.currentModel).tag(model.currentModel)
                             }
                             ForEach(model.models, id: \.self) { entry in Text(entry.displayName).tag(entry.id) }
-                        }.pointingHandCursor().labelsHidden().frame(maxWidth: 200, alignment: .trailing).disabled(model.busy)
+                        }.pointingHandCursor().labelsHidden().fixedSize().disabled(model.busy)
                         if !model.supportedEfforts.isEmpty {
                             Picker(L10n.text("Рассуждение", "Reasoning"), selection: Binding(get: { model.effort }, set: { model.effort = $0 })) {
                                 Text(L10n.text("Авто", "Auto")).tag("")
@@ -646,13 +667,13 @@ struct ChatView: View {
                 .frame(maxWidth: .infinity).padding(.horizontal, 24).padding(.top, 10)
             }
             HStack {
-                Text(model.routeTitle(model.currentRoute)).help(model.routeMessage(model.currentRoute))
+                Text(model.routeTitle(model.currentRoute)).help(model.currentAgent == .appClaude ? L10n.text("Claude работает напрямую.", "Claude works directly.") : model.routeMessage(model.currentRoute))
                 if !model.routeIsAvailable(model.currentRoute) {
                     Text(L10n.text("Недоступен", "Unavailable")).foregroundStyle(.orange)
                 }
                 Button { showingUsage.toggle() } label: {
-                    Text(model.currentUsage?.contextFraction.map { L10n.text("Контекст ≈\(Int($0 * 100))%", "Context ≈\(Int($0 * 100))%") } ?? L10n.text("Контекст: нет данных", "Context: no data"))
-                }.buttonStyle(PointerButtonStyle(base: .plain)).popover(isPresented: $showingUsage) { UsageDetail(usage: model.currentUsage).padding(20).frame(width: 330) }
+                    Text(UsageDetail.footer(model.currentUsage))
+                }.buttonStyle(PointerButtonStyle(base: .plain)).popover(isPresented: $showingUsage) { UsageDetail(usage: model.currentUsage, claude: model.currentAgent == .appClaude).padding(20).frame(width: 330) }
                 Spacer()
                 Toggle(L10n.text("Следить за ответом", "Follow response"), isOn: $followOutput).toggleStyle(.checkbox).pointingHandCursor()
                 Text(L10n.text("Enter — отправить · Shift+Enter — новая строка", "Enter to send · Shift+Enter for a new line"))
@@ -710,7 +731,7 @@ struct MessageRow: View {
             if item.kind == "user" { Spacer(minLength: 70) }
             else { Image(systemName: "sparkle").font(.title3).padding(.top, 4).accessibilityHidden(true) }
             VStack(alignment: .leading, spacing: 10) {
-                Text(item.kind == "user" ? L10n.text("Ты", "You") : "Codex").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                Text(item.kind == "user" ? L10n.text("Ты", "You") : (item.agentName ?? "Codex")).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 MessageText(text: item.text)
                 Button {
                     NSPasteboard.general.clearContents(); NSPasteboard.general.setString(item.text, forType: .string)
@@ -726,6 +747,16 @@ struct MessageRow: View {
 
 struct UsageDetail: View {
     let usage: UsageSnapshot?
+    var claude = false
+    /// Until the window is reported, the occupied size alone is still a measurement.
+    static func footer(_ usage: UsageSnapshot?, language: AppLanguage = L10n.language) -> String {
+        if let fraction = usage?.contextFraction { return L10n.text("Контекст ≈\(Int(fraction * 100))%", "Context ≈\(Int(fraction * 100))%", language: language) }
+        if let last = usage?.last {
+            let value = last.formatted(.number.locale(language.locale))
+            return L10n.text("Контекст (токены): \(value)", "Context: \(value) tokens", language: language)
+        }
+        return L10n.text("Контекст: нет данных", "Context: no data", language: language)
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(L10n.text("Контекст и токены", "Context and tokens")).font(.headline)
@@ -737,7 +768,7 @@ struct UsageDetail: View {
                 LabeledContent(L10n.text("Из них из кэша", "Cached input"), value: usage.cached.map(String.init) ?? L10n.text("Нет данных", "No data"))
                 LabeledContent(L10n.text("Выходные", "Output"), value: usage.output.map(String.init) ?? L10n.text("Нет данных", "No data"))
                 Text(L10n.text("Измерено: \(L10n.date(usage.measuredAt))", "Measured: \(L10n.date(usage.measuredAt))")).font(.caption)
-            } else { Text(L10n.text("Показатели появятся после ответа Codex.", "Metrics will appear after Codex responds.")) }
+            } else { Text(claude ? L10n.text("Показатели появятся после ответа Claude.", "Metrics will appear after Claude responds.") : L10n.text("Показатели появятся после ответа Codex.", "Metrics will appear after Codex responds.")) }
             Text(L10n.text("Процент — оценка по последнему событию, а не точный порог сжатия. Кэш уже входит во входные токены. Эти числа не равны расходу лимита подписки.", "The percentage is an estimate from the latest event, not an exact compaction threshold. Cached tokens are included in input tokens. These numbers do not represent subscription usage."))
                 .font(.caption).foregroundStyle(.secondary)
         }
@@ -804,10 +835,34 @@ struct SettingsView: View {
     let keepAwake: KeepAwake
     @AppStorage(AppLanguage.preferenceKey) private var selectedLanguage = L10n.language.rawValue
     @AppStorage("parallelBrowserLimit") private var parallelBrowserLimit = 2
+    @State private var selectedTab = "general"
+
     var body: some View {
+        TabView(selection: $selectedTab) {
+            generalSettings
+                .tabItem { Label(L10n.text("Основные", "General"), systemImage: "gearshape") }
+                .tag("general")
+            accountsSettings
+                .tabItem { Label(L10n.text("Аккаунты", "Accounts"), systemImage: "person.crop.circle") }
+                .tag("accounts")
+            browserSettings
+                .tabItem { Label(L10n.text("Браузер", "Browser"), systemImage: "globe") }
+                .tag("browser")
+            pluginsSettings
+                .tabItem { Label(L10n.text("Плагины", "Plugins"), systemImage: "puzzlepiece.extension") }
+                .tag("plugins")
+            mobileSettings
+                .tabItem { Label(L10n.text("Мобильный доступ", "Mobile access"), systemImage: "iphone") }
+                .tag("mobile")
+            dataSettings
+                .tabItem { Label(L10n.text("Данные", "Data"), systemImage: "externaldrive") }
+                .tag("data")
+        }
+        .frame(height: 560)
+    }
+
+    private var generalSettings: some View {
         Form {
-            KeepAwakeSettings(controller: keepAwake)
-            MobileRemoteSettings(host: model.mobileRemote, model: model)
             Section("Язык / Language") {
                 Picker(L10n.text("Язык интерфейса", "Interface language"), selection: $selectedLanguage) {
                     ForEach(AppLanguage.allCases, id: \.rawValue) { language in
@@ -826,27 +881,37 @@ struct SettingsView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
-            Section(L10n.text("История чатов", "Chat history")) {
-                Button {
-                    model.openArchive()
-                    openWindow(id: "main")
-                    dismiss()
-                } label: {
-                    Label(L10n.text("Открыть архив", "Open archive"), systemImage: "archivebox")
-                }
-                Text(L10n.text("Просматривай и восстанавливай архивные чаты всех проектов.", "Browse and restore archived chats from all projects."))
-                    .font(.caption).foregroundStyle(.secondary)
+            Section(L10n.text("Уведомления", "Notifications")) {
+                Text(model.notificationStatus).font(.callout)
+                Button(L10n.text("Разрешить уведомления", "Allow notifications")) { Task { await model.enableNotifications() } }
             }
+            KeepAwakeSettings(controller: keepAwake)
+        }.formStyle(.grouped)
+    }
+
+    private var accountsSettings: some View {
+        Form {
             Section(L10n.text("Аккаунт Codex", "Codex account")) {
                 LabeledContent(L10n.text("Аккаунт", "Account"), value: model.accountLabel)
                 if model.authenticated { Button(L10n.text("Выйти из аккаунта этого приложения", "Sign out of this app")) { Task { await model.logout() } }.disabled(model.anyBusy) }
                 else { Button(L10n.text("Войти через ChatGPT", "Sign in with ChatGPT")) { Task { await model.login() } }.disabled(!model.connected) }
                 Button(L10n.text("Переподключить Codex", "Reconnect Codex")) { Task { await model.connect() } }.disabled(model.connecting || model.anyBusy)
             }
-            Section(L10n.text("Уведомления", "Notifications")) {
-                Text(model.notificationStatus).font(.callout)
-                Button(L10n.text("Разрешить уведомления", "Allow notifications")) { Task { await model.enableNotifications() } }
+            Section(L10n.text("Подписка Claude", "Claude subscription")) {
+                Text(model.claudeAuthenticated ? L10n.text("Вход выполнен", "Signed in") : L10n.text("Вход не выполнен", "Not signed in"))
+                Text(L10n.text("Официальный Claude Code 2.1.260. Вход открывается в Terminal, в отдельном профиле Context Desk. После входа нажми «Проверить вход». Существующий профиль Claude Code не изменяется.", "Official Claude Code 2.1.260. Sign-in opens in Terminal using a separate Context Desk profile. Afterwards, click Check sign-in. Your existing Claude Code profile is unchanged."))
+                    .font(.caption).foregroundStyle(.secondary)
+                Button(L10n.text("Войти по подписке Claude", "Sign in with Claude subscription")) { Task { await model.loginClaude() } }.disabled(model.anyBusy || model.claudeConnecting)
+                Button(L10n.text("Проверить вход", "Check sign-in")) { Task { if model.claudeConnected { await model.refreshClaudeAccount() } else { await model.connectClaude() } } }.disabled(model.claudeConnecting)
+                if model.claudeAuthenticated {
+                    Button(L10n.text("Выйти из Claude в этом приложении", "Sign out of Claude in this app")) { Task { await model.logoutClaude() } }.disabled(model.anyBusy)
+                }
             }
+        }.formStyle(.grouped)
+    }
+
+    private var browserSettings: some View {
+        Form {
             Section(L10n.text("Браузер", "Browser")) {
                 Toggle(L10n.text("Использовать Chrome DevTools", "Use Chrome DevTools"),
                        isOn: Binding(get: { model.state.browserEnabled == true }, set: { model.selectBrowserEnabled($0) }))
@@ -872,6 +937,11 @@ struct SettingsView: View {
                 Text(L10n.text("Применяется при переподключении Codex после завершения текущих задач. Браузер открывается при первом обращении агента.", "Takes effect when Codex reconnects after current tasks finish. The browser opens on the agent’s first browser request."))
                     .font(.caption).foregroundStyle(.secondary)
             }
+        }.formStyle(.grouped)
+    }
+
+    private var pluginsSettings: some View {
+        Form {
             Section(L10n.text("Плагины", "Plugins")) {
                 Text(L10n.text("Плагины дополнительно обрабатывают запросы Codex. Они необязательны: выбери «Без плагина», чтобы работать напрямую.", "Plugins add processing to Codex requests. They are optional: choose No plugin to work directly."))
                     .font(.callout).foregroundStyle(.secondary)
@@ -915,6 +985,28 @@ struct SettingsView: View {
                     } catch { model.error = error.localizedDescription }
                 }
                 Text(L10n.text("Установи плагин с помощью его установщика, затем нажми «Обновить список».", "Use the plugin's installer, then click Refresh list."))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }.formStyle(.grouped)
+    }
+
+    private var mobileSettings: some View {
+        Form {
+            MobileRemoteSettings(host: model.mobileRemote, model: model)
+        }.formStyle(.grouped)
+    }
+
+    private var dataSettings: some View {
+        Form {
+            Section(L10n.text("История чатов", "Chat history")) {
+                Button {
+                    model.openArchive()
+                    openWindow(id: "main")
+                    dismiss()
+                } label: {
+                    Label(L10n.text("Открыть архив", "Open archive"), systemImage: "archivebox")
+                }
+                Text(L10n.text("Просматривай и восстанавливай архивные чаты всех проектов.", "Browse and restore archived chats from all projects."))
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section(L10n.text("Данные", "Data")) {

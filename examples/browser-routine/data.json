@@ -1,0 +1,14 @@
+{
+  "1": [
+    {"id": "W-101", "title": "Accessible forms", "track": "Frontend", "status": "Open"},
+    {"id": "W-102", "title": "Reliable migrations", "track": "Backend", "status": "Open"},
+    {"id": "W-103", "title": "CSS layout lab", "track": "Frontend", "status": "Open"},
+    {"id": "W-104", "title": "Browser testing", "track": "Frontend", "status": "Full"}
+  ],
+  "2": [
+    {"id": "W-101", "title": "Accessible forms", "track": "Frontend", "status": "Open"},
+    {"id": "W-102", "title": "Reliable migrations", "track": "Backend", "status": "Open"},
+    {"id": "W-103", "title": "CSS layout lab", "track": "Frontend", "status": "Full"},
+    {"id": "W-104", "title": "Browser testing", "track": "Frontend", "status": "Open"}
+  ]
+}

@@ -241,7 +241,7 @@ func schedulerRecoveryPreservesNextOccurrenceWithoutReplaying(activeStatus: JobR
     #!/usr/bin/python3
     import sys,json
     if '--version' in sys.argv:
-        print('2.1.260 (Claude Code)'); sys.exit(0)
+        print('2.1.292 (Claude Code)'); sys.exit(0)
     assert '--permission-mode' in sys.argv and sys.argv[sys.argv.index('--permission-mode')+1]=='dontAsk'
     assert '--dangerously-skip-permissions' not in sys.argv
     assert '--no-session-persistence' in sys.argv

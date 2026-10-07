@@ -9,7 +9,7 @@ public actor ClaudeJobRunner: AgentScheduledExecutor {
     private var consumed = false
     private var dispatched = false
     private let executableOverride: URL?
-    public static let version = "2.1.260"
+    public static let version = ClaudeRuntime.pinnedVersion
     private var process: Process?
     private var stopped = false
     public init(executable: URL? = nil) { executableOverride = executable }
@@ -25,11 +25,12 @@ public actor ClaudeJobRunner: AgentScheduledExecutor {
         guard !consumed else { return .rejected(.unknownRequest) }
         guard case .success(let descriptor) = descriptor() else { return .unavailable }
         if let rejection = descriptor.validate(request) { return .rejected(rejection) }
-        guard request.kind == .scheduled, request.model.effort?.isEmpty != false else { return .rejected(.invalidInput) }
+        guard request.kind == .scheduled, ClaudeEffort.isDispatchable(request.model.effort) else { return .rejected(.invalidInput) }
         consumed = true
         do {
             let (status, output) = try await run(prompt: request.prompt, model: request.model.model,
-                cwd: URL(fileURLWithPath: request.projectPath), executable: executableOverride, willStart: willStart)
+                effort: request.model.effort, cwd: URL(fileURLWithPath: request.projectPath),
+                executable: executableOverride, willStart: willStart)
             return .success(.finished(status == .completed ? .completed : status == .blocked ? .blocked : .failed, output: output))
         } catch {
             if error is CancellationError {
@@ -47,10 +48,12 @@ public actor ClaudeJobRunner: AgentScheduledExecutor {
         }
         return URL(fileURLWithPath: path)
     }
-    public static func arguments(model: String) -> [String] {
+    public static func arguments(model: String, effort: String?) -> [String] {
         ["--print", "--output-format", "json", "--permission-mode", "dontAsk", "--permission-prompts", "none", "--no-session-persistence"]
             + ["--append-system-prompt", AgentAutonomy.instructions()]
             + (model.isEmpty ? [] : ["--model", model])
+            // Only a documented level is forwarded; an unset value leaves the CLI default in place.
+            + (ClaudeEffort.accepted(effort).map { ["--effort", $0.rawValue] } ?? [])
     }
     public func stop() {
         stopped = true
@@ -105,7 +108,7 @@ public actor ClaudeJobRunner: AgentScheduledExecutor {
         }
         return (child.terminationStatus, data)
     }
-    public func run(prompt: String, model: String, cwd: URL, executable: URL? = nil, willStart: @escaping @Sendable () async throws -> Void = {}) async throws -> (JobRunStatus, String) {
+    public func run(prompt: String, model: String, effort: String? = nil, cwd: URL, executable: URL? = nil, willStart: @escaping @Sendable () async throws -> Void = {}) async throws -> (JobRunStatus, String) {
         let executable = try executable ?? Self.executable()
         let (_, versionData) = try await capture(executable: executable, arguments: ["--version"], cwd: cwd, prompt: "", timeout: 15)
         guard String(decoding: versionData, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) == Self.version + " (Claude Code)" else {
@@ -116,7 +119,7 @@ public actor ClaudeJobRunner: AgentScheduledExecutor {
         try await willStart()
         try Task.checkCancellation()
         guard !stopped else { throw CancellationError() }
-        let (code, bytes) = try await capture(executable: executable, arguments: Self.arguments(model: model), cwd: cwd, prompt: prompt, timeout: 3600, execution: true)
+        let (code, bytes) = try await capture(executable: executable, arguments: Self.arguments(model: model, effort: effort), cwd: cwd, prompt: prompt, timeout: 3600, execution: true)
         let value = try JSONDecoder().decode(JSONValue.self, from: bytes)
         guard value["type"].string == "result", value["is_error"].bool != nil, let text = value["result"].string ?? value["errors"].array.first?.string else {
             throw ClientFailure(L10n.text("Claude Code не вернул распознаваемый результат.", "Claude Code returned no recognized result."))

@@ -111,7 +111,7 @@ struct ContextDeskApp: App {
                 else { SettingsView(model: model, keepAwake: delegate.keepAwake) }
             }.buttonStyle(PointerButtonStyle(base: .automatic))
                 .preferredColorScheme(.light)
-                .environment(\.locale, L10n.locale).frame(width: 520).padding(24)
+                .environment(\.locale, L10n.locale).frame(width: 720).padding(20)
         }
     }
 }

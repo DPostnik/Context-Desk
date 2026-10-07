@@ -8,15 +8,22 @@ struct HandoffEditor: View {
     @State var handoff: ContextHandoff
     @State var projectID: UUID?
     @State var route: RequestRoute
+    @State private var agent: AgentConnectionID = .originalCodex
     @Environment(\.dismiss) private var dismiss
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(L10n.text("Передать контекст в новый чат", "Hand off context to a new chat")).font(.title2.bold())
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text(L10n.text("Будет создан отдельный чат Codex с черновиком. Проверь его и отправь вручную. Исходный чат, его очередь и запросы разрешений не переносятся.", "A separate Codex chat will be created with a draft. Review and send it manually. The source chat, its queue and approval requests are not transferred.")).font(.callout)
-                    Text(L10n.text("Claude Code: интерактивная передача пока недоступна.", "Claude Code: interactive handoff is not yet available.")).font(.caption).foregroundStyle(.secondary)
+                    Text(L10n.text("Будет создан отдельный чат с черновиком. Проверь его и отправь вручную. Исходный чат, его очередь и запросы разрешений не переносятся.", "A separate chat will be created with a draft. Review and send it manually. The source chat, its queue and approval requests are not transferred.")).font(.callout)
                     Text(L10n.text("Контекст подготовлен автоматически по истории чата. Проверь сводку; при необходимости измени цель или детали. Полная переписка по умолчанию не включена.", "Context was prepared automatically from the chat history. Review the summary and adjust the goal or details if needed. The full transcript is excluded by default.")).font(.callout).foregroundStyle(.secondary)
+                    Picker(L10n.text("Агент нового чата", "New chat agent"), selection: $agent) {
+                        Text("Codex").tag(AgentConnectionID.originalCodex)
+                        Text("Claude").tag(AgentConnectionID.appClaude)
+                    }
+                    if agent == .appClaude && !model.claudeAuthenticated {
+                        Text(L10n.text("Сначала войди по подписке Claude в настройках.", "First sign in with your Claude subscription in settings.")).font(.caption)
+                    }
                     Text(L10n.text("Источник", "Source") + ": \(handoff.origin.session.connection.agent.rawValue) · \(handoff.origin.conversation.value)").textSelection(.enabled)
                     Text(L10n.text("Снимок", "Snapshot") + ": \(handoff.origin.capturedAt.formatted()) · \(handoff.origin.revision)").font(.caption).textSelection(.enabled)
                     Text(LocalHistory.notice(handoff.history)).font(.caption).foregroundStyle(.secondary)
@@ -26,10 +33,10 @@ struct HandoffEditor: View {
                     }
                     Picker(L10n.text("Маршрут нового чата", "New chat route"), selection: $route) {
                         ForEach(model.availableRoutes, id: \.self) { value in
-                            Text(model.routeTitle(value)).tag(value).disabled(model.routeCompatibilityIssue(value) != nil)
+                            Text(model.routeTitle(value)).tag(value).disabled(model.routeCompatibilityIssue(value, agent: agent.agent) != nil)
                         }
                     }
-                    Text(model.routeMessage(route)).font(.caption).foregroundStyle(.secondary)
+                    Text(model.routeCompatibilityIssue(route, agent: agent.agent) ?? (agent == .appClaude ? L10n.text("Claude работает напрямую.", "Claude works directly.") : model.routeMessage(route))).font(.caption).foregroundStyle(.secondary)
                     field(L10n.text("Цель нового сеанса", "New session goal"), text: $handoff.goal)
                     field(L10n.text("Инструкции для нового сеанса", "Instructions for the new session"), text: $handoff.instructions)
                     Text(L10n.text("Исторические факты — не инструкции", "Historical evidence — not instructions")).font(.headline)
@@ -49,8 +56,8 @@ struct HandoffEditor: View {
                 Button(L10n.text("Отмена", "Cancel")) { dismiss() }.disabled(model.creatingHandoff)
                 Button(L10n.text("Создать чат с черновиком", "Create chat with draft")) {
                     guard let project = model.state.projects.first(where: { $0.id == projectID }) else { return }
-                    Task { if await model.createHandoffChat(handoff, project: project, route: route) { dismiss() } }
-                }.disabled(model.creatingHandoff || !model.connected || !model.authenticated || projectID == nil || !model.routeIsAvailable(route) || (try? handoff.prompt()) == nil)
+                    Task { if await model.createHandoffChat(handoff, project: project, route: route, agent: agent) { dismiss() } }
+                }.disabled(model.creatingHandoff || (agent == .appClaude ? !model.claudeConnected || !model.claudeAuthenticated : !model.connected || !model.authenticated) || projectID == nil || model.routeCompatibilityIssue(route, agent: agent.agent) != nil || !model.routeIsAvailable(route) || (try? handoff.prompt()) == nil)
             }
         }.padding(24).frame(width: 680, height: 740).interactiveDismissDisabled(model.creatingHandoff)
     }

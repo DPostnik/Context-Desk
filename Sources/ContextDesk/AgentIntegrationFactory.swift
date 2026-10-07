@@ -7,6 +7,7 @@ import ClaudeAdapter
 enum AgentIntegrationFactory {
     static let claudeVersion = ClaudeJobRunner.version
     static func codex() -> any AgentIntegration { CodexIntegration() }
+    static func claude() -> any AgentIntegration { ClaudeIntegration() }
     @MainActor static let scheduledReadiness: [JobEngine: @MainActor (DeskModel) -> Bool] = [
         .codex: { $0.connected && $0.authenticated }, .claude: { _ in true }
     ]

@@ -14,6 +14,7 @@ public struct AgentConnectionID: Codable, Hashable, Sendable {
     public init(agent: AgentID, id: UUID) { self.agent = agent; self.id = id }
     /// The original app-owned Codex home. This identity is local to an app store.
     public static let originalCodex = Self(agent: .codex, id: UUID(uuidString: "F0362513-6DDA-4E2A-9F74-807F29BCE001")!)
+    public static let appClaude = Self(agent: .claudeCode, id: UUID(uuidString: "F0362513-6DDA-4E2A-9F74-807F29BCE002")!)
 }
 
 /// Rotated on account changes; stale requests, approvals and model catalogs must be rejected.
@@ -79,12 +80,14 @@ public enum AgentPermissionIntent: Codable, Hashable, Sendable {
 }
 
 public enum AgentPermissionSupport: String, Codable, Sendable {
-    case codexProjectPolicy, externalPolicyOnly
+    case codexProjectPolicy, externalPolicyOnly, claudeRestrictedFiles
 
     public func accepts(_ intent: AgentPermissionIntent) -> Bool {
         switch (self, intent) {
         case (.codexProjectPolicy, .workspaceWrite(_, false, .ask)),
              (.codexProjectPolicy, .unrestricted(.never)),
+             (.claudeRestrictedFiles, .workspaceWrite(_, false, .ask)),
+             (.claudeRestrictedFiles, .unrestricted(.never)),
              (.externalPolicyOnly, .externalPolicyDenyPrompts): true
         default: false
         }

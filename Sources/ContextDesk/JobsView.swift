@@ -90,7 +90,7 @@ struct JobsView: View {
             Button(L10n.text("Библиотека рутин", "Routine library")) { showingRoutines = true }
             Button(L10n.text("Обновить", "Refresh")) { Task { await model.refreshJobs() } }
             Button(L10n.text("Создать", "New task"), systemImage: "plus") {
-                var job = ManagedJob(); job.projectID = model.projectID; job.model = model.currentModel; job.effort = model.effort; job.route = model.defaultRoute; editing = job
+                var job = ManagedJob(); job.projectID = model.projectID; job.model = model.currentAgent == .originalCodex ? model.currentModel : model.state.model; job.effort = model.currentAgent == .originalCodex ? model.effort : ""; job.route = model.defaultRoute; editing = job
             }.disabled(!model.schedulerReady)
         }
     }
@@ -188,12 +188,32 @@ struct JobEditor: View {
                 Section(L10n.text("Основное", "Basics")) {
                 TextField(L10n.text("Название", "Name"), text: $job.name)
                 Picker(L10n.text("Исполнитель", "Agent"), selection: $job.engine) { ForEach(JobEngine.allCases, id: \.self) { Text($0.title).tag($0) } }
-                    .onChange(of: job.engine) { _, _ in job.model = ""; job.effort = ""; job.route = .direct; job.acceptsExternalPolicy = nil; job.browserSessionImport = nil }
+                    .onChange(of: job.engine) { _, engine in
+                        job.model = engine == .claude ? ClaudeModel.defaultID : ""
+                        job.effort = engine == .claude ? ClaudeEffort.defaultLevel.rawValue : ""
+                        job.route = .direct; job.acceptsExternalPolicy = nil; job.browserSessionImport = nil
+                    }
                 Picker(L10n.text("Проект", "Project"), selection: $job.projectID) {
                     Text(L10n.text("Выбери проект", "Choose a project")).tag(nil as UUID?)
                     ForEach(model.state.projects) { Text($0.name).tag(Optional($0.id)) }
                 }
-                TextField(L10n.text("Модель", "Model"), text: $job.model, prompt: Text(L10n.text("По умолчанию", "Default")))
+                HStack {
+                    TextField(L10n.text("Модель", "Model"), text: $job.model, prompt: Text(L10n.text("По умолчанию", "Default")))
+                    if job.engine == .claude {
+                        Menu(L10n.text("Выбрать", "Choose")) {
+                            Button(L10n.text("Как в CLI", "CLI default")) { job.model = "" }
+                            Divider()
+                            ForEach(ClaudeModel.current) { entry in
+                                Button(entry.menuTitle) { job.model = entry.id }
+                            }
+                            Menu(L10n.text("Предыдущие поколения", "Previous generations")) {
+                                ForEach(ClaudeModel.previous) { entry in
+                                    Button(entry.menuTitle) { job.model = entry.id }
+                                }
+                            }
+                        }.fixedSize()
+                    }
+                }
                 }
                 Section(L10n.text("Инструкции и исполнитель", "Instructions and agent")) {
                 Menu(L10n.text("Использовать рутину", "Use routine")) {
@@ -228,7 +248,11 @@ struct JobEditor: View {
                         Text(model.routeCompatibilityIssue(job.route, agent: .claudeCode) ?? "").foregroundStyle(.orange).font(.caption)
                         Button(L10n.text("Выбрать внешний маршрут CLI без оптимизатора приложения", "Use external CLI routing without an app optimizer")) { job.route = .direct }
                     }
-                    Text(L10n.text("Claude использует аккаунт, маршрут и правила установленного CLI. Новые запросы разрешений отклоняются. Интерактивные чаты, выбор усилия, статистика и оптимизаторы приложения недоступны.", "Claude uses the installed CLI account, route and rules. New permission prompts are denied. Interactive chats, effort selection, metrics and app optimizers are unavailable.")).font(.caption).frame(maxWidth: 460, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+                    Picker(L10n.text("Рассуждение", "Reasoning effort"), selection: $job.effort) {
+                        Text(L10n.text("Как в CLI", "CLI default")).tag("")
+                        ForEach(ClaudeEffort.allCases, id: \.rawValue) { level in Text(level.title).tag(level.rawValue) }
+                    }
+                    Text(L10n.text("Claude использует аккаунт, маршрут и правила установленного CLI. Новые запросы разрешений отклоняются. Статистика и оптимизаторы приложения недоступны.", "Claude uses the installed CLI account, route and rules. New permission prompts are denied. Metrics and app optimizers are unavailable.")).font(.caption).frame(maxWidth: 460, alignment: .leading).fixedSize(horizontal: false, vertical: true)
                     Toggle(L10n.text("Принимаю внешние правила Claude для этого задания", "Use external Claude policy for this task"), isOn: Binding(get: { job.acceptsExternalPolicy == true }, set: { job.acceptsExternalPolicy = $0 }))
                     Text(L10n.text("Требуется проект с полным доступом. Ограничения стандартного режима Claude не поддерживает; запуск будет заблокирован.", "Requires a full-access project. Claude cannot enforce standard project restrictions; execution will be blocked.")).font(.caption).foregroundStyle(.secondary).frame(maxWidth: 460, alignment: .leading).fixedSize(horizontal: false, vertical: true)
                 }

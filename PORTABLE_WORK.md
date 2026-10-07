@@ -1,7 +1,7 @@
 # Portable work and route compatibility
 
-Implemented 2026-09-27 from VISION stage 6. This stage uses existing execution paths;
-it does not enable interactive Claude before stage 5 establishes its identity boundary.
+Implemented 2026-09-27 from VISION stage 6. The stage-5 follow-up now adds an interactive Claude destination using an isolated
+official-CLI subscription profile. Its authenticated live acceptance remains pending.
 
 ## Context handoff
 
@@ -12,7 +12,7 @@ The preview shows exactly the proposed draft. Oversized handoffs are rejected at
 128 KiB; the user can exclude the transcript instead of silently truncating evidence.
 
 Creating the handoff stores a versioned record in the app SQLite database, then
-prepares a fresh Codex session with the explicitly selected project and route under
+prepares a fresh Codex or Claude session with the explicitly selected project, agent and route under
 the captured account revision. The draft is not submitted. A separate Send action
 starts execution. Historical native references are evidence only; they never become
 the new session ID. Source drafts, queues and approvals remain with their source.
@@ -24,7 +24,8 @@ snapshot revision and capture time. **Restore initial context to draft** explici
 recovers the proposed handoff after a restart, only when the current draft is empty.
 It does not send. Subsequent user edits belong to the resulting conversation, not to
 the immutable source snapshot. Snapshots from unavailable integrations remain usable
-as historical evidence. Claude interactive destinations are visibly unavailable.
+as historical evidence. Claude destinations require its separate subscription login;
+Claude optimizer routes remain visibly incompatible and cannot create a destination.
 
 ## Portable routines
 
@@ -78,7 +79,7 @@ cannot establish compatibility with another engine.
 | --- | --- |
 | Codex, no optimizer | Existing direct route. |
 | Codex, process-plugin v1 (including Headroom) | Matching requirements, successful runtime handshake/status and a route declared by the pinned Codex adapter are required. |
-| Claude Code, no app optimizer | Existing external CLI configuration, not a promise of direct provider routing. |
+| Claude Code, no app optimizer | Interactive chats use the isolated first-party CLI profile; scheduled jobs retain external CLI configuration. |
 | Claude Code with an app optimizer | Unverified and unavailable. |
 
 An unavailable or incompatible selected route is retained and explained; it never

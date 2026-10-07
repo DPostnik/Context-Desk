@@ -100,7 +100,7 @@ def main():
             result = subprocess.run([compiler, '-sdk', str(sdk), '-target', target, '-typecheck'] + test_flags + [str(probe)], capture_output=True, text=True)
             if result.returncode != 0:
                 (OUT / 'testing-probe-error.log').write_text(result.stdout + result.stderr)
-                raise RuntimeError('Swift Testing framework/macros are incompatible with this toolchain. Tests did not run. Install a matching Command Line Tools or Xcode release; see docs/building.md and .build/local-build/testing-probe-error.log.')
+                raise RuntimeError('Swift Testing framework/macros are incompatible with this toolchain. Tests did not run. Install a matching Command Line Tools or Xcode release; see guides/building.md and .build/local-build/testing-probe-error.log.')
     if not direct:
         # A source/build/test failure must fail, never trigger a fallback or reuse an old binary.
         if args.task == 'build':

@@ -2,6 +2,10 @@ import Foundation
 import ContextCore
 
 extension DeskModel {
+    func supportsSummaries(_ id: String) -> Bool {
+        state.chats.first { $0.id == id }?.nativeSession?.connection == .originalCodex
+    }
+
     var summarySkillsDirectory: URL { summaryHome.deletingLastPathComponent().appendingPathComponent("workflows") }
 
     func prepareSummarySkills() throws {
@@ -33,7 +37,7 @@ extension DeskModel {
     /// Explicit backfill also covers an archive confirmed by Codex but not persisted locally.
     func queueMissingArchiveSummaries() async {
         do {
-            for chat in state.chats where chat.isArchived && archiveSummaries[chat.id] == nil {
+            for chat in state.chats where chat.isArchived && supportsSummaries(chat.id) && archiveSummaries[chat.id] == nil {
                 let record = ArchiveSummaryRecord(threadID: chat.id, projectID: chat.projectID)
                 try await store.saveArchivingChat(state, summary: record)
                 archiveSummaries[chat.id] = record
@@ -43,7 +47,7 @@ extension DeskModel {
     }
 
     func retryArchiveSummary(_ id: String) async {
-        guard isArchived(id), !isChangingChat(id), var record = archiveSummaries[id],
+        guard supportsSummaries(id), isArchived(id), !isChangingChat(id), var record = archiveSummaries[id],
               [.failed, .uncertain, .stale].contains(record.status) else { return }
         record.enqueue()
         do { try await store.saveArchiveSummary(record); archiveSummaries[id] = record; startSummaryQueue() }
@@ -52,12 +56,12 @@ extension DeskModel {
 
     func startSummaryQueue() {
         guard summaryTask == nil, connected, authenticated,
-              archiveSummaries.values.contains(where: { $0.status == .queued && isArchived($0.threadID) && chatIsAvailable($0.threadID) }) else { return }
+              archiveSummaries.values.contains(where: { $0.status == .queued && isArchived($0.threadID) && supportsSummaries($0.threadID) }) else { return }
         summaryTask = Task { [weak self] in
             guard let self else { return }
             defer { self.summaryActiveThread = nil; self.summaryTask = nil }
             while !Task.isCancelled && self.connected && self.authenticated {
-                guard let next = self.archiveSummaries.values.filter({ $0.status == .queued && self.isArchived($0.threadID) && self.chatIsAvailable($0.threadID) })
+                guard let next = self.archiveSummaries.values.filter({ $0.status == .queued && self.isArchived($0.threadID) && self.supportsSummaries($0.threadID) })
                     .sorted(by: { $0.updatedAt < $1.updatedAt }).first else { return }
                 self.summaryActiveThread = next.threadID
                 await self.buildArchiveSummary(next)

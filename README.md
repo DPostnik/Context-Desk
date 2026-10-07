@@ -1,101 +1,100 @@
 # Context Desk
 
-A personal native macOS client for Codex. SwiftUI/AppKit, Foundation processes and SQLite; no Electron, browser engine or local web server.
+A native macOS workspace for working with AI agents across local projects, conversations, and recurring tasks. Built with SwiftUI and AppKit around the Codex App Server.
 
-The long-term direction is an agent-independent development workspace with separate agent and request-optimization integrations. See [Project vision](VISION.md) for the accepted direction, ownership boundaries and the distinction between current support and planned architecture.
+**Early preview, built from source.** Start with Codex in Direct mode. This is an independent personal project, not an official OpenAI or Anthropic application.
 
-Provider integrations are independently installed process plugins.
+![Context Desk code conversation](media/code-workspace.png)
 
-Personal documentation and research live in the local-only `docs/` directory, excluded from Git and fresh clones.
+*Actual application views rendered with synthetic demo content. This is a UI preview, not evidence of a live model run. [Capture provenance](guides/demo.md#captures-and-provenance).*
 
-Context Desk is a standalone native macOS client for Codex. It connects directly by default. Headroom is an optional, separately installed external integration; Python and Headroom are not required to build or run the app in Direct mode.
+## Why I built it
 
-The repository contains the Swift application, tests, assets, and build scripts. Build outputs and private application data are excluded from Git. Package the app with `zsh scripts/package-app.sh`.
+Over the last six months I moved from Cursor to daily work with agents in Claude and OpenAI’s apps. I currently prefer OpenAI’s products, but I wanted an interface I could shape around my own projects and routines, with room to change the underlying agent later.
 
-## Run
+I also kept running into usage limits. That led me to investigate context management and Headroom. The integration work became another reason to build my own workspace. **Measured resource savings and interchangeable agents are development goals, not promises of this preview.**
 
-Build with `zsh scripts/build-app.sh`, then open `build/Context Desk.app`. To install locally, quit the app and copy that bundle to `~/Applications/`. In the app, open a project folder and choose **Войти** to use the official ChatGPT login. Enable notifications in Settings if wanted. Projects opened here and their chats are independent of the existing Codex desktop history.
+## What you can try
 
-The bundled app is ad-hoc signed for this Mac, not notarized for distribution. It locates the existing official Codex binary in ChatGPT/Codex bundles under `/Applications` or `~/Applications` (including the nested `CodexCLI.app` layout), then `/opt/homebrew/bin`, `/usr/local/bin`, or absolute directories in `PATH`. The binary is not bundled or redistributed.
+- **Fix code in a project folder.** Open a folder, start a chat, inspect tool activity, respond to approval requests, and read the result. Conversations, drafts, queued follow-ups and unread replies stay organized by project.
+- **Keep several conversations going.** Each chat has its own turn, queue and Stop control. A failed or uncertain request is not automatically resent.
+- **Read a small website with an agent.** An optional Chrome DevTools adapter uses a separate Chrome profile, extracts compact card data and checks pagination. Try the local Workshop Watch fixture before using real sites.
+- **Repeat a task while your Mac is awake.** Create an app-owned scheduled job and inspect its run history. Closing the window keeps the app running; quitting stops the scheduler. Browser tasks share one owned work tab.
+- **Inspect usage without guessing.** Context estimates, reported token counts and account limits are separate. Missing measurements stay unknown. They do not prove a reduction in subscription usage.
 
-## Optional external integration: Headroom
+The interface supports English and Russian. In **Settings → Язык / Language**, choose English and restart to apply it. Projects and chats use the app’s own storage; existing desktop Codex conversations are not imported.
 
-The standalone Headroom plugin is installed with `zsh plugins/headroom/install.sh` (requires `uv` and Python 3.12). Dependencies are pinned with hashes in `plugins/headroom/headroom.lock`. The generic plugin host starts/stops the separately installed proxy on a dynamically assigned loopback port. It does not run `headroom init` or edit global Codex settings.
+## Two reproducible examples
 
-New installations default to **Без плагина / No plugin**. Explicitly saved choices and existing chat routes are preserved. Install Headroom separately only if you want it, select it in Settings → Плагины / Plugins, and reconnect before creating a new Headroom chat; the current route appears below the composer. The same settings section shows proxy status and process-wide request/token counters.
+| Example | Task | Observable result |
+| --- | --- | --- |
+| [Code fix](guides/examples.md#1-fix-a-small-python-function) | Fix whitespace handling in a tiny Python function | Five acceptance tests pass; a one-line implementation change |
+| [Browser routine](guides/examples.md#2-check-a-local-workshop-catalog) | Read two catalog pages and report newly available frontend workshops | First pass: W-101 and W-103; changed snapshot: W-104 is new |
 
-## Current features
+Both use synthetic data and the Python standard library. The guide distinguishes local fixture verification from a live agent run. Agent responses and latency can vary.
 
-- Open local project folders; create, reopen, rename, archive, restore and delete chats; native streaming text with clickable Markdown links/monospaced code, model/reasoning choice and Stop. The transcript uses an AppKit text view and collapses long commands by default.
-- Explicit command/file approvals, turn-scoped permission grants, user questions and basic MCP text forms. Unsupported client requests are rejected. Unknown MCP form schemas can be declined.
-- Unread completed responses show a blue dot on their chat and project, retained across restarts. The dot clears when the completed answer’s final content is visible in the active window, even during a subsequent turn; opening a long unread chat starts at the top. Scrolling up suspends automatic following until the end is reached again. Reading a response clears completion notices without dismissing pending approvals.
-- Action badges and macOS notifications; clicking a notification opens the associated chat. Closing the window leaves the app running; quitting stops its engine connection.
-- Read-only viewer for `~/.codex/automations/*/automation.toml`. It does not start, modify or schedule jobs. The original Codex app continues to run them. A definition's status is not an execution result.
-- Context estimate and cumulative input/cached/output counts: click the context label for details. Missing data stays unknown; cached tokens are a subset of input, not extra tokens. Context percentage is an estimate, not the exact compaction threshold.
-- Account quotas: **Usage и лимиты** at the bottom of the sidebar shows remaining percentages per bucket/window, reset dates in the local time zone, last refresh time and manual refresh. Data comes from `account/rateLimits/read`, preferring `rateLimitsByLimitId` with legacy fallback; sparse update notifications trigger a full read. No polling or model requests. Failed refreshes visibly mark the retained snapshot as stale; logout/account changes clear it. Subscription quotas are separate from chat context.
+![Workshop Watch local browser fixture](media/browser-catalog.png)
 
-Enter sends a message; Shift+Enter inserts a newline (Command+Return also sends). While a turn is active, messages stay in a persistent queue above the composer. Successful completion starts the next message as a separate turn. Each queued card can be removed or prioritized with “Прервать и отправить”; dispatch waits for the matching turn-completed event, not just the interrupt acknowledgment. Stop and failure pause that chat's queue until explicitly resumed. Disconnect and app restart pause all queues. Queued messages enter the transcript only when dispatched.
+*Real Chrome capture of the included local fixture. [Setup, prompt and expected output](guides/examples.md#2-check-a-local-workshop-catalog).*
 
-The native transcript draws outgoing tinted bubbles on the right and neutral assistant bubbles on the left. Expanded tool rows use compact spacing and secondary text color. Native text selection, bounded layout and streaming suffix updates remain in place.
+## Quick start
 
-Different chats can run concurrently, including chats in the same project. Each chat has its own active turn, queue, priority message and Stop action; only one turn runs at a time within a chat. Expanding a different project opens a new-chat composer, and its first message creates a separate conversation. Project rows reveal and conceal chat lists with a clipped, animated height and a soft spring; the sidebar uses a SwiftUI scroll stack so neighboring projects move continuously instead of native List row insertion/removal. Selecting the current project from a conversation collapses its chat list and opens the new-chat composer. Active and archived lists initially show five chats each, with “Показать ещё” revealing five more. Collapsing a project resets these limits; search shows all matches. Reduced Motion disables the sidebar animation. No automatic retry of model requests. A timed-out turn start or steering request closes the connection to avoid an accidental duplicate send. There is no automatic switch from a Headroom session to Direct.
-
-Delete an idle chat from its context menu → **Удалить чат…** and confirm. The client calls `thread/delete` in its dedicated Codex home, then removes the chat, its queued messages and usage snapshot from app metadata. Active chats must be stopped first. Failed or unconfirmed deletion keeps the chat visible and pauses its queue; no automatic retry is made. Project files and other chats are unaffected.
-
-Archive an idle chat from its context menu → **Архивировать**. Each project has an **Архив** disclosure containing its archived conversations. Their history remains readable; **Восстановить** returns a chat to the active list. Archive/restore use `thread/archive` and `thread/unarchive`, preserve usage and queued messages, and keep the queue paused until explicitly resumed. Older saved chats without an archive flag remain active.
-
-## Optional browser executor: Chrome DevTools
-
-Settings → Browser enables an app-bundled adapter for Chrome DevTools MCP 1.10.1.
-It is off by default. Install its verified runtime with `python3 BrowserRuntime/install.py`
-(Node.js 22.12+ and Google Chrome required), then apply the setting while chats are idle.
-The adapter uses a separate Chrome profile, compact card results, checked pagination
-and durable action IDs; it does not change project permissions or replay uncertain actions.
-See [setup and tool contract](BrowserRuntime/README.md) and [implementation plan](BrowserRuntime/PLAN.md).
-Model-level speed or token savings have not yet been measured for this integration.
-
-## Data
-
-App state lives in `~/Library/Application Support/Context Desk/`:
-
-- `metadata.sqlite`: projects, thread IDs, usage, and archive summary records/queue.
-- `workflows/`: editable archive-summary, routine-optimizer and history-patterns skills, copied from the bundle on first launch without overwriting existing recipes.
-- `codex/`: separate `CODEX_HOME`; the official engine owns login and transcripts.
-- `probe-home/`: unauthenticated compatibility probe state.
-- `plugins/<id>/`: separately installed provider plugins and their private runtime data.
-- `browser/`: verified Chrome DevTools runtime, separate Chrome profile and private page/action checkpoints.
-- `headroom/`: legacy runtime, retained unchanged when upgrading.
-
-The app does not copy credentials, change the existing `~/.codex/config.toml` or initialize Headroom globally. Credentials for this dedicated home use Codex's file backend inside its private directory. Codex diagnostics are drained without writing raw protocol/prompt logs. Headroom diagnostic logs stay under the app directory; full request/response logging and telemetry are disabled. Do not publish or sync this directory. To back up your state, quit the app and back up the whole directory privately.
-
-## Development
-
-Requirements: Apple Silicon Mac, macOS 14+, Swift 6 toolchain/Command Line Tools, official Codex CLI. Built with macOS 26.6.2, Swift 6.4 and the macOS 26.5 SDK. Intel and older supported OS versions have not been tested.
+You need a Mac, a matching **Swift 6 / Xcode or Command Line Tools** installation, **Python 3.10+**, Git and internet access for the pinned Swift dependency. The deployment target is macOS 14; validation so far is on Apple Silicon with macOS 26.6.2 and Xcode 27 / Swift 6.4. Intel and macOS 14 have not been tested.
 
 ```sh
-zsh scripts/test.sh
-swift run context-probe
+git clone https://github.com/DPostnik/Context-Desk.git
+cd Context-Desk
+python3 --version
+xcrun swift --version
 zsh scripts/build-app.sh
+zsh scripts/test.sh
 open 'build/Context Desk.app'
 ```
 
-The build and test scripts select a compatible SDK and retain a fallback for older broken SwiftPM installations. After an app change, rebuild the bundle, quit the running app with Cmd+Q, and reopen it. Default tests use local protocol simulators with no model calls or account credentials. `CONTEXTDESK_SUMMARY_LIVE=1 zsh scripts/test.sh` explicitly enables one synthetic summary model request using the app's dedicated account and a separate, unauthenticated skill-discovery check. The probe initializes the real official engine in a separate home, reads account status and counts local schedule definitions; it sends no model turn.
+The build creates an ad-hoc signed local app. It does not need an Apple Developer subscription, a DMG, Headroom, Node.js or a model account. The build runner uses Python; ordinary Direct chats do not run a Headroom process.
 
-## Archive summaries
+To **use agents**, install the [official Codex CLI](https://learn.chatgpt.com/docs/codex/cli), or have a supported ChatGPT/Codex desktop installation. Context Desk discovers its local binary; Codex is not bundled. Open a disposable project folder, choose **Sign in**, and complete the separate ChatGPT sign-in. An account with Codex access and network access are required; normal account limits apply. Select an available model and keep **No plugin** selected for the first run.
 
-Confirmed archiving queues a compact analytical summary in the background. View it in the archive; use **Summarize archived chats** to backfill older records. Original transcripts remain with Codex. A restored and changed chat gets a revised summary when archived again; unchanged parts are reused. Summary generation uses the source chat's model and provider route and consumes account allowance. Pending work survives restarts; requests with an unknown outcome remain stopped until **Generate summary again** is explicitly selected.
+The locally checked engine reports `codex-cli 0.158.0-alpha.2.1`. Its protocol is evolving, and archive summaries require that exact version. A newer CLI is not automatically a verified replacement. [Build guide and troubleshooting](guides/building.md) · [Validation scope](guides/validation.md).
 
-The summary executor is pinned to Codex CLI `0.158.0-alpha.2.1`. It uses a separate ephemeral thread with no environments, disabled local/external tools, read-only permissions and user-reviewed approvals; unexpected requests fail closed. It never resumes or compacts the source thread. Long histories use bounded parts, retain source references and dates, and disclose shortened tool output and unavailable attachments. Large replies exceeding the connection limit remain a visible failure; no partial history is described as complete.
+## Optional integrations and boundaries
 
-The recipe and structured-output schema live in `workflows/archive-summary/`. Other workflows can read ready records through `workflows/history-patterns/scripts/read_summaries.py`; its coverage report includes unarchived or missing records. Finding recurring work and optimizing routine creation are discoverable skills, not an automatically enabled schedule. Context Desk also owns opt-in [scheduled jobs](SCHEDULED_JOBS.md) for Codex and Claude Code, with explicit import, local execution and durable run history.
+| Component | Current scope |
+| --- | --- |
+| Codex | Main demonstration path: local engine, separate app home, streaming chat, tools and approval UI. Available models come from the engine/account. |
+| [Browser adapter](BrowserRuntime/README.md) | Opt-in Chrome DevTools MCP 1.10.1; requires Node.js 22.12+ and Google Chrome. The app launches it with `/usr/bin/python3` (tested: 3.9.6). Install the pinned runtime, then enable Settings → Browser. One task owns the work tab at a time. |
+| [Scheduled jobs](SCHEDULED_JOBS.md) | App-owned schedules and run history. The app must stay open and the Mac awake. Imports start paused; do not enable a copy while its original still runs. |
+| [Headroom plugin](plugins/headroom/README.md) | Separately installed experimental proxy integration. Not needed for the main demo. This preparation did not verify live routing, quality or resource savings. |
+| Claude Code | Adapter and scheduled execution code exist; interactive support is still being developed. This preview does not claim parity with Codex or a verified cross-agent demo. |
+| [Mobile companion](Mobile/README.md) | Separate experimental project with additional setup; not needed for the Mac quick start. |
 
-TOMLDecoder is pinned to 0.4.5 with `Package.resolved`. SwiftUI/AppKit, SQLite and Foundation come from the OS. Updating the installed Codex binary can change its experimental protocol; rerun the probe and contracts before relying on a newer version.
+Archive summaries make additional model requests and consume allowance. Context percentages are estimates; plugin counters and browser RPC timings are not billing measurements. Unknown outcomes stop for review instead of triggering automatic retries.
 
-The app version and build number are set in `scripts/build-app.sh` and written into the bundle's `Info.plist`.
+## Data and permissions
 
-## Next milestones
+Private state lives in `~/Library/Application Support/Context Desk/`: metadata, the dedicated Codex home, conversations, schedules, optional browser profile/checkpoints and installed plugins. Agent requests still go to the configured provider; this is not an offline model. The optional mobile integration has its own data path and setup.
 
-1. Verify authenticated chat, Stop, restart/resume and real approvals/notifications using a disposable local project.
-2. Add large-transcript paging and test long streaming responses/resource usage.
-3. Run representative Direct/Headroom comparisons for quality, cache effects, latency and token usage. The smoke test establishes routing, not workload-level savings.
-4. Test remote compaction end to end before enabling broader compression profiles; CCR retrieval/expiry and cross-chat memory remain future work.
+Context Desk does not copy your existing Codex credentials. Project permissions and approval requests still apply. Review the scope before approving a command. Never publish the application data directory, auth files, raw conversations or browser profiles. Use the synthetic examples for screenshots and issue reports.
+
+## Next
+
+This source preview includes screenshots and written examples. A recorded walkthrough is deferred.
+
+- Verify onboarding and build steps on a separate Mac and more supported OS versions.
+- Compare browser approaches on repeatable tasks; report coverage and failures alongside timings.
+- Validate agent interoperability and Headroom with task-quality checks and provider-reported usage before making savings claims.
+- Consider signed/notarized distribution separately from this source preview.
+
+## Feedback
+
+[Open a GitHub Issue](https://github.com/DPostnik/Context-Desk/issues/new/choose) for a reproducible bug or a concrete workflow you tried. Include macOS/chip, Swift and Codex versions, the relevant demo step and redacted error text. Please review screenshots for account names, private project names and local paths. Issue templates are included in this repository.
+
+## License
+
+[MIT License](LICENSE) — Copyright (c) 2026 Daniil Postnik. Third-party components retain their own licenses.
+
+---
+
+[Build guide](guides/building.md) · [Examples](guides/examples.md) · [Screenshot notes](guides/demo.md#captures-and-provenance) · [Checks and limitations](guides/validation.md) · [Project direction](VISION.md)
+
+Public reader documentation lives in `guides/`. The ignored `docs/` directory contains local development notes and is not required to build or try these examples.

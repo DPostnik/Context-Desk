@@ -91,7 +91,7 @@ public struct NativeTranscript: NSViewRepresentable {
         NotificationCenter.default.addObserver(self, selector: #selector(scheduleReadCheck),
                                                name: NSApplication.didBecomeActiveNotification, object: nil)
         workingIndicator.isHidden = true
-        workingIndicator.setAccessibilityLabel(L10n.text("Codex работает", "Codex is working"))
+        workingIndicator.setAccessibilityLabel(L10n.text("Агент работает", "Agent is working"))
         transcript.addSubview(workingIndicator)
         (transcript as? TranscriptTextView)?.didDrawText = { [weak self] in self?.positionWorkingIndicator() }
     }
@@ -340,7 +340,7 @@ public struct NativeTranscript: NSViewRepresentable {
                 inserted = true
                 let summary = active
                     ? L10n.text("Сейчас: ", "Now: ") + String(last.text.prefix(120)).replacingOccurrences(of: "\n", with: " ")
-                    : L10n.text("Действия Codex · \(actions.count)", "Codex actions · \(actions.count)")
+                    : L10n.text("Действия \(first.agentName ?? "Codex") · \(actions.count)", "\(first.agentName ?? "Codex") actions · \(actions.count)")
                 result.append(TranscriptItem(id: first.id, kind: "activity", text: actions.enumerated().map {
                     "\($0.offset + 1). \($0.element.text)"
                 }.joined(separator: "\n"), phase: summary))
@@ -399,7 +399,7 @@ public struct NativeTranscript: NSViewRepresentable {
             ])
         }
         if item.kind == "activity" {
-            let title = item.phase ?? L10n.text("Действия Codex", "Codex actions")
+            let title = item.phase ?? L10n.text("Действия \(item.agentName ?? "Codex")", "\(item.agentName ?? "Codex") actions")
             result.append(NSAttributedString(string: (expanded ? "▾ " : "▸ ") + title + (expanded ? "\n" : "\n\n"), attributes: [
                 .font: NSFont.systemFont(ofSize: 12, weight: .medium), .link: "contextdesk-action:" + item.id,
                 .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: paragraph
@@ -407,7 +407,7 @@ public struct NativeTranscript: NSViewRepresentable {
             if !expanded { return result }
         } else {
             if item.kind == "user" || item.showsAuthor {
-                let title = item.kind == "user" ? L10n.text("Ты", "You") + (item.phase.map { " · " + $0 } ?? "") : "Codex"
+                let title = item.kind == "user" ? L10n.text("Ты", "You") + (item.phase.map { " · " + $0 } ?? "") : (item.agentName ?? "Codex")
                 result.append(NSAttributedString(string: title + "\n", attributes: [
                     .font: NSFont.systemFont(ofSize: 12, weight: .semibold), .foregroundColor: NSColor.secondaryLabelColor,
                     .responseHeader: true

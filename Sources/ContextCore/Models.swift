@@ -8,6 +8,9 @@ public struct Project: Identifiable, Codable, Hashable, Sendable {
     public var accessMode: AccessMode?
     /// Default for interactive chats, independent of scheduled execution permissions.
     public var defaultChatAccessMode: AccessMode?
+    /// Sidebar visibility only; chats, permissions and scheduled work are retained.
+    public var hidden: Bool?
+    public var isHidden: Bool { hidden == true }
     public init(path: String) {
         self.id = UUID(); self.path = URL(fileURLWithPath: path).standardizedFileURL.path
         self.name = URL(fileURLWithPath: path).lastPathComponent
@@ -73,6 +76,9 @@ public struct SavedState: Codable, Sendable {
     public var identityVersion: Int? = 2
     /// `model` and `defaultRoute` belong to this connection, never another engine.
     public var defaultConnection: AgentConnectionID? = .originalCodex
+    public var claudeModel: String?
+    /// Empty or absent keeps the CLI default reasoning effort.
+    public var claudeEffort: String?
     public var browserEnabled: Bool?
     public var defaultRoute: RequestRoute?
     public var queuedMessages: [QueuedMessage]?
@@ -130,6 +136,7 @@ public enum Locations {
             .appendingPathComponent("Context Desk", isDirectory: true)
     }
     public static var codexHome: URL { root.appendingPathComponent("codex", isDirectory: true) }
+    public static var claudeHome: URL { root.appendingPathComponent("claude", isDirectory: true) }
     public static var automations: URL { FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/automations") }
 
 }

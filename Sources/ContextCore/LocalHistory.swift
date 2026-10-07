@@ -33,6 +33,7 @@ public enum LocalHistory {
         snapshot.items.map { entry in
             var item = entry.presentation ?? TranscriptItem(id: entry.id, kind: entry.kind.rawValue, text: entry.text)
             item.id = entry.id; item.text = entry.text
+            if item.agentName == nil && snapshot.source.connection.agent == .claudeCode { item.agentName = "Claude" }
             return item
         }
     }

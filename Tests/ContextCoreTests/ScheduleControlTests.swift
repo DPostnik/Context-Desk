@@ -105,3 +105,122 @@ private func controlRequest(job: ManagedJob? = nil) throws -> ScheduleControlReq
     let reply = try JSONDecoder().decode(ScheduleControlReply.self, from: Data(contentsOf: root.appendingPathComponent(second.id.uuidString + ".response.json")))
     #expect(reply.status == "uncertain")
 }
+
+private func importFixture(_ root: URL, rule: String = "FREQ=DAILY;BYHOUR=9;BYMINUTE=30") throws -> URL {
+    let folder = root.appendingPathComponent("sources/routine")
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    try Data("version = 1\nid = \"routine\"\nname = \"Routine\"\nkind = \"heartbeat\"\nstatus = \"ACTIVE\"\nprompt = \"Read, never send.\"\nrrule = \"\(rule)\"\n".utf8).write(to: folder.appendingPathComponent("automation.toml"))
+    return folder.deletingLastPathComponent()
+}
+
+@Test func scheduleImportPreservesSourceAndRejectsDriftFiniteRulesAndPaths() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let originals = try importFixture(root)
+    let file = originals.appendingPathComponent("routine/automation.toml")
+    let bytes = try Data(contentsOf: file)
+    let source = try ScheduleImports.source("routine", directory: originals)
+    let project = ScheduleProject(id: UUID(), path: root.path)
+    var input = ScheduleImport(sourceID: "routine", sourceDigest: source.digest, projectID: project.id,
+        timeZone: "Europe/Warsaw", model: "test-model", effort: "medium", recurring: true)
+    let job = try ScheduleImports.prepare(input, directory: originals, project: project)
+    #expect(!job.enabled && !job.sourceDisabled && job.nextRun == nil)
+    #expect(job.source == "codex:routine" && job.prompt == "Read, never send.")
+    #expect(job.schedule.rule == source.definition.rawRule && job.schedule.timeZone == "Europe/Warsaw")
+    #expect(job.route == .direct && job.acceptsExternalPolicy == nil && job.routine == nil)
+    #expect(try Data(contentsOf: file) == bytes)
+    input.recurring = false
+    #expect(throws: (any Error).self) { try ScheduleImports.prepare(input, directory: originals, project: project) }
+    input.recurring = true; input.sourceDigest = "stale"
+    #expect(throws: (any Error).self) { try ScheduleImports.prepare(input, directory: originals, project: project) }
+    #expect(throws: (any Error).self) { try ScheduleImports.source("../routine", directory: originals) }
+    let linked = originals.appendingPathComponent("linked")
+    try FileManager.default.createSymbolicLink(at: linked, withDestinationURL: originals.appendingPathComponent("routine"))
+    #expect(throws: (any Error).self) { try ScheduleImports.source("linked", directory: originals) }
+    _ = try importFixture(root, rule: "FREQ=DAILY;BYHOUR=9;BYMINUTE=30;UNTIL=20261026T225959Z")
+    input.sourceDigest = try ScheduleImports.source("routine", directory: originals).digest
+    #expect(throws: (any Error).self) { try ScheduleImports.prepare(input, directory: originals, project: project) }
+    try Data(String(decoding: bytes, as: UTF8.self).replacingOccurrences(of: "id = \"routine\"", with: "id = \"other\"").utf8).write(to: file)
+    #expect(throws: (any Error).self) { try ScheduleImports.source("routine", directory: originals) }
+}
+
+@Test @MainActor func scheduleControlImportsDisabledOnceThroughOwningScheduler() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let originals = try importFixture(root)
+    let inbox = root.appendingPathComponent("control")
+    try FileManager.default.createDirectory(at: inbox, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    let store = JobStore(file: root.appendingPathComponent("jobs.json"))
+    let model = DeskModel(store: AppStore(file: root.appendingPathComponent("state.sqlite")), jobStore: store)
+    let project = Project(path: root.path); model.state.projects = [project]; model.schedulerReady = true
+    var request = try controlRequest(); request.operation = "import"
+    request.importRequest = ScheduleImport(sourceID: "routine", sourceDigest: try ScheduleImports.source("routine", directory: originals).digest,
+        projectID: project.id, timeZone: "Europe/Warsaw", model: "test-model", effort: "medium", recurring: true)
+    func post(_ request: ScheduleControlRequest) throws {
+        let file = inbox.appendingPathComponent(request.id.uuidString + ".request.json")
+        try JSONEncoder().encode(request).write(to: file)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+    }
+    try post(request)
+    await model.processScheduleControl(directory: inbox, originals: originals)
+    let job = try #require(model.jobLedger.jobs.first)
+    #expect(!job.enabled && !job.sourceDisabled && model.jobLedger.runs.isEmpty)
+    #expect(job.projectID == project.id && job.source == "codex:routine")
+    #expect(try ScheduleImports.source("routine", directory: originals).definition.status == "ACTIVE")
+    await model.processScheduleControl(directory: inbox, originals: originals)
+    #expect(model.jobLedger.jobs.count == 1)
+    request.id = UUID(); try post(request)
+    await model.processScheduleControl(directory: inbox, originals: originals)
+    let reply = try JSONDecoder().decode(ScheduleControlReply.self, from: Data(contentsOf: inbox.appendingPathComponent(request.id.uuidString + ".response.json")))
+    #expect(reply.status == "rejected" && model.jobLedger.jobs.count == 1)
+    var update = try controlRequest(job: job); update.enabled = true; update.confirmSourceDisabled = true
+    try post(update); await model.processScheduleControl(directory: inbox, originals: originals)
+    #expect(model.jobLedger.jobs.first?.enabled == false)
+    var catalog = try controlRequest(); catalog.operation = "catalog"; try post(catalog)
+    await model.processScheduleControl(directory: inbox, originals: originals)
+    let listed = try JSONDecoder().decode(ScheduleControlReply.self, from: Data(contentsOf: inbox.appendingPathComponent(catalog.id.uuidString + ".response.json")))
+    #expect(listed.catalog?.projects.first?.id == project.id && listed.catalog?.sources.count == 1)
+    #expect(try await store.load().jobs == model.jobLedger.jobs)
+    await model.stopScheduler()
+}
+
+@Test func scheduleControlChangesModelPairWithoutChangingScope() throws {
+    var job = ManagedJob(); job.name = "Coordinator"; job.prompt = "existing"; job.projectID = UUID()
+    job.model = "gpt-6-sol"; job.effort = "high"
+    var request = try controlRequest(job: job)
+    request.model = "gpt-6-astra"; request.effort = "medium"
+    let updated = try ScheduleControl.updated(request, originalPaused: false)
+    var expected = job; expected.model = "gpt-6-astra"; expected.effort = "medium"
+    #expect(updated == expected)
+    request.model = nil
+    #expect(throws: (any Error).self) { try ScheduleControl.updated(request, originalPaused: false) }
+    request.model = "gpt-6-astra"; request.effort = nil
+    #expect(throws: (any Error).self) { try ScheduleControl.updated(request, originalPaused: false) }
+    request.effort = "unknown"
+    #expect(throws: (any Error).self) { try ScheduleControl.updated(request, originalPaused: false) }
+    request.effort = "medium"; request.model = " "
+    #expect(throws: (any Error).self) { try ScheduleControl.updated(request, originalPaused: false) }
+}
+
+@Test @MainActor func scheduleControlModelPairTransportAndReadOnlyRejection() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    var job = ManagedJob(); job.name = "Coordinator"; job.prompt = "existing"; job.projectID = UUID()
+    for operation in ["update", "list", "catalog"] {
+        var request = try controlRequest(job: operation == "update" ? job : nil)
+        request.operation = operation; request.model = "gpt-6-astra"; request.effort = "medium"
+        let path = root.appendingPathComponent(request.id.uuidString + ".request.json")
+        try JSONEncoder().encode(request).write(to: path)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path)
+        var called = false
+        try await ScheduleControl.drain(directory: root) { incoming in
+            called = true
+            return [try ScheduleControl.updated(incoming, originalPaused: false)]
+        }
+        let reply = try JSONDecoder().decode(ScheduleControlReply.self, from: Data(contentsOf: root.appendingPathComponent(request.id.uuidString + ".response.json")))
+        #expect(called == (operation == "update"))
+        #expect(reply.status == (operation == "update" ? "completed" : "rejected"))
+        if operation == "update" { #expect(reply.jobs?.first?.model == "gpt-6-astra") }
+    }
+}

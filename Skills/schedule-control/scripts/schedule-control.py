@@ -51,11 +51,22 @@ def main():
     parser = argparse.ArgumentParser(description=message('Управление расписаниями открытого Context Desk', 'Control schedules in the running Context Desk'))
     sub = parser.add_subparsers(dest='command', required=True)
     sub.add_parser('list', help=message('Прочитать задания', 'Read tasks'))
+    sub.add_parser('catalog', help=message('Прочитать источники и проекты для импорта', 'Read import sources and projects'))
+    importing = sub.add_parser('import', help=message('Импортировать постоянную рутину выключенной', 'Import an ongoing routine disabled'))
+    importing.add_argument('--source-id', required=True)
+    importing.add_argument('--project-id', required=True)
+    importing.add_argument('--time-zone', required=True)
+    importing.add_argument('--model', required=True)
+    importing.add_argument('--effort', required=True)
+    importing.add_argument('--prompt-file', type=Path)
+    importing.add_argument('--recurring', required=True, action='store_true', help=message('Подтвердить постоянную рутину, не разовую задачу или пилот', 'Confirm an ongoing routine, not a one-time task or pilot'))
     status = sub.add_parser('status', help=message('Проверить запрос без повтора', 'Check a request without replay'))
     status.add_argument('request_id')
     update = sub.add_parser('update', help=message('Изменить существующее задание по поручению пользователя', 'Edit an existing task at the user’s request'))
     update.add_argument('--job-id', required=True)
     update.add_argument('--prompt-file', type=Path)
+    update.add_argument('--model', help=message('Модель вместе с --effort', 'Model together with --effort'))
+    update.add_argument('--effort', choices=['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'], help=message('Уровень рассуждения вместе с --model', 'Reasoning effort together with --model'))
     mode = update.add_mutually_exclusive_group()
     mode.add_argument('--enable', action='store_true')
     mode.add_argument('--pause', action='store_true')
@@ -68,16 +79,32 @@ def main():
             print(response.read_text()); return
         state = 'uncertain' if (ROOT / (key + '.claimed.json')).exists() else 'pending-or-expired' if (ROOT / (key + '.request.json')).exists() else 'unknown'
         print(json.dumps({'id': key, 'status': state})); return
-    if args.command == 'update' and not (args.prompt_file or args.enable or args.pause or args.confirm_source_disabled):
+    if args.command == 'update' and ((args.model is None) != (args.effort is None)):
+        parser.error(message('Укажи --model и --effort вместе', 'Specify --model and --effort together'))
+    if args.command == 'update' and not (args.prompt_file or args.enable or args.pause or args.confirm_source_disabled or args.model):
         parser.error(message('Не указано изменение', 'No change specified'))
-    prompt = args.prompt_file.read_text() if args.command == 'update' and args.prompt_file else None
-    reply = send({'operation': 'list'})
+    prompt = args.prompt_file.read_text() if args.command in ('update', 'import') and args.prompt_file else None
+    reply = send({'operation': 'catalog' if args.command in ('catalog', 'import') else 'list'})
+    if args.command == 'import':
+        source = next((s for s in reply['catalog']['sources'] if s['definition']['id'] == args.source_id), None)
+        if source is None:
+            raise RuntimeError(message('Исходное задание недоступно', 'Source task unavailable'))
+        if any(j.get('source') == 'codex:' + args.source_id for j in reply['jobs']):
+            raise RuntimeError(message('Задание уже импортировано; используй update', 'Task already imported; use update'))
+        imported = dict(sourceID=args.source_id, sourceDigest=source['digest'],
+                        projectID=str(uuid.UUID(args.project_id)).upper(), timeZone=args.time_zone,
+                        model=args.model, effort=args.effort, recurring=args.recurring)
+        if prompt is not None:
+            imported['prompt'] = prompt
+        reply = send({'operation': 'import', 'importRequest': imported})
     if args.command == 'update':
         job_id = str(uuid.UUID(args.job_id)).upper()
         job = next((j for j in reply['jobs'] if j['id'].upper() == job_id), None)
         if job is None:
             raise RuntimeError(message('Задание не найдено', 'Task not found'))
         request = {'operation': 'update', 'expected': job}
+        if args.model is not None:
+            request.update(model=args.model, effort=args.effort)
         if prompt is not None:
             request['prompt'] = prompt
         if args.enable or args.pause:
