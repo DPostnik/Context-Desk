@@ -315,6 +315,9 @@ private func makeRequest(_ runner: any AgentScheduledExecutor, root: URL) async 
     #expect(!model.canSend && !model.canGenerateSummary(chat.id))
     await model.send()
     #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("sent").path))
+    // The phone is told the record is read-only instead of offering a composer that is then rejected.
+    let remote = try #require(await model.remoteSnapshot(projects: [project.id.uuidString]).chats.first { $0.id == chat.id })
+    #expect(remote.readOnly == true && remote.supportsPhotos == false && remote.settings == nil)
 
     // Stopping from the chat stops the job; archive and delete need no engine and keep the run history.
     try Data().write(to: root.appendingPathComponent("wait"))

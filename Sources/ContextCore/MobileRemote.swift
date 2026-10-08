@@ -78,7 +78,13 @@ public struct RemoteChat: Codable, Identifiable, Sendable, Equatable {
     public var approvals: [RemoteApproval]
     public var supportsPhotos: Bool?
     public var settings: RemoteChatSettings?
+    /// Absent on older hosts. A Claude scheduled-run record accepts no messages from any device.
+    public var readOnly: Bool?
     public init(id: String, project: String, title: String, running: Bool, messages: [RemoteMessage], approvals: [RemoteApproval], turn: String? = nil) { self.id = id; self.project = project; self.title = title; self.running = running; self.messages = messages; self.approvals = approvals; self.turn = turn; supportsPhotos = true }
+    public static var readOnlyNotice: String {
+        L10n.text("Запись запуска задания Claude — только для чтения. Чтобы продолжить, начни новый чат.",
+                  "A Claude scheduled run record is read-only. Start a new chat to follow up.")
+    }
 }
 public struct RemoteMessage: Codable, Identifiable, Sendable, Equatable {
     public var id: String

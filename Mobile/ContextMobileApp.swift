@@ -452,9 +452,10 @@ struct ChatRow: View, Equatable {
     let preview: String?
     let running: Bool
     let needsApproval: Bool
+    let readOnly: Bool
     init(chat: RemoteChat) {
         title = chat.title; preview = chat.messages.last?.text
-        running = chat.running; needsApproval = !chat.approvals.isEmpty
+        running = chat.running; needsApproval = !chat.approvals.isEmpty; readOnly = chat.readOnly == true
     }
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -469,6 +470,10 @@ struct ChatRow: View, Equatable {
                     Label(needsApproval ? L10n.text("Нужен ответ", "Needs your attention") : L10n.text("Работает", "Working"),
                           systemImage: needsApproval ? "exclamationmark.circle" : "circle.dotted")
                         .font(.caption.weight(.medium)).foregroundStyle(needsApproval ? .orange : Color.accentColor)
+                }
+                if readOnly {
+                    Label(L10n.text("Только чтение", "Read-only"), systemImage: "lock")
+                        .font(.caption.weight(.medium)).foregroundStyle(.secondary).accessibilityIdentifier("read-only-badge")
                 }
             }
         }.padding(.vertical, 7)
@@ -753,6 +758,11 @@ struct MobileChatView: View {
                     }
                     if loadingPhotos { ProgressView(L10n.text("Подготовка фото…", "Preparing photos…")).font(.caption) }
                     if let photoError { Text(photoError).font(.caption).foregroundStyle(.red) }
+                    if chat.readOnly == true {
+                        Label(RemoteChat.readOnlyNotice, systemImage: "clock.arrow.circlepath")
+                            .font(.footnote).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 6).accessibilityIdentifier("read-only-notice")
+                    } else {
                     HStack(alignment: .bottom, spacing: 8) {
                         PhotosPicker(selection: $photoSelection, maxSelectionCount: max(1, RemotePhoto.maximumCount - photos.count), matching: .images) {
                             Image(systemName: "photo.badge.plus").font(.title3).frame(width: 44, height: 44)
@@ -786,6 +796,7 @@ struct MobileChatView: View {
                         }
                     }
                     .disabled(model.sending || model.unresolved != nil)
+                    }
                     if model.sending { ProgressView().controlSize(.small) }
                 }.padding(.horizontal, 12).padding(.vertical, 10).background(.bar)
             }
@@ -947,6 +958,7 @@ extension MobileModel {
                 storage: RemoteSessionStorage(read: { _ in Data(#"{"access_token":"fixture","refresh_token":"fixture","expires_at":4102444800,"user":{"id":"dddddddd-dddd-dddd-dddd-dddddddddddd"}}"#.utf8) }, write: { _, _ in }))
         }
         chat.settings = RemoteChatSettings(options: RemoteChatOptions(model: "fixture-a"), projectAccess: .standard, canEdit: chat.approvals.isEmpty)
+        if ProcessInfo.processInfo.arguments.contains("-preview-read-only") { chat.readOnly = true; chat.supportsPhotos = false; chat.settings = nil }
         var chats = [chat]
         if ProcessInfo.processInfo.arguments.contains("-preview-project-list") {
             var second = project; second.id = "second-project"; second.name = "Second project"

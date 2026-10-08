@@ -1360,6 +1360,7 @@ private struct ChatRunState {
                 running: isBusy(threadID: chat.id), messages: messages.filter { ["user", "assistant"].contains($0.kind) }.suffix(20).map {
                     RemoteMessage(id: $0.id, role: $0.kind, text: String($0.text.prefix(2000)))
                 }, approvals: approvals, turn: runs[chat.id]?.turnID)
+            if chat.isScheduledRecord { remote.readOnly = true; remote.supportsPhotos = false }
             if let project = selected.first(where: { $0.id == chat.projectID }), chat.nativeSession?.connection == .originalCodex {
                 remote.settings = remoteSettings(chat, project: project)
             }
