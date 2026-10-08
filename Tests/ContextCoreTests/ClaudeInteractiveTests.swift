@@ -80,7 +80,7 @@ private func interactiveFixture(_ root: URL) throws -> URL {
         elif value['type']=='user':
             record=json.loads((home/'contextdesk-sessions'/(sid+'.json')).read_text())
             assert record['active'] and record['sent']
-            with (home/'submitted').open('a') as f: f.write(json.dumps({'prompt':value['message']['content'],'args':sys.argv,'env':{k:os.environ.get(k) for k in ['MCP_TIMEOUT','MCP_TOOL_TIMEOUT','CLAUDE_CODE_DISABLE_CLAUDE_MDS']}})+'\n')
+            with (home/'submitted').open('a') as f: f.write(json.dumps({'prompt':value['message']['content'],'args':sys.argv,'env':{k:os.environ.get(k) for k in ['MCP_TIMEOUT','MCP_TOOL_TIMEOUT','CLAUDE_CODE_DISABLE_CLAUDE_MDS','CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES']}})+'\n')
             prompt=value['message']['content']
             if prompt=='broken': print('invalid-json',flush=True); continue
             if prompt=='unknown': out({'type':'control_request','request_id':'unknown','request':{'subtype':'unexpected_action'}}); continue
@@ -96,7 +96,9 @@ private func interactiveFixture(_ root: URL) throws -> URL {
             out({'type':'stream_event','session_id':sid,'event':{'type':'content_block_start','index':1,'content_block':{'type':'tool_use','id':'t1','name':'Grep','input':{}}}})
             out({'type':'stream_event','session_id':sid,'parent_tool_use_id':'task','event':{'type':'message_start','message':{'id':'sub-'+sid,'usage':{'input_tokens':9000,'output_tokens':1}}}})
             out({'type':'stream_event','session_id':sid,'parent_tool_use_id':'task','event':{'type':'content_block_start','index':0,'content_block':{'type':'tool_use','id':'t2','name':'Read','input':{}}}})
-            out({'type':'stream_event','session_id':sid,'event':{'type':'content_block_start','index':2,'content_block':{'type':'text','text':''}}})
+            out({'type':'tool_use_summary','session_id':sid,'summary':'Searched\n  the project ','preceding_tool_use_ids':['t1']})
+            out({'type':'stream_event','session_id':sid,'event':{'type':'content_block_start','index':2,'content_block':{'type':'thinking','thinking':''}}})
+            out({'type':'stream_event','session_id':sid,'event':{'type':'content_block_start','index':3,'content_block':{'type':'text','text':''}}})
             out({'type':'stream_event','session_id':sid,'event':{'type':'content_block_delta','delta':{'type':'text_delta','text':'hello'}}})
             out({'type':'assistant','session_id':sid,'message':{'id':'answer-'+sid,'usage':usage,'content':[{'type':'text','text':'hello'}]}})
             out({'type':'stream_event','session_id':sid,'event':{'type':'message_delta','usage':{'output_tokens':5}}})
@@ -164,7 +166,8 @@ private func interactiveRequest(context: AgentContext, root: URL, session: Agent
     let args = try #require(one["args"] as? [String])
     #expect(!args.contains("--safe-mode") && args.contains("--disable-slash-commands"))
     #expect(args[args.firstIndex(of: "--allowedTools")! + 1] == "mcp__context_desk_browser")
-    #expect(one["env"] as? [String: String] == ["MCP_TIMEOUT": "30000", "MCP_TOOL_TIMEOUT": "90000", "CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1"])
+    #expect(one["env"] as? [String: String] == ["MCP_TIMEOUT": "30000", "MCP_TOOL_TIMEOUT": "90000", "CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1",
+                                                   "CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES": "1"])
     #expect(try lease(one) == first.generation.uuidString.lowercased())
 
     // Reopening keeps the chat's profile.
@@ -201,6 +204,14 @@ private func interactiveRequest(context: AgentContext, root: URL, session: Agent
     #expect(account.authenticated)
 }
 
+@Test func claudeProgressSummaryIsOneBoundedLine() {
+    #expect(ClaudeIntegration.progressSummary(" \n ") == nil)
+    #expect(ClaudeIntegration.progressSummary(nil) == nil)
+    #expect(ClaudeIntegration.progressSummary("Inspecting pipeline lock\n and open questions") == "Inspecting pipeline lock and open questions")
+    let long = ClaudeIntegration.progressSummary(String(repeating: "a", count: 300))
+    #expect(long?.count == 120 && long?.hasSuffix("…") == true)
+}
+
 @Test func claudeInteractivePersistsStreamsResumesAndRejectsReplay() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -222,10 +233,11 @@ private func interactiveRequest(context: AgentContext, root: URL, session: Agent
     #expect(history[0].items.last?.agentName == "Claude")
     #expect(!history[0].isComplete)
     #expect(await events.values.contains { if case .delta(_, _, "hello") = $0.payload { return true }; return false })
-    // Thinking and tool starts are announced before any text; streamed text clears the label.
+    // Thinking and tool starts are announced before any text; the CLI's progress summary then
+    // replaces generic labels for the rest of the turn, and streamed text clears the line.
     #expect(await events.statuses() == [ClaudeIntegration.thinkingLabel, ClaudeIntegration.thinkingLabel,
         ClaudeIntegration.toolLabel("Grep", main: true), ClaudeIntegration.thinkingLabel,
-        ClaudeIntegration.toolLabel("Read", main: false), nil])
+        ClaudeIntegration.toolLabel("Read", main: false), "Searched the project", "Searched the project", nil])
     let first = await events.usage()
     #expect(first.first?.turn == nil && first.first?.total == .zero)
     // Subagent calls stay out of the main context; the window comes from the session model.

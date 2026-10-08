@@ -151,10 +151,13 @@ extension ResponseTiming {
               elapsed.isFinite, elapsed >= 0, elapsed < Double(Int.max) else {
             return L10n.text("Работа завершена", "Work finished", language: language)
         }
-        let seconds = Int(elapsed)
-        let duration = seconds >= 60
+        let duration = Self.duration(Int(elapsed), language: language)
+        return L10n.text("Время работы: \(duration)", "Worked for \(duration)", language: language)
+    }
+    /// Compact elapsed time shared by finished responses and the live working row.
+    public static func duration(_ seconds: Int, language: AppLanguage = L10n.language) -> String {
+        seconds >= 60
             ? L10n.text("\(seconds / 60) мин \(seconds % 60) с", "\(seconds / 60)m \(seconds % 60)s", language: language)
             : L10n.text("\(seconds) с", "\(seconds)s", language: language)
-        return L10n.text("Время работы: \(duration)", "Worked for \(duration)", language: language)
     }
 }

@@ -144,6 +144,7 @@ private struct ChatRunState {
     var sending: Bool { runs[currentRunKey]?.sending == true }
     var busy: Bool { runs[currentRunKey]?.running == true }
     var workingStatus: String? { busy ? runs[currentRunKey]?.status : nil }
+    var workingSince: Date? { busy ? runs[currentRunKey]?.turnID.flatMap { turnStarts[currentRunKey + ":" + $0] } : nil }
     var queuePaused: Bool { runs[currentRunKey]?.queuePaused ?? true }
     var priorityMessageID: String? { runs[currentRunKey]?.priorityMessageID }
     var anyBusy: Bool { preparingHandoff || creatingHandoff || jobLedger.runs.contains { $0.status.active } || summaryTask != nil || !deletingChatIDs.isEmpty || !archivingChatIDs.isEmpty || runs.values.contains { $0.running || $0.sending } }

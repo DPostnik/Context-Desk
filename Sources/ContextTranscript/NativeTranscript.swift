@@ -10,14 +10,15 @@ public struct NativeTranscript: NSViewRepresentable {
     let followOutput: Bool
     let isWorking: Bool
     let workingStatus: String?
+    let workingSince: Date?
     let unreadCompletionID: String?
     let unreadResponseItemID: String?
     let onReadToEnd: ((String, String) -> Void)?
     public init(items: [TranscriptItem], conversationID: String?, followOutput: Bool, isWorking: Bool = false, workingStatus: String? = nil,
-                unreadCompletionID: String? = nil, unreadResponseItemID: String? = nil, onReadToEnd: ((String, String) -> Void)? = nil) {
+                workingSince: Date? = nil, unreadCompletionID: String? = nil, unreadResponseItemID: String? = nil, onReadToEnd: ((String, String) -> Void)? = nil) {
         self.unreadCompletionID = unreadCompletionID; self.onReadToEnd = onReadToEnd
         self.unreadResponseItemID = unreadResponseItemID
-        self.isWorking = isWorking; self.workingStatus = workingStatus
+        self.isWorking = isWorking; self.workingStatus = workingStatus; self.workingSince = workingSince
         self.items = items; self.conversationID = conversationID; self.followOutput = followOutput
     }
     public func makeNSView(context: Context) -> TranscriptScrollView { TranscriptScrollView(positions: .session) }
@@ -27,7 +28,7 @@ public struct NativeTranscript: NSViewRepresentable {
     public func updateNSView(_ view: TranscriptScrollView, context: Context) {
         view.onReadToEnd = onReadToEnd
         view.update(items: items, conversationID: conversationID, followOutput: followOutput,
-                    isWorking: isWorking, workingStatus: workingStatus, unreadCompletionID: unreadCompletionID, unreadResponseItemID: unreadResponseItemID)
+                    isWorking: isWorking, workingStatus: workingStatus, workingSince: workingSince, unreadCompletionID: unreadCompletionID, unreadResponseItemID: unreadResponseItemID)
     }
 }
 
@@ -54,6 +55,9 @@ public struct NativeTranscript: NSViewRepresentable {
     private var styledWidth: CGFloat = 0
     public private(set) var editCount = 0
     public let workingIndicator = WorkingIndicatorView()
+    private var workingStatus: String?
+    private var workingSince: Date?
+    private var workingTimer: Timer?
 
     public init(pasteboard: NSPasteboard = .general, positions: TranscriptReadingPositions = TranscriptReadingPositions()) {
         self.positions = positions
@@ -99,13 +103,15 @@ public struct NativeTranscript: NSViewRepresentable {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     public func update(items: [TranscriptItem], conversationID: String?, followOutput: Bool, isWorking: Bool = false, workingStatus: String? = nil,
-                       unreadCompletionID: String? = nil, unreadResponseItemID: String? = nil) {
+                       workingSince: Date? = nil, unreadCompletionID: String? = nil, unreadResponseItemID: String? = nil) {
         self.unreadResponseItemID = unreadResponseItemID
         self.unreadCompletionID = unreadCompletionID
         var items = Self.groupActivities(items, isWorking: isWorking)
         if isWorking {
-            items.append(TranscriptItem(id: "local-working", kind: "loading", text: workingStatus ?? ""))
+            items.append(Self.workingRow(status: workingStatus, since: workingSince))
         }
+        self.workingStatus = workingStatus; self.workingSince = isWorking ? workingSince : nil
+        updateWorkingTimer()
         if workingIndicator.isHidden == isWorking { workingIndicator.isHidden = !isWorking }
         workingIndicator.isWorking = isWorking
         let finished = wasWorking && !isWorking
@@ -299,6 +305,44 @@ public struct NativeTranscript: NSViewRepresentable {
         }
     }
 
+    /// The live row: the agent's latest status plus elapsed turn time (kept in `phase`).
+    public static func workingRow(status: String?, since: Date?, now: Date = Date()) -> TranscriptItem {
+        let elapsed = since.map { max(0, now.timeIntervalSince($0)) }.flatMap { $0.isFinite && $0 < 1e9 ? Int($0) : nil }
+        return TranscriptItem(id: "local-working", kind: "loading", text: status ?? "",
+                              phase: elapsed.map { ResponseTiming.duration($0) })
+    }
+
+    private func updateWorkingTimer() {
+        guard wasWorking, workingSince != nil else { workingTimer?.invalidate(); workingTimer = nil; return }
+        guard workingTimer == nil else { return }
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] timer in
+            guard let self else { timer.invalidate(); return }
+            MainActor.assumeIsolated { self.refreshWorkingRow() }
+        }
+        timer.tolerance = 0.2
+        RunLoop.main.add(timer, forMode: .common)
+        workingTimer = timer
+    }
+
+    /// Replaces only the trailing working row, so ticking never re-renders the transcript.
+    private func refreshWorkingRow() {
+        guard let window, window.isVisible, !window.isMiniaturized, window.occlusionState.contains(.visible), !isHiddenOrHasHiddenAncestor,
+              let last = previous.last, last.kind == "loading", let range = ranges.last, let storage = transcript.textStorage,
+              NSMaxRange(range) == storage.length else { return }
+        let row = Self.workingRow(status: workingStatus, since: workingSince)
+        guard row != last else { return }
+        let wasAtEnd = followed && isAtTranscriptEnd
+        let rendered = render(row, expanded: false)
+        changingLayout = true
+        defer { changingLayout = false }
+        storage.beginEditing()
+        storage.replaceCharacters(in: range, with: rendered)
+        storage.endEditing()
+        previous[previous.count - 1] = row
+        ranges[ranges.count - 1] = NSRange(location: range.location, length: rendered.length)
+        if wasAtEnd { scrollToEnd() }
+    }
+
     private func positionWorkingIndicator() {
         if wasWorking, let range = ranges.last, let manager = transcript.layoutManager, let container = transcript.textContainer {
             manager.ensureLayout(forCharacterRange: range)
@@ -395,9 +439,15 @@ public struct NativeTranscript: NSViewRepresentable {
             return result
         }
         if item.kind == "loading" {
-            return NSAttributedString(string: "      " + item.text + "\n\n", attributes: [
-                .font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.secondaryLabelColor
-            ])
+            let font = NSFont.systemFont(ofSize: 12)
+            result.append(NSAttributedString(string: "      " + item.text, attributes: [.font: font, .foregroundColor: NSColor.secondaryLabelColor]))
+            if let elapsed = item.phase {
+                result.append(NSAttributedString(string: (item.text.isEmpty ? "" : "  ") + elapsed, attributes: [
+                    .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular), .foregroundColor: NSColor.tertiaryLabelColor
+                ]))
+            }
+            result.append(NSAttributedString(string: "\n\n", attributes: [.font: font]))
+            return result
         }
         if item.kind == "activity" {
             let title = item.phase ?? L10n.text("Действия \(item.agentName ?? "Codex")", "\(item.agentName ?? "Codex") actions")

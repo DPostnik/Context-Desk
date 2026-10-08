@@ -810,7 +810,7 @@ struct ChatHistoryView: View {
         } else {
             let renderedItems = transcript.items
             NativeTranscript(items: renderedItems, conversationID: model.chatID, followOutput: followOutput,
-                             isWorking: model.busy, workingStatus: model.workingStatus, unreadCompletionID: model.selectedChat?.unreadCompletionID,
+                             isWorking: model.busy, workingStatus: model.workingStatus, workingSince: model.workingSince, unreadCompletionID: model.selectedChat?.unreadCompletionID,
                              unreadResponseItemID: model.chatID.flatMap { model.unreadResponseItems[$0] }) { threadID, completionID in
                 guard transcript.items == renderedItems else { return }
                 model.markResponseRead(threadID: threadID, completionID: completionID)

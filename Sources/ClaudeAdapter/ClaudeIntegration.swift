@@ -41,6 +41,8 @@ public actor ClaudeIntegration: AgentIntegration {
     private var interactions: [UUID: Interaction] = [:]
     private var interrupted = Set<String>()
     private var messageIDs: [String: String] = [:]
+    /// Session -> the CLI's latest progress summary for its active turn.
+    private var summaries: [String: (turn: String, text: String)] = [:]
     private var meters: [String: ClaudeUsageMeter] = [:]
     private var generations: [UUID: ClaudeGenerationRunner] = [:]
     private var cancelledGenerations = Set<UUID>()
@@ -90,7 +92,7 @@ public actor ClaudeIntegration: AgentIntegration {
         for wire in wires.values { await wire.close() }
         for id in Array(wires.keys) { finish(id, outcome: .uncertain) }
         wires.removeAll(); readers.removeAll(); interactions.removeAll(); seenRequests.removeAll()
-        sessions.removeAll(); messageIDs.removeAll(); interrupted.removeAll(); meters.removeAll()
+        sessions.removeAll(); messageIDs.removeAll(); summaries.removeAll(); interrupted.removeAll(); meters.removeAll()
         home = nil; executable = nil; signedIn = false; accountIdentity = nil; browserResources = nil; wireGrants.removeAll()
         context = .init(connection: .appClaude, accountRevision: UUID())
     }
@@ -218,7 +220,7 @@ public actor ClaudeIntegration: AgentIntegration {
                 let arguments = try Self.arguments(id: id, resumed: record.sent, access: expectedAccess,
                                                    model: request.model.model, effort: request.model.effort,
                                                    projectInstructions: ProjectInstructions.prompt(projectPath: record.cwd), browserServer: server)
-                var environment = ClaudeProfile.environment(home: home)
+                var environment = ClaudeProfile.environment(home: home).merging(Self.sessionEnvironment) { _, new in new }
                 // Same startup/tool limits as the Codex MCP entry (30 s / 90 s).
                 if server != nil { environment.merge(Self.browserEnvironment) { _, new in new } }
                 try await wire.start(executable: executable, arguments: arguments, environment: environment, cwd: URL(fileURLWithPath: record.cwd))
@@ -248,6 +250,8 @@ public actor ClaudeIntegration: AgentIntegration {
             return failed(error, uncertain: delivered)
         }
     }
+    /// Asks the CLI for `tool_use_summary` progress lines (a small extra model call per tool batch).
+    static let sessionEnvironment = ["CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES": "1"]
     /// `--safe-mode` would also drop `--mcp-config` servers, so browser chats spell out its isolation instead.
     static let browserEnvironment = ["MCP_TIMEOUT": "30000", "MCP_TOOL_TIMEOUT": "90000", "CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1"]
     static func arguments(id: String, resumed: Bool, access: AccessMode, model: String, effort: String?,
@@ -325,12 +329,14 @@ public actor ClaudeIntegration: AgentIntegration {
                 messageIDs[id] = message
                 if main { meters[id]?.current = message; observeUsage(event["message"]["usage"], message: message, session: id, turn: turn) }
             }
-            if event["type"].string == "message_start" { status(Self.thinkingLabel, session: id, turn: turn) }
+            if event["type"].string == "message_start" { status(summary(id, turn: turn) ?? Self.thinkingLabel, session: id, turn: turn) }
             if event["type"].string == "content_block_start" {
                 let block = event["content_block"]
                 switch block["type"].string {
-                case "thinking", "redacted_thinking": status(Self.thinkingLabel, session: id, turn: turn)
-                case "tool_use", "server_tool_use": status(Self.toolLabel(block["name"].string ?? "", main: main), session: id, turn: turn)
+                // Once the CLI has summarized this turn's work, keep that line instead of generic labels.
+                case "thinking", "redacted_thinking": status(summary(id, turn: turn) ?? Self.thinkingLabel, session: id, turn: turn)
+                case "tool_use", "server_tool_use":
+                    status(summary(id, turn: turn) ?? Self.toolLabel(block["name"].string ?? "", main: main), session: id, turn: turn)
                 case "text": status(nil, session: id, turn: turn)
                 default: break
                 }
@@ -366,6 +372,10 @@ public actor ClaudeIntegration: AgentIntegration {
             }
             finish(id, outcome: interrupted.contains(id) ? .cancelled : value["is_error"].bool == true ? .failed : .completed)
             await wire.close()
+        case "tool_use_summary":
+            guard let turn = sessions[id]?.active, let text = Self.progressSummary(value["summary"].string) else { return }
+            summaries[id] = (turn, text)
+            status(text, session: id, turn: turn)
         case "system":
             if value["subtype"].string == "init", let model = value["model"].string { meters[id]?.model = model }
         default: break // Notifications are data; only recognized control requests can obtain an answer.
@@ -441,6 +451,16 @@ public actor ClaudeIntegration: AgentIntegration {
         meters[id] = meter
         sink.yield(.init(session: reference(id), payload: .usage(turn: turn, total: meter.total, snapshot: meter.snapshot())))
     }
+    /// CLI summary text is data: one plain line, bounded for the status row.
+    static func progressSummary(_ raw: String?) -> String? {
+        let line = (raw ?? "").components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }.joined(separator: " ")
+        guard !line.isEmpty else { return nil }
+        return line.count > 120 ? String(line.prefix(119)) + "…" : line
+    }
+    private func summary(_ id: String, turn: String) -> String? {
+        summaries[id].flatMap { $0.turn == turn ? $0.text : nil }
+    }
     static var thinkingLabel: String { L10n.text("Думает…", "Thinking…") }
     static func toolLabel(_ name: String, main: Bool) -> String {
         main ? L10n.text("Запускает \(name)…", "Running \(name)…") : L10n.text("Подагент запускает \(name)…", "Sub-agent running \(name)…")
@@ -462,6 +482,7 @@ public actor ClaudeIntegration: AgentIntegration {
         guard let turn = sessions[id]?.active else { return }
         let history = AgentHistoryTurn(id: turn, items: sessions[id]?.current ?? [], startedAt: nil, completedAt: Date(), duration: nil, isComplete: false)
         sessions[id]?.turns.append(history); sessions[id]?.active = nil; sessions[id]?.current = []
+        summaries.removeValue(forKey: id)
         if var meter = meters.removeValue(forKey: id) {
             meter.abandon() // No-op after a terminal result; otherwise observed calls still count.
             sessions[id]?.tokens = meter.base; sessions[id]?.contextWindow = meter.window; sessions[id]?.lastContext = meter.last

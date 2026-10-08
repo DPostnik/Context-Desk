@@ -116,6 +116,22 @@ import ContextTranscript
     #expect(view.workingIndicator.isHidden)
 }
 
+@Test @MainActor func workingRowShowsStatusAndElapsedTurnTime() {
+    let start = Date(timeIntervalSince1970: 1_000)
+    let row = TranscriptScrollView.workingRow(status: "Inspecting pipeline lock", since: start, now: start.addingTimeInterval(41.7))
+    #expect(row.text == "Inspecting pipeline lock")
+    #expect(row.phase == ResponseTiming.duration(41))
+    #expect(ResponseTiming.duration(41, language: .english) == "41s")
+    #expect(ResponseTiming.duration(125, language: .russian) == "2 мин 5 с")
+    #expect(TranscriptScrollView.workingRow(status: nil, since: nil).phase == nil)
+    #expect(TranscriptScrollView.workingRow(status: nil, since: start.addingTimeInterval(5), now: start).phase == ResponseTiming.duration(0))
+    let view = TranscriptScrollView()
+    view.frame = NSRect(x: 0, y: 0, width: 700, height: 500)
+    view.update(items: [TranscriptItem(id: "u", kind: "user", text: "Go")], conversationID: "t", followOutput: true,
+                isWorking: true, workingStatus: "Inspecting pipeline lock", workingSince: Date().addingTimeInterval(-3))
+    #expect(view.transcript.string.contains("Inspecting pipeline lock  " + ResponseTiming.duration(3)))
+}
+
 @Test @MainActor func longTranscriptHasBoundedWidthAndUnchangedUpdatesDoNoWork() {
     let view = TranscriptScrollView()
     view.frame = NSRect(x: 0, y: 0, width: 700, height: 500)
