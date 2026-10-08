@@ -5,7 +5,10 @@ import AgentContract
 /// App-owned metadata, readable snapshots and portable work. Engines retain native execution state and credentials.
 public actor AppStore {
     private let file: URL
+    /// Bumped on every transcript write or delete so readers can skip re-decoding unchanged transcripts.
+    private var transcriptRevisions: [String: Int] = [:]
     public init(file: URL) { self.file = file }
+    public func transcriptRevision(conversationID: String) -> Int { transcriptRevisions[conversationID, default: 0] }
     public func loadRoutines() throws -> [PortableRoutine] {
         try withDatabase { db in
             guard let data = try bytes(db: db, key: "portableRoutines:v1") else { return [] }
@@ -140,6 +143,7 @@ public actor AppStore {
                       sqlite3_exec(db, "COMMIT", nil, nil, nil) == SQLITE_OK else {
                     throw ClientFailure(L10n.text("Не удалось сохранить удаление чата", "Could not save the chat deletion"))
                 }
+                transcriptRevisions[threadID, default: 0] += 1
             } catch {
                 sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
                 throw error
@@ -237,6 +241,7 @@ public actor AppStore {
                 if previous.capturedAt > snapshot.capturedAt { return }
             }
             try put(db: db, key: "transcript:" + snapshot.conversation.value, bytes: JSONEncoder().encode(snapshot))
+            transcriptRevisions[snapshot.conversation.value, default: 0] += 1
         }
     }
     public func loadTranscript(conversationID: String) throws -> AgentTranscriptSnapshot? {

@@ -39,6 +39,8 @@ private struct ChatRunState {
     let mobileRemote = MobileRemoteHost()
     private var remoteDeliveryResults: [String: Bool] = [:]
     private var configuringRemoteChats: Set<String> = []
+    /// Chat ID -> last stored messages sent to the phone, keyed by store revision and native session.
+    private var remoteHistoryCache: [String: (revision: Int, session: AgentSessionReference?, messages: [TranscriptItem])] = [:]
     @Published var configuringBrowserChats: Set<String> = []
     @Published var newChatBrowserProfiles: [UUID: UUID] = [:]
     /// Chat ID -> PID of its running Chrome for Testing; refreshed by `startBrowserActivityMonitor`.
@@ -1336,8 +1338,19 @@ private struct ChatRunState {
             if awaitingApproval.contains($0.id) != awaitingApproval.contains($1.id) { return awaitingApproval.contains($0.id) }
             return $0.updated > $1.updated
         }).prefix(20) {
-            let history = try? await store.loadTranscript(conversationID: chat.id)
-            let messages = chat.id == chatID ? items : history.map(LocalHistory.items) ?? []
+            let messages: [TranscriptItem]
+            if chat.id == chatID { messages = items }
+            else {
+                // Publication runs on every model change; decode stored transcripts only when they changed.
+                let revision = await store.transcriptRevision(conversationID: chat.id)
+                if let cached = remoteHistoryCache[chat.id], cached.revision == revision, cached.session == chat.nativeSession {
+                    messages = cached.messages
+                } else {
+                    let history = try? await store.loadTranscript(conversationID: chat.id)
+                    messages = Array((history.map(LocalHistory.items) ?? []).filter { ["user", "assistant"].contains($0.kind) }.suffix(20))
+                    remoteHistoryCache[chat.id] = (revision, chat.nativeSession, messages)
+                }
+            }
             let approvals = pending.filter { $0.threadID == chat.id }.compactMap { action -> RemoteApproval? in
                 guard case .approval(let canAllow) = action.interaction.kind else { return nil }
                 return RemoteApproval(id: action.id, details: String(action.interaction.details.prefix(8000)), canAllow: canAllow && action.interaction.details.count <= 8000)

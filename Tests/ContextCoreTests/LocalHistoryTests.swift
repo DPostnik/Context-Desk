@@ -124,3 +124,29 @@ import ContextCore
     #expect(model.items.map(\.text) == ["Saved by backfill"])
     #expect(model.localHistoryNotice != nil)
 }
+
+@Test @MainActor func remoteSnapshotReusesStoredHistoryUntilTranscriptChanges() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = AppStore(file: root.appendingPathComponent("metadata.sqlite"))
+    let project = Project(path: "/fixture")
+    let session = AgentSessionReference(connection: AgentConnectionID(agent: .claudeCode, id: UUID()), nativeID: "native")
+    let chat = Chat(session: session, projectID: project.id, title: "Remote", model: "model")
+    var state = SavedState(); state.projects = [project]; state.chats = [chat]
+    try await store.save(state)
+    let first = try LocalHistory.snapshot(conversation: ConversationID(chat.id), source: session,
+        items: [TranscriptItem(id: "first", kind: "user", text: "Hello")], capturedAt: Date(timeIntervalSince1970: 10))
+    try await store.saveTranscript(first)
+    let model = DeskModel(store: store, summaryResources: nil)
+    model.state = try await store.load()
+    let projects: Set = [project.id.uuidString]
+    #expect(await model.remoteSnapshot(projects: projects).chats.first?.messages.map(\.text) == ["Hello"])
+    let revision = await store.transcriptRevision(conversationID: chat.id)
+    // A stale snapshot is ignored by the store and must not invalidate cached history.
+    try await store.saveTranscript(LocalHistory.snapshot(conversation: ConversationID(chat.id), source: session,
+        items: [], capturedAt: Date(timeIntervalSince1970: 1)))
+    #expect(await store.transcriptRevision(conversationID: chat.id) == revision)
+    try await store.recordTranscriptItem(TranscriptItem(id: "reply", kind: "assistant", text: "Answer"), conversationID: chat.id, source: session)
+    #expect(await store.transcriptRevision(conversationID: chat.id) == revision + 1)
+    #expect(await model.remoteSnapshot(projects: projects).chats.first?.messages.map(\.text) == ["Hello", "Answer"])
+}
