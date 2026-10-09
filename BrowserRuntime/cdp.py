@@ -170,25 +170,29 @@ class PageSession:
             return message
         return None
 
-    def send(self, method, params=None, seconds=None, interrupt=None):
+    def send(self, method, params=None, seconds=None, interrupt=None, session=None):
         try:
-            return self._send(method, params, seconds, interrupt)
+            return self._send(method, params, seconds, interrupt, session)
         except CDPTransportError:
             self.shutdown()  # A late reply could otherwise be mistaken for a new one.
             raise
 
-    def _send(self, method, params=None, seconds=None, interrupt=None):
+    def _send(self, method, params=None, seconds=None, interrupt=None, session=None):
         """Send one command once and wait for its reply; events are kept in order.
 
         With interrupt, an event of that name ends the wait early and returns
         {'interrupted': event}: input that opens a JavaScript dialog is answered by
         Chrome only after the dialog closes. The late reply is ignored by id.
+        session addresses a flattened child target (a cross-origin iframe).
         """
         if self.socket is None:
             raise CDPTransportError('cdp_not_connected')
         self.counter += 1
         identifier = self.counter
-        data = json.dumps({'id': identifier, 'method': method, 'params': params or {}}, separators=(',', ':')).encode()
+        message = {'id': identifier, 'method': method, 'params': params or {}}
+        if session is not None:
+            message['sessionId'] = session
+        data = json.dumps(message, separators=(',', ':')).encode()
         try:
             self.socket.sendall(frame(data))
         except OSError:

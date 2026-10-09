@@ -51,7 +51,7 @@ class FakePage:
     def close(self):
         self.closed += 1
 
-    def send(self, method, params=None, seconds=None, interrupt=None):
+    def send(self, method, params=None, seconds=None, interrupt=None, session=None):
         self.sent.append((method, params))
         if self.opens_dialog and method == 'Input.dispatchMouseEvent' and params['type'] == 'mousePressed':
             event = {'method': 'Page.javascriptDialogOpening', 'params': self.opens_dialog}
@@ -481,7 +481,7 @@ class SettleTests(unittest.TestCase):
         self.page.model['resolve'] = {'x': 1, 'y': 1, 'risk': None, 'newTab': True}
         original = self.page.send
 
-        def send(method, params=None, seconds=None, interrupt=None):
+        def send(method, params=None, seconds=None, interrupt=None, session=None):
             if method == 'Input.dispatchMouseEvent' and params['type'] == 'mouseReleased':
                 chrome.tabs['B' * 32] = self_url + 'help'
             return original(method, params, seconds, interrupt)
@@ -489,6 +489,142 @@ class SettleTests(unittest.TestCase):
         result = self.browser.input('owner', 'click', ref='ref_1')
         self.assertEqual(result['newTabs'], [self.url + 'help'])
         self.assertEqual(chrome.hidden, [False, True, False])  # Was hidden: hidden again, then rechecked.
+
+
+class StageFourTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.project = tempfile.TemporaryDirectory()
+        self.calls = []
+
+        def rpc(name, arguments):
+            self.calls.append((name, arguments))
+            return {'content': [{'type': 'text', 'text': '## Console messages\nmsgid=1 [error] boom'}]}
+        self.browser = Browser(Path(self.directory.name), rpc=rpc, workspace=Path(self.project.name))
+        self.browser.session, self.browser.page = 'owner', 7
+        self.browser.checkpoint = {'state': 'opened'}
+        self.page = FakePage()
+        self.browser.page_session_factory = lambda: self.page
+        self.browser.stopped.wait = lambda seconds: False
+        self.url = 'https://example.test/'
+        Path(self.project.name, 'doc.pdf').write_bytes(b'pdf')
+
+    def tearDown(self):
+        self.directory.cleanup()
+        self.project.cleanup()
+
+    def test_upload_paths_stay_inside_the_project(self):
+        project = Path(self.project.name).resolve()
+        self.assertEqual(self.browser.upload_paths(['doc.pdf']), [str(project / 'doc.pdf')])
+        self.assertEqual(self.browser.upload_paths([str(project / 'doc.pdf')]), [str(project / 'doc.pdf')])
+        outside = Path(self.directory.name, 'secret.txt')
+        outside.write_text('x')
+        Path(self.project.name, 'link.txt').symlink_to(outside)
+        for bad in ([str(outside)], ['link.txt'], ['../secret.txt'], ['missing.pdf'], [], ['doc.pdf'] * 11, 'doc.pdf'):
+            with self.assertRaises(Rejected, msg=bad):
+                self.browser.upload_paths(bad)
+        (project / 'folder').mkdir()
+        with self.assertRaises(Rejected):
+            self.browser.upload_paths(['folder'])
+        no_project = Browser(Path(self.directory.name), rpc=lambda *_: {})
+        with self.assertRaises(Rejected):
+            no_project.upload_paths(['doc.pdf'])
+
+    def test_upload_sets_files_on_the_input_object_and_needs_expected_url(self):
+        original = self.page.send
+
+        def send(method, params=None, seconds=None, interrupt=None, session=None):
+            if method == 'Runtime.evaluate' and '"op": "element"' in params['expression']:
+                self.page.sent.append((method, params))
+                return {'result': {'type': 'object', 'objectId': 'input-1'}}
+            return original(method, params, seconds, interrupt, session)
+        self.page.send = send
+        with self.assertRaises(Rejected):
+            self.browser.input('owner', 'upload', ref='ref_2', files=['doc.pdf'])
+        result = self.browser.input('owner', 'upload', 'upload-0001', self.url, ref='ref_2', files=['doc.pdf'])
+        self.assertEqual(result['risk'], 'upload')
+        sent = [p for m, p in self.page.sent if m == 'DOM.setFileInputFiles']
+        self.assertEqual(sent, [{'files': [str(Path(self.project.name).resolve() / 'doc.pdf')], 'objectId': 'input-1'}])
+
+    def test_eval_is_journaled_once_and_reports_errors(self):
+        original = self.page.send
+        replies = {'1+1': {'result': {'type': 'number', 'value': 2}},
+                   'boom()': {'exceptionDetails': {'text': 'Uncaught', 'exception': {'description': 'ReferenceError: boom is not defined'}}},
+                   'big': {'result': {'type': 'string', 'value': 'x' * 30000}},
+                   'document.body': {'result': {'type': 'object', 'description': 'body'}}}
+
+        def send(method, params=None, seconds=None, interrupt=None, session=None):
+            if method == 'Runtime.evaluate' and params['expression'] in replies:
+                self.page.sent.append((method, params))
+                self.assertTrue(params['replMode'] and params['awaitPromise'])
+                return replies[params['expression']]
+            return original(method, params, seconds, interrupt, session)
+        self.page.send = send
+        self.assertEqual(self.browser.evaluate_js('owner', '1+1', self.url, 'eval-00001')['value'], 2)
+        with self.assertRaises(Rejected):
+            self.browser.evaluate_js('owner', '1+1', self.url, 'eval-00001')
+        self.assertEqual(sum(p['expression'] == '1+1' for m, p in self.page.sent if m == 'Runtime.evaluate'), 1)
+        self.assertIn('ReferenceError', self.browser.evaluate_js('owner', 'boom()', self.url)['error'])
+        big = self.browser.evaluate_js('owner', 'big', self.url)
+        self.assertTrue(big['truncated'] and len(big['value']) == page_input.EVAL_CHARS)
+        self.assertEqual(self.browser.evaluate_js('owner', 'document.body', self.url)['type'], 'body')
+        for bad in ({'expected_url': None}, {'expected_url': 'https://other.test/'}, {'timeout': 60}):
+            with self.assertRaises(Rejected):
+                self.browser.evaluate_js('owner', '1+1', **{'expected_url': self.url, **bad})
+        self.page.fail_on = 'Runtime.evaluate'
+        self.page.send = original
+        with self.assertRaises(Rejected):
+            self.browser.evaluate_js('owner', '2+2', self.url)
+
+    def test_logs_use_devtools_collection(self):
+        result = self.browser.logs('owner', 'console', 20, 1, True)
+        self.assertEqual(self.calls[-1], ('list_console_messages', {'pageId': 7, 'pageSize': 20, 'pageIdx': 1, 'types': ['error', 'warn']}))
+        self.assertIn('boom', result['text'])
+        self.browser.logs('owner', 'network')
+        self.assertEqual(self.calls[-1], ('list_network_requests', {'pageId': 7, 'pageSize': 50, 'pageIdx': 0}))
+        for bad in ({'kind': 'dom'}, {'limit': 0}, {'limit': 500}, {'problems': 'yes'}):
+            with self.assertRaises(Rejected):
+                self.browser.logs('owner', **bad)
+
+    def test_frame_trees_nest_and_frame_refs_route_to_their_session(self):
+        self.browser.frames = {'F' * 32: {'session': 'child', 'parent': None, 'url': 'https://pay.test/'}}
+        trees = {None: '- heading "Shop" [ref_1]\n- iframe "Pay" [ref_2] (cross-origin)\n- button "Help" [ref_3]',
+                 'child': '- textbox "Card" [ref_4] value=""'}
+        original = self.page.send
+        routed = []  # (method, params, session) of every command
+
+        def send(method, params=None, seconds=None, interrupt=None, session=None):
+            routed.append((method, params, session))
+            if method == 'Runtime.evaluate' and params['expression'].startswith('(' + server.PAGE_TREE):
+                request = json.loads(params['expression'][len(server.PAGE_TREE) + 3:-1])
+                if request['op'] == 'read':
+                    return {'result': {'value': {'kind': 'page_tree', 'tree': trees[session]}}}
+                if request['op'] == 'resolve':
+                    return {'result': {'value': {'x': 10, 'y': 20}}}
+            if method == 'DOM.getFrameOwner':
+                return {'backendNodeId': 5}
+            if method == 'DOM.resolveNode':
+                return {'object': {'objectId': 'iframe-1'}}
+            if method == 'Runtime.callFunctionOn':
+                if 'byElement' in params['functionDeclaration']:
+                    return {'result': {'value': 'ref_2'}}
+                return {'result': {'value': {'x': 100, 'y': 300, 'scrolled': True}}}
+            return original(method, params, seconds, interrupt, session)
+        self.page.send = send
+        tree = self.browser.read('owner')['tree']
+        self.assertEqual(tree.split('\n'), ['- heading "Shop" [ref_1]', '- iframe "Pay" [ref_2]', '  - textbox "Card" [ref_4] value=""', '- button "Help" [ref_3]'])
+        self.assertEqual(self.browser.ref_frames, {'ref_4': 'F' * 32})
+        self.browser.screenshot('owner')
+        self.browser.input('owner', 'click', ref='ref_4')
+        pressed = [p for m, p, _ in routed if m == 'Input.dispatchMouseEvent' and p['type'] == 'mousePressed']
+        self.assertEqual([(p['x'], p['y']) for p in pressed], [(110, 320)])  # Frame offset + point inside the frame.
+        self.assertIsNone(self.browser.viewport)  # The iframe was scrolled into view.
+        resolves = [s for m, p, s in routed if m == 'Runtime.evaluate' and '"op": "resolve"' in p['expression']]
+        self.assertEqual(resolves, ['child'])
+        del self.browser.frames['F' * 32]  # Frame detached or reloaded.
+        with self.assertRaises(Rejected) as raised:
+            self.browser.input('owner', 'click', ref='ref_4')
+        self.assertIn('frame', str(raised.exception))
 
 
 class WebSocketTests(unittest.TestCase):

@@ -118,7 +118,12 @@ documents. `browser_action`/`browser_verify` stay for compatibility.
 Acceptance: benchmark workflows (`workflow_benchmark.py`) need fewer tool calls
 per step than the current baseline with no lost no-replay guarantees.
 
-## Stage 4 — Hard pages and diagnostics
+## Stage 4 — Hard pages and diagnostics (delivered 2026-10-09)
+
+Delivered: cross-origin iframe trees and ref input through flattened child sessions;
+`browser_eval` (replMode, journaled, expectedURL); `action=upload` by ref from the
+project directory; `browser_logs` over Chrome DevTools MCP's console/network
+collection. Dialogs inside cross-origin frames are not tracked yet.
 
 - Cross-origin iframes via `Target.setAutoAttach` (flattened sessions) for tree,
   input and screenshots.

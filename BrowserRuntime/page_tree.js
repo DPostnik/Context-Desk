@@ -7,7 +7,9 @@
 (request) => {
   const KEY = Symbol.for('context-desk.refs');
   const fresh = !window[KEY];
-  const registry = window[KEY] || (window[KEY] = {next: (Number(request.floor) || 0) + 1, byRef: new Map(), byElement: new WeakMap()});
+  const registry = window[KEY] || (window[KEY] = {next: 1, byRef: new Map(), byElement: new WeakMap()});
+  // One numbering for every document and frame of the tab: never below refs issued elsewhere.
+  registry.next = Math.max(registry.next, (Number(request.floor) || 0) + 1);
   const clip = (value, max) => {
     const text = String(value ?? '').slice(0, max * 4).replace(/\s+/g, ' ').trim();
     return (text.length > max ? text.slice(0, max - 1) + '…' : text).toWellFormed();
@@ -98,6 +100,18 @@
     return {x, y};
   };
 
+  if (request.op === 'element') {
+    // The file input behind a ref (the input, its label, or a single input inside it),
+    // returned as an object for DOM.setFileInputFiles.
+    const element = lookup(request.ref);
+    if (!element) return 'stale_ref';
+    const input = element.matches('input[type=file]') ? element :
+      element.control?.type === 'file' ? element.control :
+      element.querySelectorAll('input[type=file]').length === 1 ? element.querySelector('input[type=file]') : null;
+    if (!input) return 'not_a_file_input';
+    if (input.disabled) return 'element_disabled';
+    return input;
+  }
   const run = () => {
   // Element under a viewport point, through same-origin iframes and open shadow roots.
   const atPoint = (x, y) => {
@@ -298,7 +312,8 @@
     // skip their line and keep walking their children.
     const wrapper = (role === 'listitem' || role === 'cell') ? !!element.querySelector(CONTROLS) :
       (role === 'list' || role === 'row') && !nameOf(element, role) && !element.getAttribute('aria-label');
-    const show = isInteractive || (request.filter === 'all' && STRUCTURE.has(role) && !wrapper &&
+    // Frames are always shown: their contents (or a cross-origin frame's tree) nest under them.
+    const show = isInteractive || role === 'iframe' || (request.filter === 'all' && STRUCTURE.has(role) && !wrapper &&
       (role !== 'image' || nameOf(element, role)));
     if (show) {
       if (!emit(indent, describe(element, role))) return;
@@ -308,7 +323,7 @@
       let inner = null;
       try { inner = element.contentDocument; } catch (_) {}
       if (inner?.body) walk(inner.body, depth + 1, next);
-      else if (show) lines[lines.length - 1] += ' (cross-origin: use browser_screenshot)';
+      else if (show) lines[lines.length - 1] += ' (cross-origin)';
       return;
     }
     // Interactive leaves already carry their text as the name.

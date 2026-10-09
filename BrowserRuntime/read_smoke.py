@@ -117,7 +117,7 @@ def main():
             assert 'SECRET_PASSWORD' not in text and '4111' not in text and '[redacted]' in text, text
             assert 'Invisible' not in text, text
             assert 'Shadow action' in text and 'Frame button' in text, text
-            assert 'Partner widget' in text and 'cross-origin' in text, text
+            assert re.search(r'iframe "Partner widget" \[ref_\d+\]\n\s+- button "Frame button"', text), text  # Cross-origin frame nested.
             assert 'textbox "Query"' in text and 'value="initial"' in text, text
             assert 'combobox "Size"' in text and 'value="Small"' in text, text
             interactive = call('browser_read', session=session, filter='interactive')
@@ -164,7 +164,7 @@ def main():
             assert host.visibility(host.owner) is True, 'browser became visible'
             call('browser_close', session=session)
             print(json.dumps({'result': 'passed', 'readSeconds': round(read_seconds, 3), 'treeChars': len(text), 'refs': tree['refs'],
-                              'redaction': True, 'shadowDOM': True, 'sameOriginFrame': True, 'crossOriginMarked': True,
+                              'redaction': True, 'shadowDOM': True, 'sameOriginFrame': True, 'crossOriginNested': True,
                               'staleRefRefused': True, 'coveredRefused': True, 'scrollIntoView': True, 'formBySelectTypeRef': True,
                               'textMode': True, 'subtree': True, 'truncation': True, 'browserStayedHidden': True}))
         finally:

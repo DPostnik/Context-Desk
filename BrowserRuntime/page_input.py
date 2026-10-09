@@ -3,9 +3,17 @@ import re
 
 MAX_IMAGE_SIDE = 1280
 QUALITY = 70
-ACTIONS = ('click', 'double_click', 'right_click', 'hover', 'drag', 'scroll', 'scroll_to', 'key', 'type', 'select', 'dialog', 'wait')
+ACTIONS = ('click', 'double_click', 'right_click', 'hover', 'drag', 'scroll', 'scroll_to', 'key', 'type', 'select', 'upload', 'dialog', 'wait')
 # Consequence classes that require the observed expectedURL and explicit confirmation.
-RISKY = frozenset(('submit', 'navigation', 'dialog'))
+RISKY = frozenset(('submit', 'navigation', 'dialog', 'upload'))
+MAX_FILES = 10
+MAX_FRAMES = 50
+MAX_FRAME_DEPTH = 3
+MAX_FRAME_REFS = 20000
+MAX_SCRIPT = 20000
+EVAL_CHARS = 20000
+LOG_CHARS = 20000
+MAX_UPLOAD_BYTES = 200 * 1024 * 1024
 # Settling: network/DOM quiet period, and requests treated as long-lived (polling, streams).
 QUIET = 0.3
 LONG_REQUEST = 2.0

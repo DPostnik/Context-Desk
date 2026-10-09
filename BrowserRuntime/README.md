@@ -66,6 +66,12 @@ keyed by ref, or the head of a new page. A plain in-page click needs no
 `expectedURL`; submitting a form, following a link to another site and answering a
 dialog require it and are flagged with `risk`. JavaScript dialogs are reported and
 answered with `action=dialog`; tabs opened by an action are listed in `newTabs`.
+Cross-origin iframes are read and operated like the page itself: their trees nest
+under the iframe line and their refs work with `browser_input`. `action=upload`
+attaches files from the chat's project directory to a file field by ref.
+`browser_eval` runs JavaScript once (journaled, expectedURL required) and returns the
+last expression's value; `browser_logs` lists the tab's console messages or network
+requests collected by Chrome DevTools.
 
 ## Русский
 
@@ -138,6 +144,12 @@ DOM (`settle`, по умолчанию 3 с) и возвращает `changes`: 
 сайт и ответ на диалог требуют его и помечаются `risk`. Диалоги JavaScript
 сообщаются в ответе и закрываются через `action=dialog`; вкладки, открытые действием,
 перечислены в `newTabs`.
+iframe с других сайтов читаются и управляются как сама страница: их дерево вложено
+под строку iframe, а их ref работают в `browser_input`. `action=upload` прикрепляет
+к полю файла по ref файлы из папки проекта чата. `browser_eval` один раз выполняет
+JavaScript (с записью в журнал и обязательным expectedURL) и возвращает значение
+последнего выражения; `browser_logs` показывает сообщения консоли или сетевые запросы
+вкладки, собранные Chrome DevTools.
 
 ## Development contract
 
@@ -166,6 +178,14 @@ DOM (`settle`, по умолчанию 3 с) и возвращает `changes`: 
   classified. Ref numbers continue across documents, so an old ref is stale rather
   than pointing at a new element. `settle_smoke.py` checks settling, changes, risk,
   dialogs and new tabs live.
+- Cross-origin iframes attach as flattened child sessions (`Target.setAutoAttach`) of
+  the persistent tab session, nested up to 3 levels. The tree of each frame is read in
+  its own context and spliced under its iframe (found via `DOM.getFrameOwner` and the
+  page's ref registry); refs share one numbering across all documents of the tab.
+  Frame refs resolve to top-viewport points by adding the iframe's content-box
+  position. A detached or reloaded frame makes its refs stale. Uploads accept only
+  canonical files inside the project directory (symlinks out are refused), at most 10
+  files of 200 MB each. `frame_smoke.py` checks frames, uploads, eval and logs live.
 - `browser_snapshot` defaults to a bounded DOM read. Set `mode=interactive`
   explicitly for upstream action UIDs. `browser_status`
   reports RPC latency, bytes and counts; these exclude model processing and do
