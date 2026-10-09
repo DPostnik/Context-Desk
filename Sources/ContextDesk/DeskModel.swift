@@ -201,7 +201,7 @@ private struct ChatRunState {
     var chats: [Chat] { projectID.map { state.orderedChats(projectID: $0, archived: false) } ?? [] }
     var currentAction: PendingAction? { pending.first { $0.threadID == chatID } }
     var currentUsage: UsageSnapshot? { chatID.flatMap { usage[$0] } }
-    var canSend: Bool { selectedChat?.isScheduledRecord != true && (chatID.map { chatIsAvailable($0) } ?? ([.originalCodex, .appClaude].contains(currentAgent))) && !selectedChatIsArchived && !isChangingChat(currentRunKey) && routeIsAvailable(currentRoute) && currentAgentConnected && currentAgentAuthenticated && selectedProject != nil && !sending && !loadingChat && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    var canSend: Bool { (selectedChat?.isScheduledRecord != true || !busy) && !creatingHandoff && (chatID.map { chatIsAvailable($0) } ?? ([.originalCodex, .appClaude].contains(currentAgent))) && !selectedChatIsArchived && !isChangingChat(currentRunKey) && routeIsAvailable(currentRoute) && currentAgentConnected && currentAgentAuthenticated && selectedProject != nil && !sending && !loadingChat && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     var supportedEfforts: [String] {
         models.first { $0.id == currentModel }?.efforts ?? []
     }
@@ -646,7 +646,7 @@ private struct ChatRunState {
         handoffProgress = L10n.text("Читаю историю чата…", "Reading chat history…")
         defer { preparingHandoff = false; handoffRunner = nil; handoffProgress = "" }
         do {
-            guard !chat.isScheduledRecord else { throw ClientFailure(Self.scheduledRecordReadOnly) }
+            if chat.isScheduledRecord { return try await scheduledRecordHandoff(chat, goal: "") }
             guard let source = chat.nativeSession, !isBusy(threadID: chat.id), !isChangingChat(chat.id),
                   runs[chat.id]?.sending != true else {
                 throw ClientFailure(L10n.text("Дождись завершения текущего запроса перед передачей контекста.", "Wait for the current request to finish before handing off context."))
@@ -694,7 +694,9 @@ private struct ChatRunState {
             return nil
         }
     }
-    func createHandoffChat(_ handoff: ContextHandoff, project: Project, route: RequestRoute, agent: AgentConnectionID = .originalCodex) async -> Bool {
+    /// `model`, `effort`, `access` and `title` override the new chat's defaults (a run record's follow-up keeps its settings).
+    func createHandoffChat(_ handoff: ContextHandoff, project: Project, route: RequestRoute, agent: AgentConnectionID = .originalCodex,
+                           model: String? = nil, effort: String? = nil, access: AccessMode? = nil, title: String? = nil) async -> Bool {
         guard !creatingHandoff else { return false }
         creatingHandoff = true; defer { creatingHandoff = false }
         do {
@@ -708,14 +710,14 @@ private struct ChatRunState {
             guard descriptor.context.connection == agent, descriptor.capabilities.contains(.interactiveSessions),
                   descriptor.routes.contains(route.agentRoute) else { throw ConversationIdentity.unavailable }
             let prompt = try handoff.prompt()
-            let selectedModel = agent == .appClaude ? state.claudeModel ?? "" : state.model
+            let selectedModel = model ?? (agent == .appClaude ? state.claudeModel ?? "" : state.model)
             try await store.saveHandoff(handoff)
-            let access = state.projects.first { $0.id == project.id }?.defaultChatAccessMode ?? .standard
-            let session = try await client.createSession(projectPath: project.path, access: access,
+            let resolvedAccess = access ?? state.projects.first { $0.id == project.id }?.defaultChatAccessMode ?? .standard
+            let session = try await client.createSession(projectPath: project.path, access: resolvedAccess,
                                                              model: selectedModel, route: route, context: descriptor.context)
-            var chat = Chat(session: session, projectID: project.id, title: String(handoff.goal.prefix(100)), model: selectedModel)
-            chat.route = route; chat.handoffOrigin = handoff.origin
-            chat.inheritsProjectAccess = true
+            var chat = Chat(session: session, projectID: project.id, title: title ?? String(handoff.goal.prefix(100)), model: selectedModel)
+            chat.route = route; chat.handoffOrigin = handoff.origin; chat.effort = effort
+            chat.accessMode = access; chat.inheritsProjectAccess = access == nil
             guard !state.chats.contains(where: { $0.nativeSession == session }) else { throw ConversationIdentity.invalidStorage }
             state.chats.append(chat)
             do { try await store.save(state) }
@@ -1020,6 +1022,9 @@ private struct ChatRunState {
         guard canSend, let project = selectedProject else { return }
         let text = draft; draft = ""
         let localID = "local-user:" + UUID().uuidString
+        if let record = selectedChat, record.isScheduledRecord {
+            await followUpScheduledRecord(record, text: draft, project: project); return
+        }
         if let thread = chatID, busy || !visibleQueue.isEmpty {
             if visibleQueue.isEmpty { runs[thread, default: ChatRunState()].queuePaused = false }
             state.queuedMessages = queuedMessages + [QueuedMessage(id: localID, threadID: thread,
@@ -1697,8 +1702,46 @@ private struct ChatRunState {
     }
     func isScheduledRecord(_ id: String) -> Bool { state.chats.first { $0.id == id }?.isScheduledRecord == true }
 
+    static var scheduledRecordFollowUpNotice: String {
+        L10n.text("Запись запуска задания Claude. Ответ откроет новый чат с результатом этого запуска в контексте; сама запись не меняется.",
+                  "A Claude scheduled run record. Replying opens a new chat with this run's result as context; the record itself stays unchanged.")
+    }
     /// Creates the run's chat, then durably marks the run as running with the link. A record that cannot be saved
     /// is reported but does not block the run; the ledger write still gates dispatch.
+    /// Builds a handoff from the record's saved transcript. It never calls a model: the record holds the whole run.
+    func scheduledRecordHandoff(_ chat: Chat, goal: String) async throws -> ContextHandoff {
+        guard chat.isScheduledRecord, !isBusy(threadID: chat.id) else {
+            throw ClientFailure(L10n.text("Дождись завершения запуска задания.", "Wait for the scheduled run to finish."))
+        }
+        guard let snapshot = try await store.loadTranscript(conversationID: chat.id), !snapshot.items.isEmpty else {
+            throw ClientFailure(L10n.text("У этой записи нет сохранённой истории.", "This record has no saved history."))
+        }
+        var handoff = ContextHandoff(snapshot: snapshot)
+        handoff.goal = goal
+        handoff.instructions = L10n.text("Это продолжение запуска задания «\(chat.title)». Его запрос и результат приведены ниже как исторические данные; ответь на цель с их учётом.",
+                                         "This continues the scheduled run “\(chat.title)”. Its prompt and result follow as historical evidence; address the goal with them in mind.")
+        handoff.includeTranscript = true
+        return handoff
+    }
+
+    /// Replying to a run record starts a new chat with the same agent, model, effort and permissions; the record stays read-only.
+    /// The first message is sent once; a failed delivery is reported and never retried.
+    func followUpScheduledRecord(_ record: Chat, text: String, project: Project) async {
+        let goal = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !goal.isEmpty, let agent = record.nativeSession?.connection else { return }
+        let model = currentModel, effort = claudeEffort, access = record.resolvedAccessMode(in: project)
+        do {
+            let handoff = try await scheduledRecordHandoff(record, goal: goal)
+            _ = try handoff.prompt()
+            guard chatID == record.id else { return }
+            let title = L10n.text("\(record.title) — продолжение", "\(record.title) — follow-up")
+            guard await createHandoffChat(handoff, project: project, route: record.route ?? .direct, agent: agent,
+                                          model: model, effort: agent == .appClaude ? effort : nil, access: access, title: title) else { return }
+            chatDrafts[record.id] = nil
+            await send()
+        } catch { self.error = error.localizedDescription }
+    }
+
     func attachScheduledRecord(_ run: JobRun, job: ManagedJob, prompt: String, project: Project) async throws {
         try Task.checkCancellation()
         guard !schedulerStopping else { throw CancellationError() }

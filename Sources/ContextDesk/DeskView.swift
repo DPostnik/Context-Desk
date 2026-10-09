@@ -610,7 +610,7 @@ struct ChatView: View {
                     }
                     Button(L10n.text("Передать контекст…", "Hand off context…")) {
                         Task { handoff = await model.prepareHandoff(chat) }
-                    }.disabled(model.loadingChat || model.creatingHandoff || model.preparingHandoff || model.isBusy(threadID: chat.id) || chat.isScheduledRecord)
+                    }.disabled(model.loadingChat || model.creatingHandoff || model.preparingHandoff || model.isBusy(threadID: chat.id))
                 } else if model.state.browserEnabled == true, [.originalCodex, .appClaude].contains(model.currentAgent), let project = model.selectedProject {
                     NewChatBrowserProfilePicker(project: project.path, connection: model.currentAgent, ownerNames: model.browserProfileOwnerNames, selection: Binding(
                         get: { model.newChatBrowserProfiles[project.id] },
@@ -658,7 +658,7 @@ struct ChatView: View {
                     .background(.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 14)).tint(.blue).padding(.horizontal, 24)
             }
             if let chat = model.selectedChat, chat.isScheduledRecord, !model.selectedChatIsArchived {
-                Label(DeskModel.scheduledRecordReadOnly, systemImage: "clock.arrow.circlepath")
+                Label(DeskModel.scheduledRecordFollowUpNotice, systemImage: "clock.arrow.circlepath")
                     .font(.callout).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 24).padding(.vertical, 8)
             }
@@ -704,7 +704,7 @@ struct ChatView: View {
             if !model.selectedChatIsArchived {
             VStack(spacing: 10) {
                 ZStack(alignment: .topLeading) {
-                    if model.draft.isEmpty { Text(L10n.text("Напиши сообщение…", "Write a message…")).foregroundStyle(.secondary).padding(.horizontal, 21).padding(.top, 18).allowsHitTesting(false) }
+                    if model.draft.isEmpty { Text(model.selectedChat?.isScheduledRecord == true ? L10n.text("Ответить в новом чате…", "Reply in a new chat…") : L10n.text("Напиши сообщение…", "Write a message…")).foregroundStyle(.secondary).padding(.horizontal, 21).padding(.top, 18).allowsHitTesting(false) }
                     MessageComposer(text: $model.draft, focused: $composerFocused) { Task { await model.send() } }
                         .frame(height: 84).padding(.horizontal, 16).padding(.vertical, 14).accessibilityLabel(L10n.text("Сообщение", "Message"))
                 }

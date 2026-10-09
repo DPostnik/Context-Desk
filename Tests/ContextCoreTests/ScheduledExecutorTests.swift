@@ -315,6 +315,16 @@ private func makeRequest(_ runner: any AgentScheduledExecutor, root: URL) async 
     #expect(!model.canSend && !model.canGenerateSummary(chat.id))
     await model.send()
     #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("sent").path))
+    // A reply becomes a new chat whose context is the record's saved run, built without any model call.
+    let handoff = try await model.scheduledRecordHandoff(chat, goal: "follow up")
+    let prompt = try handoff.prompt()
+    #expect(handoff.origin.conversation.value == chat.id && handoff.includeTranscript)
+    #expect(prompt.contains("follow up") && prompt.contains("collect") && prompt.contains("denied") && prompt.contains("Morning"))
+    // Without a signed-in agent the follow-up fails visibly; the record is not written to and no chat appears.
+    await model.followUpScheduledRecord(chat, text: "follow up", project: project)
+    #expect(model.error != nil && model.state.chats.count == 1 && model.chatID == chat.id)
+    #expect(model.items.map(\.text) == ["collect", "denied", JobRunStatus.blocked.title])
+    model.error = nil
     // The phone is told the record is read-only instead of offering a composer that is then rejected.
     let remote = try #require(await model.remoteSnapshot(projects: [project.id.uuidString]).chats.first { $0.id == chat.id })
     #expect(remote.readOnly == true && remote.supportsPhotos == false && remote.settings == nil)
@@ -329,6 +339,7 @@ private func makeRequest(_ runner: any AgentScheduledExecutor, root: URL) async 
     let active = try #require(model.jobLedger.runs.first)
     let live = try #require(model.state.chats.first { $0.scheduledRecord == active.id })
     #expect(active.status == .running && model.isBusy(threadID: live.id) && !model.canDeleteChat(live.id))
+    await #expect(throws: ClientFailure.self) { _ = try await model.scheduledRecordHandoff(live, goal: "too early") }
     await model.openChat(live)
     await model.interrupt()
     for task in Array(model.jobTasks.values) { await task.value }
