@@ -11,7 +11,7 @@ cp .build/local-build/ContextDesk "$app/Contents/MacOS/ContextDesk"
 cp .build/local-build/build-info.json "$app/Contents/Resources/build-info.json"
 cp Assets/AppIcon/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
 mkdir -p "$app/Contents/Resources/BrowserRuntime"
-cp BrowserRuntime/{server.py,broker.py,transport.py,chrome_host.py,profiles.py,install.py,cards.js,page_read.js,runtime.lock.json,README.md} "$app/Contents/Resources/BrowserRuntime/"
+cp BrowserRuntime/{server.py,broker.py,transport.py,chrome_host.py,profiles.py,cdp.py,page_input.py,install.py,cards.js,page_read.js,runtime.lock.json,README.md} "$app/Contents/Resources/BrowserRuntime/"
 cp -R Skills "$app/Contents/Resources/Skills"
 cat > "$app/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

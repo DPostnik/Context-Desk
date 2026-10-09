@@ -20,6 +20,14 @@ public actor ClaudeIntegration: AgentIntegration {
     private var consumed = Set<UUID>()
     private var submitting = Set<String>()
     private var seenRequests: [String: Set<String>] = [:]
+    /// Session -> background task IDs its live CLI reports (`background_tasks_changed`), including sub-agents.
+    private var backgroundTasks: [String: Set<String>] = [:]
+    /// Idle sessions whose CLI stays alive until its background tasks finish and the CLI resumes the agent itself.
+    private var waiting: [String: UUID] = [:]
+    /// Session -> launch arguments of its live CLI; a waiting CLI is reused only for an identical launch.
+    private var wireArguments: [String: [String]] = [:]
+    private let backgroundWaitLimit: Duration
+    private let backgroundSettleDelay: Duration
     private struct Session: Codable {
         var version = 1
         let id: String
@@ -52,9 +60,10 @@ public actor ClaudeIntegration: AgentIntegration {
     private var browserResources: URL?
     private let browserRoot: URL
     private var wireGrants: [String: BrowserProfileGrant] = [:]
-    public init(browserRoot: URL = BrowserEnvironmentStore.directory) {
+    public init(browserRoot: URL = BrowserEnvironmentStore.directory, backgroundWaitLimit: Duration = .seconds(3600),
+                backgroundSettleDelay: Duration = .seconds(30)) {
         let stream = AsyncStream<AgentEvent>.makeStream(); events = stream.stream; sink = stream.continuation
-        self.browserRoot = browserRoot
+        self.browserRoot = browserRoot; self.backgroundWaitLimit = backgroundWaitLimit; self.backgroundSettleDelay = backgroundSettleDelay
     }
     public func optimizerEnvironment(home: URL) -> AgentResult<[String: String]> { .rejected(.routeUnavailable) }
     public func connect(_ configuration: AgentConnectionConfiguration) async -> AgentResult<AgentDescriptor> {
@@ -95,6 +104,7 @@ public actor ClaudeIntegration: AgentIntegration {
         for id in Array(wires.keys) { finish(id, outcome: .uncertain) }
         wires.removeAll(); readers.removeAll(); interactions.removeAll(); seenRequests.removeAll()
         sessions.removeAll(); messageIDs.removeAll(); summaries.removeAll(); interrupted.removeAll(); meters.removeAll()
+        backgroundTasks.removeAll(); waiting.removeAll(); wireArguments.removeAll()
         home = nil; executable = nil; signedIn = false; accountIdentity = nil; browserResources = nil; wireGrants.removeAll()
         context = .init(connection: .appClaude, accountRevision: UUID())
     }
@@ -114,7 +124,7 @@ public actor ClaudeIntegration: AgentIntegration {
             if let previous = accountIdentity, previous != identity {
                 for runner in generations.values { await runner.stop() }
                 for wire in wires.values { await wire.close() }
-                for id in Array(wires.keys) { finish(id, outcome: .uncertain) }
+                for id in Array(wires.keys) { finish(id, outcome: .uncertain); abandonWait(id) }
                 wires.removeAll(); interactions.removeAll()
                 context = .init(connection: .appClaude, accountRevision: UUID())
                 sink.yield(.init(session: nil, payload: .accountChanged(error: nil)))
@@ -181,7 +191,7 @@ public actor ClaudeIntegration: AgentIntegration {
                     let grant = try profiles.prepare(session: reference(id), project: old.cwd)
                     try profiles.acknowledge(grant, session: reference(id))
                     // A reassigned profile reaches the agent only through a new MCP launch; the idle CLI restarts on the next send.
-                    if let wire = wires[id], wireGrants[id] != grant { wires.removeValue(forKey: id); await wire.close() }
+                    if let wire = wires[id], wireGrants[id] != grant { wires.removeValue(forKey: id); abandonWait(id); await wire.close() }
                 }
             } else {
                 let grant = try browserResources.map { resources in
@@ -211,12 +221,15 @@ public actor ClaudeIntegration: AgentIntegration {
             _ = try await account().value()
             guard request.model.context == context, signedIn else { return .rejected(.staleContext) }
             let scheduled = request.kind == .scheduled
-            // A CLI started for the other kind of turn has the wrong approval rules; the next turn resumes in a fresh one.
-            if let current = wires[id], scheduledWires.contains(id) != scheduled {
-                wires.removeValue(forKey: id); await current.close()
+            let launch = try Self.arguments(id: id, resumed: true, access: expectedAccess, model: request.model.model, effort: request.model.effort,
+                                            scheduled: scheduled, projectInstructions: ProjectInstructions.prompt(projectPath: record.cwd))
+            // A CLI kept for background tasks was started with its own model, permissions and approval rules
+            // (scheduled turns have none); a different launch stops it and resumes in a fresh one.
+            if let current = wires[id], scheduledWires.contains(id) != scheduled || wireArguments[id] != launch {
+                wires.removeValue(forKey: id); abandonWait(id); await current.close()
             }
             let wire: ClaudeWire
-            if let current = wires[id] { wire = current }
+            if let current = wires[id] { wire = current; stopWaiting(id) }
             else {
                 wire = ClaudeWire()
                 let profiles = BrowserProfileStore(root: browserRoot)
@@ -232,7 +245,7 @@ public actor ClaudeIntegration: AgentIntegration {
                 if server != nil || expectedAccess == .fullAccess { environment.merge(Self.browserEnvironment) { _, new in new } }
                 if expectedAccess == .fullAccess { environment.merge(Self.connectorEnvironment) { _, new in new } }
                 try await wire.start(executable: executable, arguments: arguments, environment: environment, cwd: URL(fileURLWithPath: record.cwd))
-                wires[id] = wire
+                wires[id] = wire; wireArguments[id] = launch; backgroundTasks[id] = []; stopWaiting(id)
                 if scheduled { scheduledWires.insert(id) } else { scheduledWires.remove(id) }
                 if let grant { wireGrants[id] = grant; try profiles.acknowledge(grant, session: reference(id)) }
                 seenRequests[id] = []
@@ -354,7 +367,7 @@ public actor ClaudeIntegration: AgentIntegration {
         if let native = value["session_id"].string, native != id { await wire.close(); return }
         switch value["type"].string {
         case "transport_closed":
-            wires.removeValue(forKey: id); finish(id, outcome: .uncertain)
+            wires.removeValue(forKey: id); finish(id, outcome: .uncertain); abandonWait(id)
         case "control_request": await permission(value, session: id, wire: wire)
         case "stream_event":
             guard let turn = sessions[id]?.active else { return }
@@ -399,19 +412,39 @@ public actor ClaudeIntegration: AgentIntegration {
             }
         case "result":
             guard value["session_id"].string == id, value["is_error"].bool != nil else { await wire.close(); return }
-            wires.removeValue(forKey: id)
+            // Background tasks live in this CLI, which resumes the agent itself when they finish; a stopped turn ends them.
+            let keep = !interrupted.contains(id) && !(backgroundTasks[id] ?? []).isEmpty
+            if !keep { wires.removeValue(forKey: id) }
             if let turn = sessions[id]?.active, var meter = meters[id] {
                 meter.complete(result: value); meters[id] = meter
                 sink.yield(.init(session: reference(id), payload: .usage(turn: turn, total: meter.total, snapshot: meter.snapshot())))
             }
             finish(id, outcome: interrupted.contains(id) ? .cancelled : value["is_error"].bool == true ? .failed : .completed)
-            await wire.close()
+            if keep { beginWaiting(id, wire: wire) } else { await wire.close() }
         case "tool_use_summary":
             guard let turn = sessions[id]?.active, let text = Self.progressSummary(value["summary"].string) else { return }
             summaries[id] = (turn, text)
             status(text, session: id, turn: turn)
         case "system":
-            if value["subtype"].string == "init", let model = value["model"].string { meters[id]?.model = model }
+            switch value["subtype"].string {
+            case "init":
+                // A new main turn the CLI started itself after its background tasks finished.
+                if waiting[id] != nil, sessions[id]?.active == nil, value["parent_tool_use_id"].string == nil { wake(id) }
+                if let model = value["model"].string { meters[id]?.model = model }
+            case "background_tasks_changed":
+                backgroundTasks[id] = Set(value["tasks"].array.compactMap { $0["task_id"].string })
+                guard let token = waiting[id] else { return }
+                // Zero is reported only once the wait ends (resumed turn or released CLI).
+                if backgroundTasks[id]?.isEmpty == false { publishBackground(id) } else {
+                    // Finished tasks usually resume the agent at once; a CLI that stays idle is released.
+                    let delay = backgroundSettleDelay
+                    Task { [weak self] in
+                        try? await Task.sleep(for: delay)
+                        await self?.releaseIdle(id, token: token, wire: wire, settled: true)
+                    }
+                }
+            default: break
+            }
         default: break // Notifications are data; only recognized control requests can obtain an answer.
         }
     }
@@ -513,6 +546,51 @@ public actor ClaudeIntegration: AgentIntegration {
         }
         sink.yield(.init(session: reference(id), payload: .item(item)))
     }
+    private func beginWaiting(_ id: String, wire: ClaudeWire) {
+        let token = UUID(), limit = backgroundWaitLimit
+        waiting[id] = token; publishBackground(id)
+        Task { [weak self] in
+            try? await Task.sleep(for: limit)
+            await self?.releaseIdle(id, token: token, wire: wire, settled: false)
+        }
+    }
+    private func releaseIdle(_ id: String, token: UUID, wire: ClaudeWire, settled: Bool) async {
+        guard waiting[id] == token, wires[id] === wire, sessions[id]?.active == nil else { return }
+        if settled { guard backgroundTasks[id]?.isEmpty == true else { return }; stopWaiting(id) }
+        else {
+            stopWaiting(id)
+            sink.yield(.init(session: reference(id), payload: .diagnostic(L10n.text(
+                "Фоновые задачи Claude не завершились за отведённое время; процесс остановлен, их результат не получен. Ничего не повторялось.",
+                "Claude's background tasks did not finish in time; the process was stopped and their result was not received. Nothing was retried."))))
+        }
+        wires.removeValue(forKey: id); await wire.close()
+    }
+    /// Starts the turn the CLI began on its own: there is no user message, and it is never resent.
+    private func wake(_ id: String) {
+        guard let record = sessions[id] else { return }
+        stopWaiting(id)
+        let turn = UUID().uuidString
+        sessions[id]?.active = turn; sessions[id]?.current = []
+        do { try save(id) } catch { sink.yield(.init(session: reference(id), payload: .diagnostic(error.localizedDescription))) }
+        let meter = ClaudeUsageMeter(base: record.tokens, window: record.contextWindow, last: record.lastContext)
+        meters[id] = meter
+        sink.yield(.init(session: reference(id), payload: .usage(turn: nil, total: meter.total, snapshot: meter.snapshot())))
+        sink.yield(.init(session: reference(id), payload: .started(turn: turn)))
+    }
+    private func publishBackground(_ id: String) {
+        sink.yield(.init(session: reference(id), payload: .background(tasks: waiting[id] == nil ? 0 : backgroundTasks[id]?.count ?? 0)))
+    }
+    private func stopWaiting(_ id: String) {
+        if waiting.removeValue(forKey: id) != nil { publishBackground(id) }
+    }
+    /// The CLI holding background tasks is gone before they resumed the agent.
+    private func abandonWait(_ id: String) {
+        guard waiting[id] != nil else { return }
+        stopWaiting(id)
+        sink.yield(.init(session: reference(id), payload: .diagnostic(L10n.text(
+            "Процесс Claude с фоновыми задачами остановлен до их завершения; их результат не получен. Ничего не повторялось.",
+            "The Claude process running background tasks stopped before they finished; their result was not received. Nothing was retried."))))
+    }
     private func finish(_ id: String, outcome: AgentExecutionOutcome) {
         guard let turn = sessions[id]?.active else { return }
         let history = AgentHistoryTurn(id: turn, items: sessions[id]?.current ?? [], startedAt: nil, completedAt: Date(), duration: nil, isComplete: false)
@@ -561,7 +639,7 @@ public actor ClaudeIntegration: AgentIntegration {
     public func setArchived(_ archived: Bool, session: AgentSessionReference, context: AgentContext) -> AgentResult<Void> { checked(session, context: context) ? .success(()) : .rejected(.wrongConnection) }
     public func delete(_ session: AgentSessionReference, context: AgentContext) async -> AgentResult<Void> {
         guard checked(session, context: context), sessions[session.nativeID]?.active == nil else { return .rejected(.wrongConnection) }
-        if let wire = wires.removeValue(forKey: session.nativeID) { await wire.close() }
+        if let wire = wires.removeValue(forKey: session.nativeID) { waiting.removeValue(forKey: session.nativeID); await wire.close() }
         // Native execution files stay in the isolated engine home; app deletion only hides the chat.
         return .success(())
     }

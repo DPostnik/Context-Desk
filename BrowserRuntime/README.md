@@ -49,6 +49,13 @@ After Chrome exits, call `browser_open` explicitly to start a new task with the
 same profile. Old session tokens are invalidated; actions are never replayed.
 An uncertain transport failure still requires reconnecting the adapter.
 
+`browser_screenshot` returns a JPEG of the task tab's viewport (longer side at most
+1280 px) without bringing Chrome to front. `browser_input` sends trusted mouse and
+keyboard events (click, double/right click, hover, drag, wheel scroll, key, type,
+wait) at pixels of the latest screenshot, so custom widgets, canvas and hover menus
+work. Clicks, drags, keys and typing require the observed `expectedURL`; every input
+is journaled before dispatch and never replayed after an uncertain outcome.
+
 ## Русский
 
 Исполнитель браузера — Chrome DevTools MCP 1.10.1. Context Desk добавляет компактное
@@ -100,6 +107,14 @@ Chrome остаётся открытым при переподключении �
 с тем же профилем. Старые session становятся недействительными; действия
 не повторяются. При неопределённом сбое связи нужно переподключить адаптер.
 
+`browser_screenshot` возвращает JPEG видимой части вкладки задачи (длинная сторона
+до 1280 px), не выводя Chrome на передний план. `browser_input` отправляет настоящие
+события мыши и клавиатуры (клик, двойной и правый клик, наведение, перетаскивание,
+прокрутка колесом, клавиши, ввод текста, ожидание) в пикселях последнего скриншота,
+поэтому работают нестандартные элементы, canvas и меню по наведению. Для кликов,
+перетаскивания, клавиш и ввода нужен наблюдаемый `expectedURL`; каждое действие
+записывается в журнал до отправки и не повторяется при неопределённом исходе.
+
 ## Development contract
 
 - `browser_open` returns an opaque session token. Every subsequent call needs it.
@@ -111,6 +126,10 @@ Chrome остаётся открытым при переподключении �
 - `browser_action` supports scoped native form/navigation actions. Supply an
   exact observed `expectedURL` and globally unique `actionID`. Its result is not
   a submission receipt. Use `browser_verify` for a visible text/URL postcondition.
+- `browser_screenshot`/`browser_input` use a direct CDP connection (`cdp.py`) to the
+  owned page target recorded at `browser_open` only. Input coordinates are pixels of
+  the latest screenshot; scrolling or a URL change invalidates that mapping.
+  `input_smoke.py` checks them live on a local fixture.
 - `browser_snapshot` defaults to a bounded DOM read. Set `mode=interactive`
   explicitly for upstream action UIDs. `browser_status`
   reports RPC latency, bytes and counts; these exclude model processing and do

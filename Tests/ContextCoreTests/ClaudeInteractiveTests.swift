@@ -20,6 +20,15 @@ private actor ClaudeEvents {
     func statuses() -> [String?] {
         values.compactMap { if case .status(_, let text) = $0.payload { return .some(text) }; return nil }
     }
+    func background() -> [Int] {
+        values.compactMap { if case .background(let tasks) = $0.payload { return tasks }; return nil }
+    }
+    func diagnostics() -> [String] {
+        values.compactMap { if case .diagnostic(let text) = $0.payload { return text }; return nil }
+    }
+    func startedCount() -> Int {
+        values.filter { if case .started = $0.payload { return true }; return false }.count
+    }
     func interaction() -> AgentInteraction? {
         for event in values { if case .interaction(let request) = event.payload { return request } }
         return nil
@@ -30,7 +39,7 @@ private func interactiveFixture(_ root: URL) throws -> URL {
     let executable = root.appendingPathComponent("claude.py")
     let script = #"""
     #!\#(fixturePython)
-    import sys,os,json,pathlib,time
+    import sys,os,json,pathlib,time,threading
     home=pathlib.Path(os.environ['CLAUDE_CONFIG_DIR'])
     if '--version' in sys.argv:
         print('2.1.292 (Claude Code)'); sys.exit(0)
@@ -75,6 +84,14 @@ private func interactiveFixture(_ root: URL) throws -> URL {
         'usage':{'input_tokens':10,'cache_creation_input_tokens':20,'cache_read_input_tokens':70,'output_tokens':5},
         'modelUsage':{'claude-helper':{'contextWindow':5000,'inputTokens':1},'claude-test':{'contextWindow':1000,'inputTokens':10}}})
     out({'type':'system','subtype':'init','session_id':sid,'model':'claude-test'})
+    with (home/'launches').open('a') as f: f.write(sid+'\n')
+    def tasks(*ids): out({'type':'system','subtype':'background_tasks_changed','session_id':sid,'tasks':[{'task_id':i,'task_type':'local_agent'} for i in ids]})
+    def woke():
+        out({'type':'system','subtype':'task_notification','session_id':sid,'task_id':'b1','status':'completed'})
+        tasks()
+        out({'type':'system','subtype':'init','session_id':sid,'model':'claude-test'})
+        out({'type':'assistant','session_id':sid,'message':{'id':'woke-'+sid,'content':[{'type':'text','text':'woke'}]}})
+        result()
     for line in sys.stdin:
         value=json.loads(line)
         if value['type']=='control_request':
@@ -88,6 +105,13 @@ private func interactiveFixture(_ root: URL) throws -> URL {
             if prompt=='broken': print('invalid-json',flush=True); continue
             if prompt=='unknown': out({'type':'control_request','request_id':'unknown','request':{'subtype':'unexpected_action'}}); continue
             if prompt=='wait': continue
+            if prompt.startswith('background'):
+                tasks('b1')
+                out({'type':'assistant','session_id':sid,'message':{'id':'launched-'+sid,'content':[{'type':'text','text':'launched'}]}})
+                result()
+                if prompt=='background': threading.Timer(0.3, woke).start()
+                if prompt=='background-idle': threading.Timer(0.3, tasks).start()
+                continue
             if prompt in ['approval','question','outside','connector']:
                 name='AskUserQuestion' if prompt=='question' else 'mcp__claude_ai_Gmail__send_message' if prompt=='connector' else 'Write'
                 args={'questions':[{'question':'Choose','options':[{'label':'Yes'},{'label':'No'}]}]} if prompt=='question' else {'file_path':'/outside-project/file' if prompt=='outside' else str(pathlib.Path.cwd()/'fixture.txt'),'content':'content'}
@@ -694,4 +718,60 @@ private func completedClaudeSession(_ adapter: ClaudeIntegration, binary: URL, h
     #expect(calls.count == 1)
     #expect(calls.first?["args"].array.contains(.string("claude-test")) == true)
     await model.shutdown()
+}
+
+@Test func claudeBackgroundTasksResumeTheChatOnTheirOwn() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let binary = try interactiveFixture(root), home = root.appendingPathComponent("home")
+    let adapter = ClaudeIntegration(), events = ClaudeEvents()
+    let reader = Task { for await event in adapter.events { await events.append(event) } }
+    defer { reader.cancel() }
+    let descriptor = try await adapter.connect(.init(executable: binary, home: home)).value()
+    let session = try await adapter.prepare(interactiveRequest(context: descriptor.context, root: root)).value()
+    _ = try await adapter.submit(interactiveRequest(context: descriptor.context, root: root, session: session, prompt: "background")).value()
+    // The CLI outlives the turn while its background task runs, then starts a turn of its own.
+    try await waitFor { await events.completionCount() == 2 }
+    #expect(await events.startedCount() == 2)
+    #expect(await events.background() == [1, 0])
+    let history = try await adapter.history(session, context: descriptor.context).value()
+    #expect(history.map { $0.items.map(\.text) } == [["background", "launched"], ["woke"]])
+    // Nothing is left to wait for, so the CLI was released and the next message starts a fresh one.
+    _ = try await adapter.prepare(interactiveRequest(context: descriptor.context, root: root, session: session)).value()
+    _ = try await adapter.submit(interactiveRequest(context: descriptor.context, root: root, session: session)).value()
+    try await waitFor { await events.completionCount() == 3 }
+    #expect(try String(contentsOf: home.appendingPathComponent("launches"), encoding: .utf8).split(separator: "\n").count == 2)
+    #expect(await events.diagnostics().isEmpty)
+    await adapter.disconnect()
+}
+
+@Test(arguments: ["background-idle", "background-hang"]) func claudeIdleBackgroundCliIsReleased(_ prompt: String) async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let binary = try interactiveFixture(root), home = root.appendingPathComponent("home")
+    let adapter = ClaudeIntegration(backgroundWaitLimit: .seconds(2), backgroundSettleDelay: .milliseconds(100)), events = ClaudeEvents()
+    let reader = Task { for await event in adapter.events { await events.append(event) } }
+    defer { reader.cancel() }
+    func launches() throws -> Int { try String(contentsOf: home.appendingPathComponent("launches"), encoding: .utf8).split(separator: "\n").count }
+    let descriptor = try await adapter.connect(.init(executable: binary, home: home)).value()
+    let session = try await adapter.prepare(interactiveRequest(context: descriptor.context, root: root)).value()
+    _ = try await adapter.submit(interactiveRequest(context: descriptor.context, root: root, session: session, prompt: prompt)).value()
+    try await waitFor { await events.completionCount() == 1 }
+    if prompt == "background-hang" {
+        // A message sent while waiting continues in the same CLI, which keeps waiting afterwards.
+        _ = try await adapter.prepare(interactiveRequest(context: descriptor.context, root: root, session: session)).value()
+        _ = try await adapter.submit(interactiveRequest(context: descriptor.context, root: root, session: session)).value()
+        try await waitFor { await events.completionCount() == 2 }
+        #expect(try launches() == 1)
+        // The wait is bounded: the CLI is stopped and the lost result is reported, never retried.
+        try await waitFor { await !events.diagnostics().isEmpty }
+    }
+    try await waitFor { await events.background().last == 0 }
+    #expect(await events.diagnostics().count == (prompt == "background-hang" ? 1 : 0))
+    _ = try await adapter.prepare(interactiveRequest(context: descriptor.context, root: root, session: session)).value()
+    _ = try await adapter.submit(interactiveRequest(context: descriptor.context, root: root, session: session)).value()
+    try await waitFor { await events.completionCount() == (prompt == "background-hang" ? 3 : 2) }
+    #expect(try launches() == 2)
+    #expect(await events.startedCount() == events.completionCount())
+    await adapter.disconnect()
 }

@@ -134,6 +134,8 @@ private struct ChatRunState {
     @Published var connecting = false
     @Published private(set) var isBootstrapping = true
     @Published private var runs: [String: ChatRunState] = [:]
+    /// Idle chats whose agent still runs background tasks and will resume on its own; thread ID -> task count.
+    private var backgroundWaits: [String: Int] = [:]
     @Published private(set) var deletingChatIDs: Set<String> = []
     @Published private(set) var archivingChatIDs: Set<String> = []
     func isChangingChat(_ id: String) -> Bool { deletingChatIDs.contains(id) || archivingChatIDs.contains(id) || configuringRemoteChats.contains(id) || configuringBrowserChats.contains(id) }
@@ -974,6 +976,7 @@ private struct ChatRunState {
             reasons.insert(id.hasPrefix("job:") ? L10n.text("Запуск задания", "Scheduled run starting") : L10n.text("Выполняется: ", "Running: ") + title(id))
         }
         for action in pending { reasons.insert(L10n.text("Ждёт твоего действия: ", "Waiting for your action: ") + title(action.threadID)) }
+        for id in backgroundWaits.keys { reasons.insert(L10n.text("Ждёт фоновые задачи: ", "Waiting for background tasks: ") + title(id)) }
         for message in queuedMessages where runs[message.threadID].map({ !$0.queuePaused }) ?? false {
             reasons.insert(L10n.text("Сообщение в очереди: ", "Queued message: ") + title(message.threadID))
         }
@@ -1544,7 +1547,7 @@ private struct ChatRunState {
     private func resetAgentState(_ agent: AgentConnectionID) {
         let ids = Set(state.chats.filter { $0.nativeSession?.connection == agent }.map(\.id))
         clearAgentInteractions(agent)
-        for id in ids { runs[id] = nil; loadedThreads.remove(id) }
+        for id in ids { runs[id] = nil; backgroundWaits[id] = nil; loadedThreads.remove(id) }
     }
     private func clearAgentInteractions(_ agent: AgentConnectionID) {
         let actions = pending.filter { $0.interaction.session.connection == agent }
@@ -1649,6 +1652,7 @@ private struct ChatRunState {
                 runs[thread, default: ChatRunState()].running = true
                 runs[thread, default: ChatRunState()].turnID = turn
                 runs[thread, default: ChatRunState()].status = nil
+                backgroundWaits[thread] = nil
             }
         case .completed(let completion):
             flushDeltas()
@@ -1691,6 +1695,8 @@ private struct ChatRunState {
         case .status(let turn, let text):
             guard let thread, runs[thread]?.running == true, turn == nil || runs[thread]?.turnID == turn else { return }
             runs[thread]?.status = text
+        case .background(let tasks):
+            if let thread { backgroundWaits[thread] = tasks > 0 ? tasks : nil }
         }
     }
     private func flushDeltas() { transcript.flush() }

@@ -19,6 +19,8 @@ public struct AgentEvent: Sendable {
         case delta(turn: String?, item: String, text: String)
         /// Transient one-line activity for a running turn, such as thinking or a tool name. Nil clears it.
         case status(turn: String?, text: String?)
+        /// Background tasks an idle session's live engine still runs; the engine resumes the chat itself when they finish. Zero clears it.
+        case background(tasks: Int)
     }
 }
 
