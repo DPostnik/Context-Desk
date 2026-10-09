@@ -3,9 +3,9 @@ import re
 
 MAX_IMAGE_SIDE = 1280
 QUALITY = 70
-ACTIONS = ('click', 'double_click', 'right_click', 'hover', 'drag', 'scroll', 'key', 'type', 'wait')
+ACTIONS = ('click', 'double_click', 'right_click', 'hover', 'drag', 'scroll', 'scroll_to', 'key', 'type', 'select', 'wait')
 # Actions that can submit, edit or navigate need the page the model saw.
-GUARDED = frozenset(('click', 'double_click', 'right_click', 'drag', 'key', 'type'))
+GUARDED = frozenset(('click', 'double_click', 'right_click', 'drag', 'key', 'type', 'select'))
 POINTER = frozenset(('click', 'double_click', 'right_click', 'hover', 'drag'))
 MAX_TEXT = 5000
 

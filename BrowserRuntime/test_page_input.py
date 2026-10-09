@@ -22,6 +22,8 @@ class FakePage:
         self.url, self.fail_on = url, fail_on
         self.sent = []
         self.closed = 0
+        self.model = {}  # op -> page_tree.js result
+        self.requests = []
 
     def __enter__(self):
         return self
@@ -39,6 +41,10 @@ class FakePage:
         if method == 'Runtime.evaluate':
             if params['expression'] == 'devicePixelRatio':
                 return {'result': {'value': 2}}
+            if params['expression'].startswith('(' + server.PAGE_TREE):
+                request = json.loads(params['expression'][len(server.PAGE_TREE) + 3:-1])
+                self.requests.append(request)
+                return {'result': {'value': self.model.get(request['op'], {})}}
             return {'result': {'value': {'url': self.url, 'title': 'Fixture', 'readyState': 'complete'}}}
         if method == 'Page.getLayoutMetrics':
             return {'cssVisualViewport': {'clientWidth': 1280, 'clientHeight': 800, 'pageX': 0, 'pageY': 40}}
@@ -189,6 +195,108 @@ class BrowserInputTests(unittest.TestCase):
         self.assertEqual(dispatch(self.browser, 'browser_screenshot', {'session': 'owner'})['height'], 400)
 
 
+class RefInputTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.browser = Browser(Path(self.directory.name), rpc=lambda *_: {'content': []})
+        self.browser.session, self.browser.page = 'owner', 7
+        self.browser.checkpoint = {'state': 'opened'}
+        self.page = FakePage()
+        self.page.model['resolve'] = {'x': 100.5, 'y': 40, 'scrolled': False, 'obscuredBy': None}
+        self.browser.page_session_factory = lambda: self.page
+        self.browser.stopped.wait = lambda seconds: False
+        self.url = 'https://example.test/'
+
+    def tearDown(self):
+        self.directory.cleanup()
+
+    def inputs(self):
+        return [(m, p) for m, p in self.page.sent if m.startswith('Input.')]
+
+    def records(self):
+        return sorted((Path(self.directory.name) / 'records').glob('action-*.json'))
+
+    def test_read_validates_and_marks_untrusted(self):
+        self.page.model['read'] = {'kind': 'page_tree', 'tree': '- button "Go" [ref_1]', 'truncated': True}
+        result = self.browser.read('owner', filter='interactive', max_chars=5000)
+        self.assertEqual(self.page.requests[-1], {'op': 'read', 'mode': 'tree', 'filter': 'interactive', 'ref': None, 'depth': 60, 'maxChars': 5000})
+        self.assertEqual((result['content'], bool(result['hint'])), ('untrusted_page_data', True))
+        for bad in ({'mode': 'html'}, {'filter': 'some'}, {'ref': 'x'}, {'depth': 0}, {'max_chars': 999}):
+            with self.assertRaises(Rejected):
+                self.browser.read('owner', **bad)
+        self.page.model['read'] = {'error': 'stale_ref'}
+        with self.assertRaises(Rejected):
+            self.browser.read('owner', ref='ref_9')
+
+    def test_click_by_ref_needs_no_screenshot(self):
+        result = self.browser.input('owner', 'click', 'click-ref-001', self.url, ref='ref_3')
+        pressed = [p for m, p in self.inputs() if p['type'] == 'mousePressed']
+        self.assertEqual([(p['x'], p['y']) for p in pressed], [(100.5, 40)])
+        self.assertEqual(result['actionID'], 'click-ref-001')
+        self.assertEqual(self.page.requests[0], {'op': 'resolve', 'ref': 'ref_3', 'focus': False})
+
+    def test_stale_or_covered_ref_dispatches_nothing_and_writes_no_record(self):
+        self.page.model['resolve'] = {'error': 'stale_ref'}
+        with self.assertRaises(Rejected) as raised:
+            self.browser.input('owner', 'click', expected_url=self.url, ref='ref_3')
+        self.assertIn('Stale', str(raised.exception))
+        self.page.model['resolve'] = {'x': 1, 'y': 1, 'obscuredBy': 'dialog "Cookies"'}
+        with self.assertRaises(Rejected) as raised:
+            self.browser.input('owner', 'click', expected_url=self.url, ref='ref_3')
+        self.assertIn('Cookies', str(raised.exception))
+        self.assertEqual((self.inputs(), self.records()), ([], []))
+        self.browser.input('owner', 'hover', ref='ref_3')  # Hover may land on the cover.
+        self.assertEqual(len(self.inputs()), 1)
+
+    def test_scrolling_into_view_drops_screenshot_mapping(self):
+        self.browser.screenshot('owner')
+        self.page.model['resolve'] = {'x': 5, 'y': 5, 'scrolled': True}
+        self.browser.input('owner', 'click', expected_url=self.url, ref='ref_3')
+        self.assertIsNone(self.browser.viewport)
+
+    def test_drag_between_refs_and_mixed_targets(self):
+        self.browser.input('owner', 'drag', expected_url=self.url, ref='ref_1', to_ref='ref_2')
+        self.assertEqual([r['ref'] for r in self.page.requests if r['op'] == 'resolve'], ['ref_1', 'ref_2'])
+        with self.assertRaises(Rejected):
+            self.browser.input('owner', 'click', expected_url=self.url, ref='ref_1', x=1, y=1)
+        with self.assertRaises(Rejected):
+            self.browser.input('owner', 'drag', expected_url=self.url, ref='ref_1', to_ref='ref_2', to_x=1, to_y=1)
+
+    def test_type_by_ref_focuses_first(self):
+        self.browser.input('owner', 'type', expected_url=self.url, ref='ref_4', text='hi')
+        self.assertEqual(self.page.requests[0]['focus'], True)
+        self.assertEqual(self.inputs(), [('Input.insertText', {'text': 'hi'})])
+
+    def test_select_journals_and_reports_options(self):
+        self.page.model['select'] = {'selected': 'Large'}
+        self.browser.input('owner', 'select', 'select-0001', self.url, ref='ref_5', value='Large')
+        self.assertEqual(self.page.requests[-1], {'op': 'select', 'ref': 'ref_5', 'value': 'Large'})
+        self.assertEqual(json.loads(self.records()[0].read_text())['state'], 'dispatched_observe_result')
+        self.page.model['select'] = {'error': 'option_not_found', 'options': ['Small', 'Large']}
+        with self.assertRaises(Rejected) as raised:
+            self.browser.input('owner', 'select', 'select-0002', self.url, ref='ref_5', value='Huge')
+        self.assertIn('Small, Large', str(raised.exception))
+        self.assertFalse(self.browser.failed)
+        states = [json.loads(r.read_text())['state'] for r in self.records()]
+        self.assertIn('not_applied', states)
+        for bad in ({'value': None}, {'ref': None, 'value': 'x'}):
+            with self.assertRaises(Rejected):
+                self.browser.input('owner', 'select', expected_url=self.url, **{'ref': 'ref_5', **bad})
+
+    def test_scroll_to_is_not_journaled(self):
+        result = self.browser.input('owner', 'scroll_to', ref='ref_7')
+        self.assertEqual((self.inputs(), self.records()), ([], []))
+        self.assertNotIn('actionID', result)
+        with self.assertRaises(Rejected):
+            self.browser.input('owner', 'scroll_to')
+
+    def test_catalog_lists_read(self):
+        tool = next(t for t in server.catalog() if t['name'] == 'browser_read')
+        self.assertTrue(tool['annotations']['readOnlyHint'])
+        self.page.model['read'] = {'kind': 'page_text', 'text': 'Body'}
+        self.assertEqual(dispatch(self.browser, 'browser_read', {'session': 'owner', 'mode': 'text'})['text'], 'Body')
+
+
 class WebSocketTests(unittest.TestCase):
     def serve(self, replies):
         listener = socket.socket()
@@ -198,6 +306,7 @@ class WebSocketTests(unittest.TestCase):
 
         def run():
             connection, _ = listener.accept()
+            listener.close()
             data = b''
             while b'\r\n\r\n' not in data:
                 data += connection.recv(4096)

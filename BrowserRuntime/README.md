@@ -55,6 +55,11 @@ keyboard events (click, double/right click, hover, drag, wheel scroll, key, type
 wait) at pixels of the latest screenshot, so custom widgets, canvas and hover menus
 work. Clicks, drags, keys and typing require the observed `expectedURL`; every input
 is journaled before dispatch and never replayed after an uncertain outcome.
+`browser_read` returns an element tree with roles, names, values and stable `ref_N`
+handles (or the main page text with `mode=text`), including open shadow DOM and
+same-origin iframes; passwords and card fields are redacted. `browser_input` accepts a
+`ref` instead of coordinates: the element is scrolled into view, and a stale or covered
+element is refused without dispatch. `select` picks a `<select>` option by label or value.
 
 ## Русский
 
@@ -114,6 +119,12 @@ Chrome остаётся открытым при переподключении �
 поэтому работают нестандартные элементы, canvas и меню по наведению. Для кликов,
 перетаскивания, клавиш и ввода нужен наблюдаемый `expectedURL`; каждое действие
 записывается в журнал до отправки и не повторяется при неопределённом исходе.
+`browser_read` возвращает дерево элементов с ролями, именами, значениями и стабильными
+ссылками `ref_N` (или основной текст страницы с `mode=text`), включая открытые shadow DOM
+и iframe того же сайта; пароли и данные карт скрыты. `browser_input` принимает `ref`
+вместо координат: элемент прокручивается в видимую область, а устаревший или перекрытый
+элемент отклоняется без отправки события. `select` выбирает пункт `<select>` по подписи
+или значению.
 
 ## Development contract
 
@@ -130,6 +141,10 @@ Chrome остаётся открытым при переподключении �
   owned page target recorded at `browser_open` only. Input coordinates are pixels of
   the latest screenshot; scrolling or a URL change invalidates that mapping.
   `input_smoke.py` checks them live on a local fixture.
+- `browser_read` runs `page_tree.js` in the page's main world; refs live in a page-side
+  registry (`Symbol.for('context-desk.refs')`, WeakRef) and survive reads until the
+  element is removed. A hostile page can tamper with that registry like with any DOM
+  data, so refs are a convenience, not an authority. `read_smoke.py` checks refs live.
 - `browser_snapshot` defaults to a bounded DOM read. Set `mode=interactive`
   explicitly for upstream action UIDs. `browser_status`
   reports RPC latency, bytes and counts; these exclude model processing and do

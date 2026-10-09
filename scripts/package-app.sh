@@ -10,7 +10,7 @@ app = pathlib.Path(sys.argv[1])
 metadata = json.loads((app / 'Contents/Resources/build-info.json').read_text())
 digest = hashlib.sha256()
 browser_resources = [root / 'BrowserRuntime' / name for name in
-                     ('server.py', 'broker.py', 'transport.py', 'chrome_host.py', 'cdp.py', 'page_input.py', 'install.py', 'cards.js', 'page_read.js', 'runtime.lock.json', 'README.md')]
+                     ('server.py', 'broker.py', 'transport.py', 'chrome_host.py', 'cdp.py', 'page_input.py', 'install.py', 'cards.js', 'page_read.js', 'page_tree.js', 'runtime.lock.json', 'README.md')]
 for path in sorted([root / 'Package.swift', root / 'Package.resolved'] + list((root / 'Sources').rglob('*')) + browser_resources):
     if path.is_file():
         digest.update(str(path.relative_to(root)).encode() + b'\0' + path.read_bytes())

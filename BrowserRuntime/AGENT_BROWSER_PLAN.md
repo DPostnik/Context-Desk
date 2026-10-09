@@ -54,7 +54,7 @@ visual channel uses our own CDP capture.
 - Russian and English tool descriptions and user-facing errors.
 - Existing tools keep working until a replacement is verified.
 
-## Stage 1 — Visual channel and free-form input
+## Stage 1 — Visual channel and free-form input (delivered 2026-10-09, 2c98234)
 
 1. `cdp.py`: minimal CDP client over the verified loopback endpoint (WebSocket
    framing, fragmentation, size caps, per-call deadlines). Attaches only to the
@@ -76,7 +76,11 @@ Acceptance: model completes a canvas/custom-widget task and an infinite-scroll
 list by screenshots and coordinates; hidden browser stays hidden; no-replay tests
 cover the new tool; unit tests for coordinate mapping and WebSocket framing.
 
-## Stage 2 — Page model with stable refs
+## Stage 2 — Page model with stable refs (delivered 2026-10-09)
+
+Delivered as `browser_read` (`mode: tree | text`, `filter`, `ref`, `depth`, `maxChars`) next to
+the legacy `browser_snapshot`, plus `ref`/`toRef`, `scroll_to` and `select` in `browser_input`.
+Covered elements are refused (except hover/scroll/type); refs live in the page main world.
 
 1. `page_tree.js`: injected generator modelled on the reference behaviour:
    roles/names, `ref_N` ids kept in a page-side WeakMap across calls,

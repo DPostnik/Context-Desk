@@ -25,7 +25,7 @@ LIMIT = 8_000_000
 
 def revision():
     digest = hashlib.sha256()
-    for name in ('broker.py', 'server.py', 'transport.py', 'chrome_host.py', 'profiles.py', 'cdp.py', 'page_input.py', 'page_read.js', 'runtime.lock.json'):
+    for name in ('broker.py', 'server.py', 'transport.py', 'chrome_host.py', 'profiles.py', 'cdp.py', 'page_input.py', 'page_read.js', 'page_tree.js', 'runtime.lock.json'):
         digest.update(Path(__file__).with_name(name).read_bytes())
     return digest.hexdigest()
 
