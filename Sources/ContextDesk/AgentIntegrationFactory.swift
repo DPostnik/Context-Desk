@@ -10,13 +10,14 @@ enum AgentIntegrationFactory {
     static func codex() -> any AgentIntegration { CodexIntegration() }
     static func claude() -> any AgentIntegration { ClaudeIntegration() }
     @MainActor static let scheduledReadiness: [JobEngine: @MainActor (DeskModel) -> Bool] = [
-        .codex: { $0.connected && $0.authenticated }, .claude: { _ in true }
+        .codex: { $0.scheduledAgentReady(.originalCodex) }, .claude: { $0.scheduledAgentReady(.appClaude) }
     ]
     @MainActor static let scheduled: [JobEngine: @MainActor (DeskModel, ManagedJob, JobRun, Project) -> any AgentScheduledExecutor] = [
-        .codex: { CodexScheduledExecutor(model: $0, job: $1, run: $2, project: $3) },
-        .claude: { model, job, _, _ in claudeRunner(browserEnabled: model.state.browserEnabled == true, job: job) }
+        .codex: { ChatScheduledExecutor(model: $0, job: $1, run: $2, project: $3) },
+        // Claude runs in the app's own Claude profile as a resumable chat, like an interactive Claude chat.
+        .claude: { ChatScheduledExecutor(model: $0, agent: .appClaude, job: $1, run: $2, project: $3) }
     ]
-    /// Claude print runs get the same per-run Context Desk browser as Codex chats when it is enabled and installed.
+    /// Legacy print runner (the installed CLI's `~/.claude` profile); not used for new runs. Claude print runs get the same per-run Context Desk browser as Codex chats when it is enabled and installed.
     static func claudeRunner(browserEnabled: Bool, job: ManagedJob, resources: URL? = Bundle.main.resourceURL,
                              root: URL = BrowserEnvironmentStore.directory, executable: URL? = nil) -> ClaudeJobRunner {
         guard browserEnabled, let resources, FileManager.default.fileExists(atPath: root.appendingPathComponent("runtime.json").path),

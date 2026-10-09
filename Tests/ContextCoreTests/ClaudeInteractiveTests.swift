@@ -63,7 +63,8 @@ private func interactiveFixture(_ root: URL) throws -> URL {
     browser='--mcp-config' in sys.argv and 'context_desk_browser' in sys.argv[sys.argv.index('--mcp-config')+1]
     full=sys.argv[sys.argv.index('--permission-mode')+1]=='bypassPermissions'
     assert ('--safe-mode' in sys.argv) == (not browser and not full) and '--setting-sources' in sys.argv
-    assert ('--strict-mcp-config' in sys.argv) != full and ('--settings' in sys.argv) == full
+    # Scheduled full-access turns run without connector approval rules.
+    assert ('--strict-mcp-config' in sys.argv) != full and ('--settings' not in sys.argv or full)
     assert '--append-system-prompt' in sys.argv
     assert len(sys.argv[sys.argv.index('--append-system-prompt')+1]) > 100
     assert sys.argv[sys.argv.index('--setting-sources')+1] == ''
@@ -121,8 +122,8 @@ private func waitFor(_ condition: @escaping () async -> Bool) async throws {
     throw ClientFailure("Fixture timed out")
 }
 private func interactiveRequest(context: AgentContext, root: URL, session: AgentSessionReference? = nil, prompt: String = "hello", id: UUID = UUID(),
-                                fullAccess: Bool = false) -> AgentExecutionRequest {
-    .init(id: id, conversation: ConversationID(), session: session, kind: .interactive, prompt: prompt, projectPath: root.path,
+                                fullAccess: Bool = false, kind: AgentExecutionRequest.Kind = .interactive) -> AgentExecutionRequest {
+    .init(id: id, conversation: ConversationID(), session: session, kind: kind, prompt: prompt, projectPath: root.path,
           permissions: fullAccess ? .unrestricted(approval: .never) : .workspaceWrite(root: root.path, network: false, approval: .ask),
           model: .init(context: context, model: ""), route: .direct)
 }
@@ -333,6 +334,70 @@ private func interactiveRequest(context: AgentContext, root: URL, session: Agent
     let denied = try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: home.appendingPathComponent("answer")))["response"]["response"]
     #expect(denied["behavior"].string == "deny" && denied["message"].string == L10n.text("Неподдерживаемый запрос", "Unsupported request"))
     await adapter.disconnect()
+}
+
+@Test func claudeScheduledTurnRunsUnattendedAndItsChatContinuesWithApprovals() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let binary = try interactiveFixture(root), home = root.appendingPathComponent("home")
+    let adapter = ClaudeIntegration(), events = ClaudeEvents()
+    let reader = Task { for await event in adapter.events { await events.append(event) } }
+    defer { reader.cancel() }
+    let descriptor = try await adapter.connect(.init(executable: binary, home: home)).value()
+    #expect(descriptor.capabilities.contains(.scheduledExecution))
+    let session = try await adapter.prepare(interactiveRequest(context: descriptor.context, root: root, fullAccess: true)).value()
+    _ = try await adapter.submit(interactiveRequest(context: descriptor.context, root: root, session: session, fullAccess: true, kind: .scheduled)).value()
+    try await waitFor { await events.completion() != nil }
+    #expect(await events.completion() == .completed)
+    // A follow-up in the run's chat resumes the same session in a fresh CLI that holds connector actions for approval.
+    _ = try await adapter.submit(interactiveRequest(context: descriptor.context, root: root, session: session, fullAccess: true)).value()
+    try await waitFor { await events.completionCount() == 2 }
+    let launches = try String(contentsOf: home.appendingPathComponent("submitted"), encoding: .utf8).split(separator: "\n")
+    try #require(launches.count == 2)
+    #expect(launches[0].contains("--session-id") && !launches[0].contains("--settings") && !launches[0].contains("--strict-mcp-config"))
+    #expect(launches[1].contains("--resume") && launches[1].contains("--settings"))
+    #expect(try await adapter.history(session, context: descriptor.context).value().count == 2)
+    await adapter.disconnect()
+}
+
+@Test @MainActor func claudeScheduledJobRunsAsAChatThatCanBeContinued() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let binary = try interactiveFixture(root), home = root.appendingPathComponent("home")
+    let adapter = ClaudeIntegration()
+    _ = try await adapter.connect(.init(executable: binary, home: home)).value()
+    let model = DeskModel(claudeIntegration: adapter, store: AppStore(file: root.appendingPathComponent("store.sqlite")),
+                          pluginDirectory: root.appendingPathComponent("plugins"), claudeHome: home,
+                          jobStore: JobStore(file: root.appendingPathComponent("jobs.json")))
+    let pump = Task { for await event in model.claudeConnection.events { await model.receiveClaude(event) } }
+    defer { pump.cancel() }
+    var project = Project(path: root.path); project.accessMode = .fullAccess
+    model.state.projects = [project]; model.schedulerReady = true
+    model.claudeConnected = true; model.claudeAuthenticated = true
+    var job = ManagedJob(); job.name = "Morning"; job.prompt = "hello"; job.engine = .claude; job.projectID = project.id
+    job.model = "claude-test"; job.effort = ""; job.enabled = true
+    #expect(await model.saveJob(job))
+    await model.launchJob(job.id)
+    for task in Array(model.jobTasks.values) { await task.value }
+    for _ in 0..<1500 where !(model.jobLedger.runs.first?.status == .completed) { try await Task.sleep(for: .milliseconds(10)) }
+    // The run is a regular Claude chat in the app's profile, not a read-only record.
+    let run = try #require(model.jobLedger.runs.first)
+    let chat = try #require(model.state.chats.first)
+    #expect(run.threadID == chat.id && !chat.isScheduledRecord && chat.title == "Morning")
+    #expect(chat.nativeSession?.connection == .appClaude && chat.accessMode == .fullAccess)
+    await model.openChat(chat)
+    #expect(model.items.map(\.kind) == ["user", "assistant"])
+    model.draft = "hello"
+    #expect(model.canSend)
+    await model.send()
+    for _ in 0..<1500 where !(!model.isBusy(threadID: chat.id) && model.items.filter { $0.kind == "user" }.count == 2) { try await Task.sleep(for: .milliseconds(10)) }
+    let launches = try String(contentsOf: home.appendingPathComponent("submitted"), encoding: .utf8).split(separator: "\n")
+    try #require(launches.count == 2)
+    #expect(launches[0].contains("claude-test") && !launches[0].contains("--settings"))
+    #expect(launches[1].contains("--resume") && launches[1].contains("--settings"))
+    #expect(model.state.chats.count == 1 && model.error == nil)
+    await model.stopScheduler()
+    await model.shutdown()
 }
 
 @Test(arguments: ["broken", "unknown", "wait"]) func claudeInteractiveUncertainAndInterrupt(_ prompt: String) async throws {

@@ -1,20 +1,23 @@
 import Foundation
 import ContextCore
 
+/// Runs a scheduled task as a turn in a new app chat (Codex or the app's Claude profile), so its chat can be continued.
 /// The app retains chat creation, durable links and event-based completion.
-@MainActor final class CodexScheduledExecutor: AgentScheduledExecutor {
+@MainActor final class ChatScheduledExecutor: AgentScheduledExecutor {
     private unowned let model: DeskModel
+    private let agent: AgentConnectionID
     private let job: ManagedJob
     private let run: JobRun
     private let project: Project
     private var consumed = false
     private var stopped = false
-    init(model: DeskModel, job: ManagedJob, run: JobRun, project: Project) {
-        self.model = model; self.job = job; self.run = run; self.project = project
+    init(model: DeskModel, agent: AgentConnectionID = .originalCodex, job: ManagedJob, run: JobRun, project: Project) {
+        self.model = model; self.agent = agent; self.job = job; self.run = run; self.project = project
     }
+    private var client: AgentClient { agent == .appClaude ? model.claudeConnection : model.connection }
     func descriptor() async -> AgentResult<AgentDescriptor> {
-        guard model.connected, model.authenticated, model.routeIsAvailable(job.route) else { return .unavailable }
-        return await model.connection.integration.descriptor()
+        guard model.scheduledAgentReady(agent), model.routeIsAvailable(job.route) else { return .unavailable }
+        return await client.integration.descriptor()
     }
     func execute(_ request: AgentExecutionRequest,
                  willStart: @escaping @Sendable () async throws -> Void) async -> AgentResult<AgentScheduledResult> {
@@ -35,7 +38,7 @@ import ContextCore
             guard !stopped, !Task.isCancelled else { return .success(.finished(.cancelled, output: "")) }
             let current = try await self.descriptor().value()
             if let rejection = current.validate(request) { return .rejected(rejection) }
-            await model.deliverScheduled(job, run: run, project: project)
+            await model.deliverScheduled(job, run: run, project: project, agent: agent)
             return .success(.deferred)
         } catch let error as AgentOperationFailure { return error.result() }
         catch { return .failed(.init(delivery: .notSent, diagnostic: error.localizedDescription)) }
@@ -44,7 +47,7 @@ import ContextCore
         stopped = true
         guard let current = model.jobLedger.runs.first(where: { $0.id == run.id }),
               let thread = current.threadID, let turn = current.turnID else { return }
-        do { try await model.connection.interrupt(model.sessionForChat(thread), turn: turn) }
+        do { try await client.interrupt(model.sessionForChat(thread), turn: turn) }
         catch { model.error = error.localizedDescription }
     }
 }

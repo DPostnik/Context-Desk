@@ -89,8 +89,8 @@ import ContextCore
                     let request = job.executionRequest(runID: run.id, project: project, descriptor: descriptor)
                     let result = try await executor.execute(request) { [weak self] in
                         guard let self else { throw CancellationError() }
-                        // Claude print runs have no engine session; their chat is a local read-only record.
-                        if job.engine == .claude {
+                        // A print run (installed CLI) has no engine session; its chat is a local read-only record.
+                        if descriptor.identityMode == .externalCLI {
                             try await self.attachScheduledRecord(run, job: job, prompt: request.prompt, project: project)
                         } else { try await self.attachScheduledRun(run.id) }
                     }.value()

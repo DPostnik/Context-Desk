@@ -14,6 +14,8 @@ public actor ClaudeIntegration: AgentIntegration {
     private var accountIdentity: String?
     private var sessions: [String: Session] = [:]
     private var wires: [String: ClaudeWire] = [:]
+    /// Sessions whose live CLI was started for a scheduled turn (no connector approval rules).
+    private var scheduledWires = Set<String>()
     private var readers: [String: Task<Void, Never>] = [:]
     private var consumed = Set<UUID>()
     private var submitting = Set<String>()
@@ -81,7 +83,7 @@ public actor ClaudeIntegration: AgentIntegration {
     }
     public func descriptor() -> AgentResult<AgentDescriptor> {
         guard home != nil, executable != nil else { return .unavailable }
-        var capabilities: Set<AgentCapability> = [.interactiveSessions, .isolatedGeneration, .history, .streaming, .usage, .approvals, .userQuestions, .interruption, .authenticationManagement, .accountLimits, .archive]
+        var capabilities: Set<AgentCapability> = [.interactiveSessions, .scheduledExecution, .isolatedGeneration, .history, .streaming, .usage, .approvals, .userQuestions, .interruption, .authenticationManagement, .accountLimits, .archive]
         if browserResources != nil { capabilities.insert(.browserProfiles) }
         return .success(.init(context: context, identityMode: .appOwnedHome, capabilities: capabilities,
             permissions: .claudeRestrictedFiles, routes: [.direct]))
@@ -158,7 +160,7 @@ public actor ClaudeIntegration: AgentIntegration {
     private func validate(_ request: AgentExecutionRequest) -> AgentRejection? {
         guard case .success(let descriptor) = descriptor() else { return .staleContext }
         if let rejection = descriptor.validate(request) { return rejection }
-        guard ClaudeEffort.isDispatchable(request.model.effort), request.kind == .interactive else { return .invalidInput }
+        guard ClaudeEffort.isDispatchable(request.model.effort), [.interactive, .scheduled].contains(request.kind) else { return .invalidInput }
         return nil
     }
     public func prepare(_ request: AgentExecutionRequest) async -> AgentResult<AgentSessionReference> {
@@ -208,6 +210,11 @@ public actor ClaudeIntegration: AgentIntegration {
             sessions[id]?.access = expectedAccess
             _ = try await account().value()
             guard request.model.context == context, signedIn else { return .rejected(.staleContext) }
+            let scheduled = request.kind == .scheduled
+            // A CLI started for the other kind of turn has the wrong approval rules; the next turn resumes in a fresh one.
+            if let current = wires[id], scheduledWires.contains(id) != scheduled {
+                wires.removeValue(forKey: id); await current.close()
+            }
             let wire: ClaudeWire
             if let current = wires[id] { wire = current }
             else {
@@ -218,7 +225,7 @@ public actor ClaudeIntegration: AgentIntegration {
                     BrowserEnvironmentStore.serverArguments(resources: resources, root: browserRoot, environment: $0.environment, grant: $0)
                 } }
                 let arguments = try Self.arguments(id: id, resumed: record.sent, access: expectedAccess,
-                                                   model: request.model.model, effort: request.model.effort,
+                                                   model: request.model.model, effort: request.model.effort, scheduled: scheduled,
                                                    projectInstructions: ProjectInstructions.prompt(projectPath: record.cwd), browserServer: server)
                 var environment = ClaudeProfile.environment(home: home).merging(Self.sessionEnvironment) { _, new in new }
                 // Same startup/tool limits as the Codex MCP entry (30 s / 90 s).
@@ -226,6 +233,7 @@ public actor ClaudeIntegration: AgentIntegration {
                 if expectedAccess == .fullAccess { environment.merge(Self.connectorEnvironment) { _, new in new } }
                 try await wire.start(executable: executable, arguments: arguments, environment: environment, cwd: URL(fileURLWithPath: record.cwd))
                 wires[id] = wire
+                if scheduled { scheduledWires.insert(id) } else { scheduledWires.remove(id) }
                 if let grant { wireGrants[id] = grant; try profiles.acknowledge(grant, session: reference(id)) }
                 seenRequests[id] = []
                 readers[id] = Task { [weak self] in for await value in wire.frames { await self?.receive(value, session: id, wire: wire) } }
@@ -268,7 +276,8 @@ public actor ClaudeIntegration: AgentIntegration {
         let leading = ["label", "apply", "add", "set"]
         return anywhere.map { connectorToolPrefix + "*__*" + $0 + "*" } + leading.map { connectorToolPrefix + "*__" + $0 + "*" }
     }()
-    static func arguments(id: String, resumed: Bool, access: AccessMode, model: String, effort: String?,
+    /// A scheduled turn runs unattended, so full-access connector actions are not held for approval (as print runs were not).
+    static func arguments(id: String, resumed: Bool, access: AccessMode, model: String, effort: String?, scheduled: Bool = false,
                           projectInstructions: String? = nil, browserServer: [String]? = nil) throws -> [String] {
         // Only full-access chats (network allowed) load the account's claude.ai connectors such as Gmail.
         let connectors = access == .fullAccess
@@ -282,7 +291,7 @@ public actor ClaudeIntegration: AgentIntegration {
             // `--safe-mode` would also drop claude.ai connectors, so its isolation is spelled out as in browser chats.
             args += ["--disable-slash-commands", "--mcp-config", "{\"mcpServers\":{}}"]
         } else { args += ["--safe-mode", "--mcp-config", "{\"mcpServers\":{}}"] }
-        if connectors {
+        if connectors && !scheduled {
             let settings: JSONValue = .object(["permissions": .object(["ask": .array(connectorApprovalRules.map(JSONValue.string))])])
             let encoder = JSONEncoder(); encoder.outputFormatting = [.withoutEscapingSlashes, .sortedKeys]
             args += ["--settings", String(decoding: try encoder.encode(settings), as: UTF8.self)]

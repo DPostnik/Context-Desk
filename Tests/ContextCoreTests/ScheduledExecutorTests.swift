@@ -320,9 +320,13 @@ private func makeRequest(_ runner: any AgentScheduledExecutor, root: URL) async 
     let prompt = try handoff.prompt()
     #expect(handoff.origin.conversation.value == chat.id && handoff.includeTranscript)
     #expect(prompt.contains("follow up") && prompt.contains("collect") && prompt.contains("denied") && prompt.contains("Morning"))
-    // Without a signed-in agent the follow-up fails visibly; the record is not written to and no chat appears.
-    await model.followUpScheduledRecord(chat, text: "follow up", project: project)
-    #expect(model.error != nil && model.state.chats.count == 1 && model.chatID == chat.id)
+    // Sending from the record reaches the follow-up with the typed text. The engine is unreachable here,
+    // so it fails visibly: the record is not written to, no chat appears and the draft is kept.
+    model.claudeConnected = true; model.claudeAuthenticated = true
+    #expect(model.canSend)
+    await model.send()
+    #expect(model.error != nil && model.state.chats.count == 1 && model.chatID == chat.id && model.draft == "follow up")
+    model.claudeConnected = false; model.claudeAuthenticated = false
     #expect(model.items.map(\.text) == ["collect", "denied", JobRunStatus.blocked.title])
     model.error = nil
     // The phone is told the record is read-only instead of offering a composer that is then rejected.

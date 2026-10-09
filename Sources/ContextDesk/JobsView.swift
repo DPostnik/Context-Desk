@@ -246,15 +246,13 @@ struct JobEditor: View {
                 if job.engine == .claude {
                     if job.route != .direct {
                         Text(model.routeCompatibilityIssue(job.route, agent: .claudeCode) ?? "").foregroundStyle(.orange).font(.caption)
-                        Button(L10n.text("Выбрать внешний маршрут CLI без оптимизатора приложения", "Use external CLI routing without an app optimizer")) { job.route = .direct }
+                        Button(L10n.text("Работать напрямую", "Work directly")) { job.route = .direct }
                     }
                     Picker(L10n.text("Рассуждение", "Reasoning effort"), selection: $job.effort) {
                         Text(L10n.text("Как в CLI", "CLI default")).tag("")
                         ForEach(ClaudeEffort.allCases, id: \.rawValue) { level in Text(level.title).tag(level.rawValue) }
                     }
-                    Text(L10n.text("Claude использует аккаунт, маршрут и правила установленного CLI. Новые запросы разрешений отклоняются. Статистика и оптимизаторы приложения недоступны.", "Claude uses the installed CLI account, route and rules. New permission prompts are denied. Metrics and app optimizers are unavailable.")).font(.caption).frame(maxWidth: 460, alignment: .leading).fixedSize(horizontal: false, vertical: true)
-                    Toggle(L10n.text("Принимаю внешние правила Claude для этого задания", "Use external Claude policy for this task"), isOn: Binding(get: { job.acceptsExternalPolicy == true }, set: { job.acceptsExternalPolicy = $0 }))
-                    Text(L10n.text("Требуется проект с полным доступом. Ограничения стандартного режима Claude не поддерживает; запуск будет заблокирован.", "Requires a full-access project. Claude cannot enforce standard project restrictions; execution will be blocked.")).font(.caption).foregroundStyle(.secondary).frame(maxWidth: 460, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+                    Text(L10n.text("Claude работает в профиле Claude приложения, как обычный чат: каждый запуск появляется чатом, который можно продолжить. Разрешения задаёт режим доступа проекта; при полном доступе действия коннекторов claude.ai (Gmail, Calendar…) выполняются без подтверждения. Нужен вход по подписке Claude в настройках.", "Claude runs in the app's Claude profile like a regular chat: each run appears as a chat you can continue. The project's access mode sets permissions; with full access, claude.ai connector actions (Gmail, Calendar…) run without approval. Requires signing in with your Claude subscription in settings.")).font(.caption).frame(maxWidth: 460, alignment: .leading).fixedSize(horizontal: false, vertical: true)
                 }
                 }
                 Section(L10n.text("Расписание", "Schedule")) {

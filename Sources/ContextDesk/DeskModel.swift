@@ -241,7 +241,9 @@ private struct ChatRunState {
             for await event in claudeConnection.events { await self?.receiveClaude(event) }
         }
         await connect()
-        if state.defaultConnection == .appClaude || state.chats.contains(where: { $0.nativeSession?.connection == .appClaude }) { await connectClaude() }
+        // Claude scheduled tasks run in the app's Claude profile, so enabled ones need it connected too.
+        let claudeJobs = (try? await jobStore.load())?.jobs.contains { $0.engine == .claude && $0.enabled } == true
+        if state.defaultConnection == .appClaude || claudeJobs || state.chats.contains(where: { $0.nativeSession?.connection == .appClaude }) { await connectClaude() }
         await startScheduler()
         Task { await mobileRemote.restoreOnLaunch(model: self) } // Network sign-in must not hold up boot.
         continueAfterRestart(RestartContinuation.take())
@@ -1020,11 +1022,11 @@ private struct ChatRunState {
     }
     func send() async {
         guard canSend, let project = selectedProject else { return }
-        let text = draft; draft = ""
-        let localID = "local-user:" + UUID().uuidString
         if let record = selectedChat, record.isScheduledRecord {
             await followUpScheduledRecord(record, text: draft, project: project); return
         }
+        let text = draft; draft = ""
+        let localID = "local-user:" + UUID().uuidString
         if let thread = chatID, busy || !visibleQueue.isEmpty {
             if visibleQueue.isEmpty { runs[thread, default: ChatRunState()].queuePaused = false }
             state.queuedMessages = queuedMessages + [QueuedMessage(id: localID, threadID: thread,
@@ -1037,7 +1039,8 @@ private struct ChatRunState {
                       selectedModel: currentModel, selectedEffort: currentAgent == .appClaude ? claudeEffort : effort)
     }
     private func deliver(text: String, project: Project, threadID: String?, localID: String,
-                         selectedModel: String, selectedEffort: String, scheduledRun: UUID? = nil, scheduledRoute: RequestRoute? = nil, scheduledBrowserImport: ChromeSessionImportPolicy? = nil) async {
+                         selectedModel: String, selectedEffort: String, scheduledRun: UUID? = nil, scheduledRoute: RequestRoute? = nil, scheduledBrowserImport: ChromeSessionImportPolicy? = nil,
+                         scheduledAgent: AgentConnectionID = .originalCodex) async {
         let selection = selectionGeneration
         let visible = scheduledRun == nil && threadID == chatID && project.id == projectID
         if visible { items.append(TranscriptItem(id: localID, kind: "user", text: text, phase: L10n.text("Отправляется…", "Sending…"))) }
@@ -1055,7 +1058,7 @@ private struct ChatRunState {
         if scheduledRun != nil { access = project.accessMode ?? .standard }
         else if let threadID { access = state.chats.first { $0.id == threadID }?.resolvedAccessMode(in: project) ?? .standard }
         else { access = project.defaultChatAccessMode ?? .standard }
-        let newConnection = scheduledRun == nil ? currentAgent : .originalCodex
+        let newConnection = scheduledRun == nil ? currentAgent : scheduledAgent
         let route = scheduledRoute ?? (threadID == nil ? (newConnection == .appClaude ? .direct : defaultRoute) : (state.chats.first { $0.id == threadID }?.route ?? .direct))
         do {
             if let threadID {
@@ -1148,12 +1151,15 @@ private struct ChatRunState {
             if visible && selectionGeneration == selection && draft.isEmpty { draft = text }
         }
     }
-    func deliverScheduled(_ job: ManagedJob, run: JobRun, project: Project) async {
+    func scheduledAgentReady(_ agent: AgentConnectionID) -> Bool {
+        agent == .appClaude ? claudeConnected && claudeAuthenticated : connected && authenticated
+    }
+    func deliverScheduled(_ job: ManagedJob, run: JobRun, project: Project, agent: AgentConnectionID = .originalCodex) async {
         do {
             let prompt = try job.browserExecutionPrompt()
             await deliver(text: prompt, project: project, threadID: nil, localID: "local-user:" + run.id.uuidString,
                           selectedModel: job.model, selectedEffort: job.effort, scheduledRun: run.id, scheduledRoute: job.route,
-                          scheduledBrowserImport: job.browserSessionImport)
+                          scheduledBrowserImport: job.browserSessionImport, scheduledAgent: agent)
         } catch {
             await finishJob(run.id, status: .blocked, output: error.localizedDescription)
         }
@@ -1545,7 +1551,7 @@ private struct ChatRunState {
         removeActionNotices(actions); pending.removeAll { $0.interaction.session.connection == agent }
         NSApplication.shared.dockTile.badgeLabel = pending.isEmpty ? nil : String(pending.count)
     }
-    private func receiveClaude(_ event: AgentEvent) async {
+    func receiveClaude(_ event: AgentEvent) async {
         switch event.payload {
         case .descriptor(let descriptor): claudeDescriptor = descriptor
         case .accountChanged(let issue):
@@ -1700,14 +1706,12 @@ private struct ChatRunState {
         L10n.text("Это запись запуска задания Claude. Она только для чтения: чтобы продолжить, начни новый чат.",
                   "This is a record of a Claude scheduled run. It is read-only: start a new chat to follow up.")
     }
-    func isScheduledRecord(_ id: String) -> Bool { state.chats.first { $0.id == id }?.isScheduledRecord == true }
-
     static var scheduledRecordFollowUpNotice: String {
         L10n.text("Запись запуска задания Claude. Ответ откроет новый чат с результатом этого запуска в контексте; сама запись не меняется.",
                   "A Claude scheduled run record. Replying opens a new chat with this run's result as context; the record itself stays unchanged.")
     }
-    /// Creates the run's chat, then durably marks the run as running with the link. A record that cannot be saved
-    /// is reported but does not block the run; the ledger write still gates dispatch.
+    func isScheduledRecord(_ id: String) -> Bool { state.chats.first { $0.id == id }?.isScheduledRecord == true }
+
     /// Builds a handoff from the record's saved transcript. It never calls a model: the record holds the whole run.
     func scheduledRecordHandoff(_ chat: Chat, goal: String) async throws -> ContextHandoff {
         guard chat.isScheduledRecord, !isBusy(threadID: chat.id) else {
@@ -1742,6 +1746,8 @@ private struct ChatRunState {
         } catch { self.error = error.localizedDescription }
     }
 
+    /// Creates the run's chat, then durably marks the run as running with the link. A record that cannot be saved
+    /// is reported but does not block the run; the ledger write still gates dispatch.
     func attachScheduledRecord(_ run: JobRun, job: ManagedJob, prompt: String, project: Project) async throws {
         try Task.checkCancellation()
         guard !schedulerStopping else { throw CancellationError() }

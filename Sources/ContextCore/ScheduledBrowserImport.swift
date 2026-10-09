@@ -14,7 +14,8 @@ extension ManagedJob {
     public func browserExecutionPrompt(language: AppLanguage = L10n.language) throws -> String {
         try validateBrowserSessionImport()
         guard let policy = browserSessionImport else { return prompt }
-        return prompt + "\n\n" + ScheduledBrowserImport.instructions(policy, language: language)
+        let tool = engine == .claude ? ScheduledBrowserImport.claudeImportTool : "browser_import_session"
+        return prompt + "\n\n" + ScheduledBrowserImport.instructions(policy, tool: tool, language: language)
     }
 }
 
