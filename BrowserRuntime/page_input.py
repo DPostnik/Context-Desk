@@ -3,9 +3,17 @@ import re
 
 MAX_IMAGE_SIDE = 1280
 QUALITY = 70
-ACTIONS = ('click', 'double_click', 'right_click', 'hover', 'drag', 'scroll', 'scroll_to', 'key', 'type', 'select', 'wait')
-# Actions that can submit, edit or navigate need the page the model saw.
-GUARDED = frozenset(('click', 'double_click', 'right_click', 'drag', 'key', 'type', 'select'))
+ACTIONS = ('click', 'double_click', 'right_click', 'hover', 'drag', 'scroll', 'scroll_to', 'key', 'type', 'select', 'dialog', 'wait')
+# Consequence classes that require the observed expectedURL and explicit confirmation.
+RISKY = frozenset(('submit', 'navigation', 'dialog'))
+# Settling: network/DOM quiet period, and requests treated as long-lived (polling, streams).
+QUIET = 0.3
+LONG_REQUEST = 2.0
+DIFF_SOURCE_CHARS = 60000
+# Seconds a page may take to run a trivial script before it counts as blocked.
+RESPONSIVE = 3
+DIFF_CHARS = 4000
+REF = re.compile(r'\[(ref_\d+)\]')
 POINTER = frozenset(('click', 'double_click', 'right_click', 'hover', 'drag'))
 MAX_TEXT = 5000
 
@@ -112,3 +120,47 @@ def mouse_events(action, start, end=None, delta=(0, 0)):
         return [move, {'type': 'mousePressed', 'x': x, 'y': y, 'button': 'left', 'buttons': 1, 'clickCount': 1}] + steps + [
             {'type': 'mouseReleased', 'x': ex, 'y': ey, 'button': 'left', 'buttons': 0, 'clickCount': 1}]
     raise ValueError(action)
+
+
+def dialog_info(params):
+    return {'type': str(params.get('type', ''))[:20], 'message': str(params.get('message', ''))[:500],
+            'url': str(params.get('url', ''))[:8192], **({'defaultPrompt': str(params['defaultPrompt'])[:200]} if params.get('defaultPrompt') else {})}
+
+
+def tree_changes(before, after, url, limit=DIFF_CHARS):
+    """Compact change list between two interactive trees, keyed by stable refs.
+
+    A new document (fresh registry or other URL path) has no comparable refs, so the
+    head of the new tree is returned instead of a diff.
+    """
+    head_url, now_url = before.get('url', '').split('#')[0], url.split('#')[0]
+    if after.get('fresh') or head_url != now_url:
+        tree = after.get('tree', '')
+        return {'kind': 'new_page', 'tree': tree[:limit], 'truncated': len(tree) > limit or bool(after.get('truncated'))}
+
+    def lines(tree):
+        found = {}
+        for line in tree.split('\n'):
+            match = REF.search(line)
+            if match:
+                found[match.group(1)] = line.strip()[2:] if line.strip().startswith('- ') else line.strip()
+        return found
+    old, new = lines(before.get('tree', '')), lines(after.get('tree', ''))
+
+    def same(ref):  # Focus moves with every click; it is not a page change.
+        return old[ref].replace(' focused', '') == new[ref].replace(' focused', '')
+    entries = ([('+ ', new[r]) for r in new if r not in old] + [('~ ', new[r]) for r in new if r in old and not same(r)] +
+               [('- ', old[r]) for r in old if r not in new])
+    text, shown = [], 0
+    for sign, line in entries:
+        if shown + len(line) + 3 > limit:
+            break
+        text.append(sign + line)
+        shown += len(line) + 3
+    result = {'kind': 'same_page', 'added': sum(r not in old for r in new), 'changed': sum(r in old and not same(r) for r in new),
+              'removed': sum(r not in new for r in old), 'diff': '\n'.join(text)}
+    if len(text) < len(entries):
+        result['truncated'] = True
+    if before.get('truncated') or after.get('truncated'):
+        result['partial'] = True  # Large page: elements past the read limit are not compared.
+    return result

@@ -1,10 +1,13 @@
 // Page model for the agent: an accessibility-style tree with stable element refs,
 // main-content text, and ref resolution for trusted input. Read-only except for
-// the ref registry and, on request, scrolling an element into view or setting a
-// <select> value. Page content is untrusted data.
+// the ref registry, a mutation counter and, on request, scrolling an element into
+// view or setting a <select> value. Page content is untrusted data.
+// Ref numbers continue from request.floor, so a new document never reuses a ref
+// issued for an earlier one: an old ref is stale instead of pointing elsewhere.
 (request) => {
   const KEY = Symbol.for('context-desk.refs');
-  const registry = window[KEY] || (window[KEY] = {next: 1, byRef: new Map(), byElement: new WeakMap()});
+  const fresh = !window[KEY];
+  const registry = window[KEY] || (window[KEY] = {next: (Number(request.floor) || 0) + 1, byRef: new Map(), byElement: new WeakMap()});
   const clip = (value, max) => {
     const text = String(value ?? '').slice(0, max * 4).replace(/\s+/g, ' ').trim();
     return (text.length > max ? text.slice(0, max - 1) + '…' : text).toWellFormed();
@@ -51,6 +54,7 @@
   const STRUCTURE = new Set(['heading', 'image', 'navigation', 'main', 'banner', 'contentinfo', 'complementary', 'form',
     'dialog', 'alertdialog', 'alert', 'table', 'row', 'columnheader', 'cell', 'list', 'listitem', 'iframe', 'video',
     'audio', 'region', 'article', 'tablist', 'menu', 'menubar', 'tabpanel', 'paragraph', 'label', 'status']);
+  const CONTROLS = 'input,select,textarea,button,a[href],[onclick]';
   const interactive = (element, role) => INTERACTIVE.has(role) ||
     (element.tabIndex >= 0 && element.hasAttribute('tabindex')) || element.hasAttribute('onclick');
   const ownText = (element) => {
@@ -94,6 +98,96 @@
     return {x, y};
   };
 
+  const run = () => {
+  // Element under a viewport point, through same-origin iframes and open shadow roots.
+  const atPoint = (x, y) => {
+    let doc = document, element = doc.elementFromPoint(x, y);
+    while (element) {
+      if (element.shadowRoot) {
+        const inner = element.shadowRoot.elementFromPoint(x, y);
+        if (inner && inner !== element) { element = inner; continue; }
+      }
+      if (element.tagName === 'IFRAME' || element.tagName === 'FRAME') {
+        let inner = null;
+        try { inner = element.contentDocument; } catch (_) {}
+        if (!inner) break;
+        const rect = element.getBoundingClientRect(), style = getComputedStyle(element);
+        x -= rect.left + parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft);
+        y -= rect.top + parseFloat(style.borderTopWidth) + parseFloat(style.paddingTop);
+        doc = inner;
+        const next = doc.elementFromPoint(x, y);
+        if (!next) break;
+        element = next;
+        continue;
+      }
+      break;
+    }
+    return element;
+  };
+  const deepActive = () => {
+    let element = document.activeElement;
+    while (element) {
+      if (element.shadowRoot?.activeElement) { element = element.shadowRoot.activeElement; continue; }
+      if (element.tagName === 'IFRAME' || element.tagName === 'FRAME') {
+        let inner = null;
+        try { inner = element.contentDocument; } catch (_) {}
+        if (inner?.activeElement && inner.activeElement !== inner.body) { element = inner.activeElement; continue; }
+      }
+      break;
+    }
+    return element;
+  };
+  // Heuristic consequence class of activating an element; JS-only buttons stay unclassified.
+  const riskOf = (start) => {
+    const element = start?.nodeType === Node.ELEMENT_NODE ? start : start?.parentElement;
+    if (!element) return {risk: null};
+    const label = element.closest('label');
+    if (element.closest('input[type=file]') || label?.control?.type === 'file') return {risk: 'upload'};
+    const control = element.closest('button, input, a[href], area[href]');
+    if (!control) return {risk: null};
+    if (control.tagName === 'A' || control.tagName === 'AREA') {
+      const newTab = (control.getAttribute('target') || '').toLowerCase() === '_blank';
+      try {
+        const url = new URL(control.href);
+        if (['http:', 'https:'].includes(url.protocol) && url.origin !== location.origin) return {risk: 'navigation', newTab};
+      } catch (_) {}
+      return {risk: null, newTab};
+    }
+    const type = (control.getAttribute('type') || (control.tagName === 'BUTTON' ? 'submit' : 'text')).toLowerCase();
+    if (control.form && ((control.tagName === 'BUTTON' && type === 'submit') || (control.tagName === 'INPUT' && ['submit', 'image'].includes(type)))) {
+      return {risk: 'submit'};
+    }
+    return {risk: null};
+  };
+
+  if (request.op === 'arm') {
+    if (!registry.observer) {
+      registry.mutations = 0;
+      registry.last = performance.now();
+      // Inline style churn (animations, carousels) is not a content change.
+      registry.observer = new MutationObserver((records) => {
+        const counted = records.filter((r) => r.type !== 'attributes' || r.attributeName !== 'style').length;
+        if (counted) { registry.mutations += counted; registry.last = performance.now(); }
+      });
+      registry.observer.observe(document, {subtree: true, childList: true, attributes: true, characterData: true});
+    }
+    return {armed: true};
+  }
+  if (request.op === 'quiet') {
+    return {armed: !!registry.observer, idleMs: registry.observer ? performance.now() - registry.last : null,
+      readyState: document.readyState, url: location.href.slice(0, 8192)};
+  }
+  if (request.op === 'classify') {
+    if (request.focused) {
+      const element = deepActive();
+      if (!element || element === document.body) return {risk: null};
+      if (['enter', 'return'].includes(String(request.key).toLowerCase()) && element.form &&
+          (element.tagName === 'INPUT' || element.tagName === 'SELECT')) return {risk: 'submit'};
+      if (['enter', 'return', 'space'].includes(String(request.key).toLowerCase())) return riskOf(element);
+      return {risk: null};
+    }
+    return riskOf(atPoint(request.x, request.y));
+  }
   if (request.op === 'resolve' || request.op === 'select') {
     const element = lookup(request.ref);
     if (!element) return {error: 'stale_ref'};
@@ -126,7 +220,7 @@
       !(hit.tagName === 'LABEL' && hit.contains(element)) && !(hit.shadowRoot && hit.contains(element)) &&
       !(element.getRootNode() instanceof ShadowRoot && hit === element.getRootNode().host);
     if (request.focus) element.focus({preventScroll: true});
-    return {x: offset.x + local.x, y: offset.y + local.y, scrolled, disabled: !!element.disabled,
+    return {x: offset.x + local.x, y: offset.y + local.y, scrolled, disabled: !!element.disabled, ...riskOf(element),
       obscuredBy: covered ? clip(roleOf(hit) + ' "' + (nameOf(hit, roleOf(hit)) || clip(hit.textContent, 60)) + '"', 120) : null};
   }
 
@@ -200,7 +294,12 @@
     const role = roleOf(element);
     const isInteractive = interactive(element, role);
     let next = indent;
-    const show = isInteractive || (request.filter === 'all' && (STRUCTURE.has(role) && (role !== 'image' || nameOf(element, role))));
+    // Wrappers that only repeat their controls' text (list items, unnamed lists) add noise:
+    // skip their line and keep walking their children.
+    const wrapper = (role === 'listitem' || role === 'cell') ? !!element.querySelector(CONTROLS) :
+      (role === 'list' || role === 'row') && !nameOf(element, role) && !element.getAttribute('aria-label');
+    const show = isInteractive || (request.filter === 'all' && STRUCTURE.has(role) && !wrapper &&
+      (role !== 'image' || nameOf(element, role)));
     if (show) {
       if (!emit(indent, describe(element, role))) return;
       next = indent + 1;
@@ -215,7 +314,7 @@
     // Interactive leaves already carry their text as the name.
     if (isInteractive && ['link', 'button', 'option', 'menuitem', 'tab'].includes(role) && !element.querySelector('input,select,textarea,button,a[href]')) return;
     if (show && ['heading', 'paragraph', 'listitem', 'cell', 'columnheader', 'label'].includes(role) &&
-        !element.querySelector('input,select,textarea,button,a[href],[role],[tabindex],[onclick]')) return;
+        !element.querySelector(CONTROLS + ',[role],[tabindex]')) return;
     if (element.shadowRoot) walk(element.shadowRoot, depth + 1, next);
     for (const child of element.childNodes) {
       walk(child, depth + 1, next);
@@ -230,4 +329,9 @@
   result.tree = lines.join('\n').toWellFormed();
   result.scroll = {y: Math.round(scrollY), height: document.documentElement.scrollHeight, viewport: innerHeight};
   return result;
+  };
+  const out = run();
+  out.next = registry.next;
+  out.fresh = fresh;
+  return out;
 }

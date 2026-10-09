@@ -1,14 +1,17 @@
 """Minimal CDP client for one owned page target over the verified loopback endpoint.
 
-Scope is deliberately narrow: one WebSocket per tool call, attached only to the
-page target recorded when the task opened its tab. Commands are never resent;
-a lost reply surfaces as an error and the caller treats the outcome as unknown.
+Scope is deliberately narrow: one WebSocket attached only to the page target
+recorded when the task opened its tab. A persistent session stays open across
+tool calls, so page events (dialogs) that arrive between calls are buffered and
+can be answered. Commands are never resent; a lost reply surfaces as an error,
+drops the connection, and the caller treats the outcome as unknown.
 """
 import base64
 import hashlib
 import json
 import os
 import re
+import select
 import socket
 import struct
 import time
@@ -41,7 +44,7 @@ def frame(payload, opcode=0x1):
 
 
 class PageSession:
-    def __init__(self, port, target, timeout=20):
+    def __init__(self, port, target, timeout=20, persistent=False):
         if not isinstance(port, int) or not 0 < port < 65536 or not isinstance(target, str) or not TARGET.fullmatch(target):
             raise CDPTransportError('owned_page_target_unverified')
         self.port, self.target, self.timeout = port, target, timeout
@@ -49,9 +52,12 @@ class PageSession:
         self.buffer = b''
         self.counter = 0
         self.events = []
+        self.persistent = persistent  # close() keeps it open; shutdown() ends it.
+        self.page_enabled = False
 
     def __enter__(self):
-        self.connect()
+        if self.socket is None:
+            self.connect()
         return self
 
     def __exit__(self, *_):
@@ -83,6 +89,10 @@ class PageSession:
             raise CDPTransportError('cdp_handshake_rejected')
 
     def close(self):
+        if not self.persistent:
+            self.shutdown()
+
+    def shutdown(self):
         if self.socket is not None:
             try:
                 self.socket.sendall(frame(b'', 0x8))
@@ -90,6 +100,8 @@ class PageSession:
                 pass
             self.socket.close()
             self.socket = None
+        self.buffer = b''
+        self.page_enabled = False
 
     def _exact(self, count, deadline):
         while len(self.buffer) < count:
@@ -135,8 +147,43 @@ class PageSession:
             if first & 0x80:
                 return b''.join(parts)
 
-    def send(self, method, params=None, seconds=None):
-        """Send one command once and wait for its reply; events are kept in order."""
+    def poll(self, timeout):
+        """Next event within timeout, or None. A started frame is always read whole."""
+        try:
+            return self._poll(timeout)
+        except CDPTransportError:
+            self.shutdown()  # Frame sync or pending replies are unknown now.
+            raise
+
+    def _poll(self, timeout):
+        if self.socket is None:
+            raise CDPTransportError('cdp_not_connected')
+        if not self.buffer:
+            ready, _, _ = select.select([self.socket], [], [], max(0.0, timeout))
+            if not ready:
+                return None
+        try:
+            message = json.loads(self._message(time.monotonic() + max(timeout, self.timeout)))
+        except ValueError:
+            raise CDPTransportError('cdp_invalid_message')
+        if isinstance(message, dict) and 'method' in message:
+            return message
+        return None
+
+    def send(self, method, params=None, seconds=None, interrupt=None):
+        try:
+            return self._send(method, params, seconds, interrupt)
+        except CDPTransportError:
+            self.shutdown()  # A late reply could otherwise be mistaken for a new one.
+            raise
+
+    def _send(self, method, params=None, seconds=None, interrupt=None):
+        """Send one command once and wait for its reply; events are kept in order.
+
+        With interrupt, an event of that name ends the wait early and returns
+        {'interrupted': event}: input that opens a JavaScript dialog is answered by
+        Chrome only after the dialog closes. The late reply is ignored by id.
+        """
         if self.socket is None:
             raise CDPTransportError('cdp_not_connected')
         self.counter += 1
@@ -161,6 +208,8 @@ class PageSession:
                 return message.get('result', {})
             if 'method' in message and len(self.events) < 1000:
                 self.events.append(message)
+            if interrupt is not None and message.get('method') == interrupt:
+                return {'interrupted': message}
 
 
 def jpeg_size(data):

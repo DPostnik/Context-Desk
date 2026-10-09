@@ -60,6 +60,12 @@ handles (or the main page text with `mode=text`), including open shadow DOM and
 same-origin iframes; passwords and card fields are redacted. `browser_input` accepts a
 `ref` instead of coordinates: the element is scrolled into view, and a stale or covered
 element is refused without dispatch. `select` picks a `<select>` option by label or value.
+After each input the adapter waits until navigation, network and DOM go quiet
+(`settle`, default 3 s) and returns `changes`: added, changed and removed controls
+keyed by ref, or the head of a new page. A plain in-page click needs no
+`expectedURL`; submitting a form, following a link to another site and answering a
+dialog require it and are flagged with `risk`. JavaScript dialogs are reported and
+answered with `action=dialog`; tabs opened by an action are listed in `newTabs`.
 
 ## Русский
 
@@ -125,6 +131,13 @@ Chrome остаётся открытым при переподключении �
 вместо координат: элемент прокручивается в видимую область, а устаревший или перекрытый
 элемент отклоняется без отправки события. `select` выбирает пункт `<select>` по подписи
 или значению.
+После каждого действия адаптер ждёт окончания навигации, сетевых запросов и изменений
+DOM (`settle`, по умолчанию 3 с) и возвращает `changes`: добавленные, изменённые
+и удалённые элементы управления по ref или начало новой страницы. Обычному клику
+внутри страницы `expectedURL` не нужен; отправка формы, переход по ссылке на другой
+сайт и ответ на диалог требуют его и помечаются `risk`. Диалоги JavaScript
+сообщаются в ответе и закрываются через `action=dialog`; вкладки, открытые действием,
+перечислены в `newTabs`.
 
 ## Development contract
 
@@ -145,6 +158,14 @@ Chrome остаётся открытым при переподключении �
   registry (`Symbol.for('context-desk.refs')`, WeakRef) and survive reads until the
   element is removed. A hostile page can tamper with that registry like with any DOM
   data, so refs are a convenience, not an authority. `read_smoke.py` checks refs live.
+- One persistent CDP session per owned tab keeps Page events enabled across calls:
+  Chrome only lets a session that saw a dialog open answer it, and a new connection
+  hangs while a dialog is showing. A dialog the session missed is answered through
+  Chrome DevTools MCP's `handle_dialog`. Risk classes are heuristics (form submit
+  controls, cross-origin links, Enter in a form field); script-only buttons are not
+  classified. Ref numbers continue across documents, so an old ref is stale rather
+  than pointing at a new element. `settle_smoke.py` checks settling, changes, risk,
+  dialogs and new tabs live.
 - `browser_snapshot` defaults to a bounded DOM read. Set `mode=interactive`
   explicitly for upstream action UIDs. `browser_status`
   reports RPC latency, bytes and counts; these exclude model processing and do

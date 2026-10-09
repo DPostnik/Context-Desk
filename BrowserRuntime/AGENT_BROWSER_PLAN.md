@@ -97,7 +97,14 @@ Acceptance: refs survive a React re-render on the benchmark pages; `interactive`
 tree for a large page stays under the cap; read latency below the current
 `interactive` snapshot.
 
-## Stage 3 — One-call steps
+## Stage 3 — One-call steps (delivered 2026-10-09)
+
+Delivered: settling (navigation, network with long-request cut-off, DOM mutations
+excluding inline style) bounded by `settle`; `changes` diff by ref or new-page head;
+risk classes submit/navigation/dialog (expectedURL required only for them); dialogs
+reported and answered (`action=dialog`) through a persistent per-tab CDP session;
+new tabs reported and a hidden browser kept hidden; refs never reused across
+documents. `browser_action`/`browser_verify` stay for compatibility.
 
 1. `browser_input` returns a compact observation after each action (URL, title,
    dialog state, focused element, small interactive-tree diff; screenshot on

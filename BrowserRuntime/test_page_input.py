@@ -6,6 +6,7 @@ import socket
 import struct
 import tempfile
 import threading
+import time
 import unittest
 
 import cdp
@@ -22,8 +23,24 @@ class FakePage:
         self.url, self.fail_on = url, fail_on
         self.sent = []
         self.closed = 0
-        self.model = {}  # op -> page_tree.js result
+        self.model = {'quiet': {'armed': True, 'idleMs': 1000}}  # op -> page_tree.js result
         self.requests = []
+        self.events = []
+        self.queued = []  # Events delivered by poll(), in order.
+        self.dialog = None  # A showing dialog: its opening event waits in the buffer once.
+        self.socket = object()
+        self.page_enabled = False
+        self.opens_dialog = None  # Dialog opened by a mouse press (its reply never comes).
+
+    def poll(self, timeout):
+        if self.dialog and not self.dialog.get('delivered'):
+            self.dialog['delivered'] = True
+            return {'method': 'Page.javascriptDialogOpening', 'params': self.dialog}
+        # Queued events model the page's reaction, so they arrive only after input.
+        if self.queued and any(m.startswith('Input.') for m, _ in self.sent):
+            return self.queued.pop(0)
+        time.sleep(min(timeout, 0.005))
+        return None
 
     def __enter__(self):
         return self
@@ -34,15 +51,28 @@ class FakePage:
     def close(self):
         self.closed += 1
 
-    def send(self, method, params=None, seconds=None):
+    def send(self, method, params=None, seconds=None, interrupt=None):
         self.sent.append((method, params))
+        if self.opens_dialog and method == 'Input.dispatchMouseEvent' and params['type'] == 'mousePressed':
+            event = {'method': 'Page.javascriptDialogOpening', 'params': self.opens_dialog}
+            self.events.append(event)
+            return {'interrupted': event}
         if method == self.fail_on:
-            raise cdp.CDPTransportError('cdp_connection_lost_outcome_may_be_unknown')
+            raise getattr(self, 'fail_error', None) or cdp.CDPTransportError('cdp_connection_lost_outcome_may_be_unknown')
+        if method == 'Page.handleJavaScriptDialog':
+            if not self.dialog:
+                raise cdp.CDPError('No dialog is showing')
+            self.dialog = None
+        if method == 'Page.getNavigationHistory':
+            return {'currentIndex': 0, 'entries': [{'url': self.url}]}
+        if method == 'Page.getFrameTree':
+            return {'frameTree': {'frame': {'id': 'MAIN'}}}
         if method == 'Runtime.evaluate':
             if params['expression'] == 'devicePixelRatio':
                 return {'result': {'value': 2}}
             if params['expression'].startswith('(' + server.PAGE_TREE):
                 request = json.loads(params['expression'][len(server.PAGE_TREE) + 3:-1])
+                request.pop('floor', None)
                 self.requests.append(request)
                 return {'result': {'value': self.model.get(request['op'], {})}}
             return {'result': {'value': {'url': self.url, 'title': 'Fixture', 'readyState': 'complete'}}}
@@ -139,14 +169,26 @@ class BrowserInputTests(unittest.TestCase):
             self.browser.input('owner', 'click', 'click-000001', 'https://example.test/', x=320, y=100)
         self.assertFalse([m for m, _ in self.page.sent[before:] if m.startswith('Input.')])
 
-    def test_guarded_actions_need_matching_page(self):
+    def test_only_risky_actions_need_expected_url(self):
         self.browser.screenshot('owner')
-        for action in ('click', 'key', 'type', 'drag'):
-            with self.assertRaises(Rejected):
-                self.browser.input('owner', action, x=1, y=1, key='Enter', text='x', to_x=2, to_y=2)
+        self.browser.input('owner', 'click', x=1, y=1)  # Plain in-page click.
+        self.browser.input('owner', 'type', text='x')
+        self.browser.input('owner', 'key', key='Tab')
+        self.page.model['classify'] = {'risk': 'submit'}
+        sent = len(self.inputs())
+        for action in ('click', 'key'):
+            with self.assertRaises(Rejected) as raised:
+                self.browser.input('owner', action, x=1, y=1, key='Enter')
+            self.assertIn('expectedURL', str(raised.exception))
+        result = self.browser.input('owner', 'click', 'submit-0001', 'https://example.test/', x=1, y=1)
+        self.assertEqual(result['risk'], 'submit')
+        self.assertIn('verification', result)
+        self.page.model['classify'] = {'risk': 'upload'}
+        with self.assertRaises(Rejected):
+            self.browser.input('owner', 'click', expected_url='https://example.test/', x=1, y=1)
+        self.assertEqual(len(self.inputs()), sent + 3)
         with self.assertRaises(Rejected):
             self.browser.input('owner', 'click', expected_url='https://other.test/', x=1, y=1)
-        self.assertEqual(self.inputs(), [])
         with self.assertRaises(Rejected):
             self.browser.input('owner', 'click', expected_url='https://example.test/', x=641, y=1)
 
@@ -163,7 +205,7 @@ class BrowserInputTests(unittest.TestCase):
     def test_key_and_type(self):
         self.browser.input('owner', 'key', expected_url='https://example.test/', key='cmd+a')
         self.browser.input('owner', 'type', expected_url='https://example.test/', text='hello')
-        self.assertEqual(self.page.sent[-2], ('Input.insertText', {'text': 'hello'}))
+        self.assertIn(('Input.insertText', {'text': 'hello'}), self.page.sent)
         with self.assertRaises(Rejected):
             self.browser.input('owner', 'key', expected_url='https://example.test/', key='nope+x')
 
@@ -270,7 +312,7 @@ class RefInputTests(unittest.TestCase):
     def test_select_journals_and_reports_options(self):
         self.page.model['select'] = {'selected': 'Large'}
         self.browser.input('owner', 'select', 'select-0001', self.url, ref='ref_5', value='Large')
-        self.assertEqual(self.page.requests[-1], {'op': 'select', 'ref': 'ref_5', 'value': 'Large'})
+        self.assertIn({'op': 'select', 'ref': 'ref_5', 'value': 'Large'}, self.page.requests)
         self.assertEqual(json.loads(self.records()[0].read_text())['state'], 'dispatched_observe_result')
         self.page.model['select'] = {'error': 'option_not_found', 'options': ['Small', 'Large']}
         with self.assertRaises(Rejected) as raised:
@@ -295,6 +337,158 @@ class RefInputTests(unittest.TestCase):
         self.assertTrue(tool['annotations']['readOnlyHint'])
         self.page.model['read'] = {'kind': 'page_text', 'text': 'Body'}
         self.assertEqual(dispatch(self.browser, 'browser_read', {'session': 'owner', 'mode': 'text'})['text'], 'Body')
+
+
+class SettleTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.browser = Browser(Path(self.directory.name), rpc=lambda *_: {'content': []})
+        self.browser.session, self.browser.page = 'owner', 7
+        self.browser.checkpoint = {'state': 'opened'}
+        self.page = FakePage()
+        self.page.model['resolve'] = {'x': 10, 'y': 10}
+        self.browser.page_session_factory = lambda: self.page
+        self.browser.stopped.wait = lambda seconds: False
+        self.url = 'https://example.test/'
+
+    def tearDown(self):
+        self.directory.cleanup()
+
+    def test_tree_changes_by_ref(self):
+        before = {'url': self.url, 'tree': '- button "Add" [ref_1]\n- link "Cart (0)" [ref_2]\n- button "Close" [ref_3]'}
+        after = {'tree': '- button "Add" [ref_1] focused\n- link "Cart (1)" [ref_2]\n- textbox "Coupon" [ref_9] value=""'}
+        changes = page_input.tree_changes(before, after, self.url + '#top')
+        self.assertEqual((changes['kind'], changes['added'], changes['changed'], changes['removed']), ('same_page', 1, 1, 1))
+        self.assertEqual(changes['diff'].split('\n'), ['+ textbox "Coupon" [ref_9] value=""', '~ link "Cart (1)" [ref_2]', '- button "Close" [ref_3]'])
+        moved = page_input.tree_changes(before, {'tree': '- link "Next" [ref_10]', 'fresh': True}, self.url)
+        self.assertEqual((moved['kind'], moved['tree']), ('new_page', '- link "Next" [ref_10]'))
+        other = page_input.tree_changes(before, {'tree': 'x'}, 'https://example.test/next')
+        self.assertEqual(other['kind'], 'new_page')
+        many = {'tree': '\n'.join('- link "%d" [ref_%d]' % (i, i + 10) for i in range(500))}
+        big = page_input.tree_changes(before, many, self.url, limit=200)
+        self.assertTrue(big['truncated'] and len(big['diff']) <= 200)
+
+    def test_result_reports_changes_and_ref_floor_advances(self):
+        self.page.model['read'] = {'tree': '- button "Go" [ref_4]', 'next': 5}
+        result = self.browser.input('owner', 'click', ref='ref_4')
+        self.assertEqual(result['changes']['kind'], 'same_page')
+        self.assertTrue(result['settled'])
+        self.assertEqual(self.browser.ref_floor, 4)
+        self.browser.input('owner', 'hover', ref='ref_4', observe='none')
+        sent = [json.loads(p['expression'][len(server.PAGE_TREE) + 3:-1]) for m, p in self.page.sent
+                if m == 'Runtime.evaluate' and p['expression'].startswith('(' + server.PAGE_TREE)]
+        self.assertEqual(sent[-1]['floor'], 4)  # Next document starts at ref_5.
+        self.assertNotIn('changes', self.browser.input('owner', 'hover', ref='ref_4', observe='none'))
+
+    def test_settle_waits_for_navigation_and_requests(self):
+        self.page.queued = [
+            {'method': 'Page.frameStartedLoading', 'params': {'frameId': 'MAIN'}},
+            {'method': 'Network.requestWillBeSent', 'params': {'requestId': '1', 'type': 'Document'}},
+        ]
+        self.page.model['quiet'] = {'armed': True, 'idleMs': 1000}
+        started = time.monotonic()
+        result = self.browser.input('owner', 'click', ref='ref_1', settle=0.6)
+        self.assertGreaterEqual(time.monotonic() - started, 0.55)  # Still loading: waits the full bound.
+        self.assertEqual((result['settled'], result['navigated']), (False, True))
+        self.page.sent = []
+        self.page.queued = [
+            {'method': 'Page.frameStartedLoading', 'params': {'frameId': 'MAIN'}},
+            {'method': 'Network.requestWillBeSent', 'params': {'requestId': '2', 'type': 'Document'}},
+            {'method': 'Network.loadingFinished', 'params': {'requestId': '2'}},
+            {'method': 'Page.frameStoppedLoading', 'params': {'frameId': 'MAIN'}},
+        ]
+        result = self.browser.input('owner', 'click', ref='ref_1', settle=3)
+        self.assertEqual((result['settled'], result['navigated']), (True, True))
+        self.assertLess(result['waitedMs'], 1500)
+
+    def test_dialog_during_action_is_reported_and_answered(self):
+        self.page.queued = [{'method': 'Page.javascriptDialogOpening',
+                             'params': {'type': 'confirm', 'message': 'Delete item?', 'url': self.url}}]
+        self.page.dialog = {'type': 'confirm', 'message': 'Delete item?', 'url': self.url, 'delivered': True}
+        result = self.browser.input('owner', 'click', ref='ref_1')
+        self.assertEqual(result['dialog']['message'], 'Delete item?')
+        self.assertNotIn('changes', result)
+        with self.assertRaises(Rejected) as raised:  # Remembered across calls: no blocked evaluation.
+            self.browser.read('owner')
+        self.assertIn('dialog', str(raised.exception))
+        with self.assertRaises(Rejected):
+            self.browser.input('owner', 'click', ref='ref_1')
+        with self.assertRaises(Rejected):  # Answering needs the page that opened it.
+            self.browser.input('owner', 'dialog', value='accept')
+        self.page.sent = []
+        result = self.browser.input('owner', 'dialog', 'dialog-0001', self.url, value='dismiss')
+        answered = self.page.sent.index(('Page.handleJavaScriptDialog', {'accept': False}))
+        self.assertFalse([m for m, _ in self.page.sent[:answered] if m == 'Runtime.evaluate'])  # The page is blocked.
+        self.assertEqual(result['risk'], 'dialog')
+        self.assertIsNone(self.browser.dialog)
+        with self.assertRaises(Rejected):
+            self.browser.input('owner', 'dialog', expected_url=self.url, value='accept')
+        with self.assertRaises(Rejected):
+            self.browser.input('owner', 'dialog', expected_url=self.url, value='maybe')
+
+    def test_dialog_seen_by_another_session_is_answered_through_devtools(self):
+        calls = []
+
+        def rpc(name, arguments):
+            calls.append((name, arguments))
+            return {'content': [{'type': 'text', 'text': 'Successfully dismissed the dialog'}]}
+        self.browser.injected = rpc
+        self.page.fail_on = 'Page.enable'
+        self.page.fail_error = cdp.CDPTransportError('cdp_deadline_outcome_may_be_unknown')
+        with self.assertRaises(Rejected) as raised:
+            self.browser.read('owner')
+        self.assertIn('not responding', str(raised.exception))
+        self.browser.input('owner', 'dialog', 'dialog-0002', self.url, value='dismiss')
+        self.assertEqual(calls, [('handle_dialog', {'pageId': 7, 'action': 'dismiss'})])
+        self.browser.injected = lambda *_: {'isError': True, 'content': [{'type': 'text', 'text': 'No open dialog found'}]}
+        with self.assertRaises(Rejected) as raised:
+            self.browser.input('owner', 'dialog', 'dialog-0003', self.url, value='dismiss')
+        self.assertIn('No open dialog', str(raised.exception))
+        self.assertFalse(self.browser.failed)
+
+    def test_dialog_opened_by_input_stops_the_sequence(self):
+        self.page.opens_dialog = {'type': 'alert', 'message': 'Saved', 'url': self.url}
+        result = self.browser.input('owner', 'click', 'click-dialog-1', ref='ref_1')
+        mouse = [p['type'] for m, p in self.page.sent if m == 'Input.dispatchMouseEvent']
+        self.assertEqual(mouse, ['mouseMoved', 'mousePressed'])  # Release not sent into a blocked page.
+        self.assertEqual(result['dialog']['message'], 'Saved')
+        self.assertFalse(self.browser.failed)
+        record = json.loads((Path(self.directory.name) / 'records/action-click-dialog-1.json').read_text())
+        self.assertEqual((record['state'], record['dialogOpened']), ('dispatched_observe_result', True))
+
+    def test_navigation_risk_and_new_tabs(self):
+        self.page.model['resolve'] = {'x': 1, 'y': 1, 'risk': 'navigation'}
+        with self.assertRaises(Rejected):
+            self.browser.input('owner', 'click', ref='ref_1')
+        self.assertEqual(self.browser.input('owner', 'click', 'nav-00001', self.url, ref='ref_1')['risk'], 'navigation')
+
+        class Chrome:
+            owner = {'pid': 1}
+            hidden = []
+
+            def __init__(self):
+                self.tabs = {'A' * 32: self_url}
+
+            def page_targets(self, owner):
+                return dict(self.tabs)
+
+            def visibility(self, owner, hide=False):
+                self.hidden.append(hide)
+                return True
+        self_url = self.url
+        chrome = Chrome()
+        self.browser.chrome = chrome
+        self.page.model['resolve'] = {'x': 1, 'y': 1, 'risk': None, 'newTab': True}
+        original = self.page.send
+
+        def send(method, params=None, seconds=None, interrupt=None):
+            if method == 'Input.dispatchMouseEvent' and params['type'] == 'mouseReleased':
+                chrome.tabs['B' * 32] = self_url + 'help'
+            return original(method, params, seconds, interrupt)
+        self.page.send = send
+        result = self.browser.input('owner', 'click', ref='ref_1')
+        self.assertEqual(result['newTabs'], [self.url + 'help'])
+        self.assertEqual(chrome.hidden, [False, True, False])  # Was hidden: hidden again, then rechecked.
 
 
 class WebSocketTests(unittest.TestCase):
