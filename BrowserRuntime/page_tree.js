@@ -200,7 +200,13 @@
       if (['enter', 'return', 'space'].includes(String(request.key).toLowerCase())) return riskOf(element);
       return {risk: null};
     }
-    return riskOf(atPoint(request.x, request.y));
+    const element = atPoint(request.x, request.y);
+    if (element && (element.tagName === 'IFRAME' || element.tagName === 'FRAME')) {
+      let inner = null;
+      try { inner = element.contentDocument; } catch (_) {}
+      if (!inner) return {risk: null, crossFrame: true};  // Classified inside the frame's own session.
+    }
+    return riskOf(element);
   }
   if (request.op === 'resolve' || request.op === 'select') {
     const element = lookup(request.ref);

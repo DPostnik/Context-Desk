@@ -172,3 +172,68 @@ def tree_changes(before, after, url, limit=DIFF_CHARS):
     if before.get('truncated') or after.get('truncated'):
         result['partial'] = True  # Large page: elements past the read limit are not compared.
     return result
+
+
+ROLE_WORDS = {
+    'button': ('button', 'btn', 'кнопка', 'кнопку', 'кнопки'),
+    'link': ('link', 'ссылка', 'ссылку', 'ссылки'),
+    'textbox': ('field', 'input', 'textbox', 'box', 'поле', 'ввод', 'ввода'),
+    'searchbox': ('search', 'поиск', 'поиска'),
+    'checkbox': ('checkbox', 'check', 'галочка', 'флажок', 'чекбокс'),
+    'radio': ('radio', 'option', 'переключатель'),
+    'combobox': ('select', 'dropdown', 'combobox', 'список', 'выпадающий'),
+    'heading': ('heading', 'title', 'header', 'заголовок'),
+    'image': ('image', 'picture', 'photo', 'картинка', 'изображение', 'фото'),
+    'tab': ('tab', 'вкладка'),
+    'menuitem': ('menu', 'меню'),
+    'iframe': ('frame', 'iframe', 'фрейм'),
+}
+STOP_WORDS = frozenset(('the', 'a', 'an', 'to', 'of', 'for', 'on', 'in', 'with', 'and', 'or', 'that', 'which',
+                        'и', 'в', 'во', 'на', 'для', 'с', 'со', 'по', 'к', 'из', 'или', 'который', 'которая'))
+FIND_LIMIT = 20
+FIND_SOURCE_CHARS = 100000
+# Role words that are also common content words count less than explicit type words.
+WEAK_ROLE_WORDS = frozenset(('search', 'поиск', 'поиска', 'title', 'header', 'option', 'select', 'menu', 'меню', 'check', 'box', 'input', 'frame'))
+
+
+def _norm(text):
+    return text.lower().replace('ё', 'е')
+
+
+def _stem(word):
+    # Crude ru/en stemming: the first five letters carry the root for most inflections.
+    return word[:5] if len(word) >= 5 else word
+
+
+def find_matches(tree, query, limit=FIND_LIMIT):
+    """Tree lines ranked by lexical match with a description (roles, names, values, hrefs; ru/en)."""
+    tokens = [t for t in re.findall(r'\w+', _norm(query)) if t not in STOP_WORDS]
+    if not tokens:
+        return []
+    role_tokens = {t for t in tokens if any(t in words for words in ROLE_WORDS.values())}
+    plain = [t for t in tokens if t not in role_tokens or t in WEAK_ROLE_WORDS]
+    ranked = []
+    for order, line in enumerate(tree.split('\n')):
+        ref = REF.search(line)
+        if not ref:
+            continue
+        body = line.strip()[2:] if line.strip().startswith('- ') else line.strip()
+        role = body.split(' ', 1)[0]
+        words = re.findall(r'\w+', _norm(body.split(' ', 1)[1] if ' ' in body else ''))
+        stems = {_stem(w) for w in words}
+        score, plain_hits = 0.0, 0
+        for token in tokens:
+            hit = 1.0 if token in words else 0.6 if _stem(token) in stems else 0.0
+            score += hit
+            if hit and token in plain:
+                plain_hits += 1
+        role_words = [t for t in role_tokens if t in ROLE_WORDS.get(role, ())]
+        role_hit = bool(role_words)
+        if role_hit:
+            score += max(0.7 if t in WEAK_ROLE_WORDS else 1.5 for t in role_words)
+        # Content words must match; a description made only of role words must match the role.
+        if (plain and not plain_hits) or (not plain and not role_hit):
+            continue
+        ranked.append((-score / len(tokens), order, ref.group(1), body[:300]))
+    ranked.sort()
+    return [{'ref': ref, 'line': body, 'score': round(-score, 2)} for score, _, ref, body in ranked[:limit]]

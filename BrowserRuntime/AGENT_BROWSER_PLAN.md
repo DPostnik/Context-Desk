@@ -123,7 +123,10 @@ per step than the current baseline with no lost no-replay guarantees.
 Delivered: cross-origin iframe trees and ref input through flattened child sessions;
 `browser_eval` (replMode, journaled, expectedURL); `action=upload` by ref from the
 project directory; `browser_logs` over Chrome DevTools MCP's console/network
-collection. Dialogs inside cross-origin frames are not tracked yet.
+collection. Follow-ups delivered the same day: dialogs from frames (Chrome reports them
+through the tab; frame sessions also enable Page), risk classification of coordinate
+clicks inside cross-origin frames, and `browser_find` (lexical ru/en matching over the
+composed tree instead of a model call).
 
 - Cross-origin iframes via `Target.setAutoAttach` (flattened sessions) for tree,
   input and screenshots.
@@ -134,8 +137,8 @@ collection. Dialogs inside cross-origin frames are not tracked yet.
 
 ## Deferred / optional
 
-- `find` by natural language through a small model (needs model access from the
-  runtime; cost and privacy review first).
+- Model-backed semantic `find` (the lexical `browser_find` covers the common cases;
+  a model call needs runtime model access plus a cost and privacy review).
 - Retiring the Chrome DevTools MCP dependency once all tools run on `cdp.py`.
 - Real-Chrome mode through an own extension (conflicts with the isolation
   principle; only on explicit user decision).

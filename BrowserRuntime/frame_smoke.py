@@ -17,6 +17,7 @@ from install import ROOT, LOCK
 from chrome_host import ChromeHost
 from transport import StdioRPC
 from broker import endpoint
+import cdp
 import server
 
 TOP = '''<!doctype html><title>Checkout</title><h1>Checkout</h1><p id="receipt">none</p>
@@ -28,6 +29,7 @@ PAY = '''<!doctype html><title>Pay</title><form onsubmit="event.preventDefault()
 <label>Card holder <input name="card"></label>
 <select name="plan" aria-label="Plan"><option>Basic</option><option>Pro</option></select>
 <label>Document <input type="file" name="doc"></label>
+<button type="button" onclick="parent.postMessage(confirm('Remove card?')?'removed':'kept','*')">Remove card</button>
 <button>Pay now</button></form>'''
 
 
@@ -101,8 +103,33 @@ def main():
             assert 'project directory' in refused('browser_input', session=session, action='upload', expectedURL=url,
                                                   ref=ref(r'button "Document"'), files=[str(outside)])
             call('browser_input', session=session, action='upload', expectedURL=url, ref=ref(r'button "Document"'), files=['passport.pdf'])
-            assert 'expectedURL' in refused('browser_input', session=session, action='click', ref=ref(r'button "Pay now"'))
-            paid = call('browser_input', session=session, action='click', expectedURL=url, ref=ref(r'button "Pay now"'))
+            # Natural-language lookup finds the frame's pay button.
+            found = call('browser_find', session=session, query='pay button')
+            assert found['matches'][0]['ref'] == ref(r'button "Pay now"'), found
+            # A confirm dialog inside the cross-origin frame: reported, blocks reads, answered in the frame.
+            asked = call('browser_input', session=session, action='click', ref=ref(r'button "Remove card"'))
+            # Chrome reports frame dialogs through the tab (they are tab-modal); the URL names the frame.
+            assert asked['dialog']['message'] == 'Remove card?' and '/pay' in asked['dialog']['url'], asked
+            assert 'dialog' in refused('browser_read', session=session)
+            call('browser_input', session=session, action='dialog', expectedURL=asked['dialog']['url'], value='accept')
+            assert 'removed' in call('browser_read', session=session, mode='text')['text']
+            # A coordinate click on the frame's submit button is classified inside the frame.
+            call('browser_input', session=session, action='scroll_to', ref=ref(r'button "Pay now"'))
+            shot = call('browser_screenshot', session=session)
+            frame_target = next(t for t in json.loads(__import__('urllib.request').request.urlopen(
+                'http://127.0.0.1:%d/json/list' % host.owner['port']).read()) if t['type'] == 'iframe')['id']
+            with cdp.PageSession(host.owner['port'], frame_target) as frame_page:
+                inner = frame_page.send('Runtime.evaluate', {'returnByValue': True, 'expression':
+                    'JSON.stringify((r=>[r.x+r.width/2,r.y+r.height/2])([...document.querySelectorAll("button")].find(b=>b.textContent=="Pay now").getBoundingClientRect()))'})
+            inner = json.loads(inner['result']['value'])
+            outer = call('browser_eval', session=session, expectedURL=url, expression=
+                '(f=>{const r=f.getBoundingClientRect(),s=getComputedStyle(f);return [r.x+parseFloat(s.borderLeftWidth)+parseFloat(s.paddingLeft),r.y+parseFloat(s.borderTopWidth)+parseFloat(s.paddingTop),innerWidth]})(document.querySelector("iframe"))')['value']
+            scale = shot['width'] / outer[2]
+            point = {'x': (outer[0] + inner[0]) * scale, 'y': (outer[1] + inner[1]) * scale}
+            call('browser_screenshot', session=session)
+            message = refused('browser_input', session=session, action='click', **point)
+            assert 'expectedURL' in message, message
+            paid = call('browser_input', session=session, action='click', expectedURL=url, **point)
             assert paid['risk'] == 'submit', paid
             receipt = call('browser_read', session=session, mode='text')['text']
             assert 'paid Ада Лавлейс Pro passport.pdf' in receipt, receipt
@@ -123,7 +150,7 @@ def main():
             call('browser_close', session=session)
             print(json.dumps({'result': 'passed', 'frameTreeNested': True, 'frameRefsUnique': True, 'typeSelectInFrame': True,
                               'uploadFromProjectOnly': True, 'submitInFrame': True, 'evalAwaitJournaled': True,
-                              'evalException': True, 'consoleProblems': True, 'networkLog': True, 'browserStayedHidden': True}))
+                              'evalException': True, 'findInFrame': True, 'frameDialog': True, 'frameCoordinateRisk': True, 'consoleProblems': True, 'networkLog': True, 'browserStayedHidden': True}))
         finally:
             if rpc:
                 rpc.close()

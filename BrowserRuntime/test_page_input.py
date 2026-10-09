@@ -608,7 +608,7 @@ class StageFourTests(unittest.TestCase):
             if method == 'Runtime.callFunctionOn':
                 if 'byElement' in params['functionDeclaration']:
                     return {'result': {'value': 'ref_2'}}
-                return {'result': {'value': {'x': 100, 'y': 300, 'scrolled': True}}}
+                return {'result': {'value': {'x': 100, 'y': 300, 'width': 400, 'height': 200, 'scrolled': params['arguments'][0]['value']}}}
             return original(method, params, seconds, interrupt, session)
         self.page.send = send
         tree = self.browser.read('owner')['tree']
@@ -625,6 +625,98 @@ class StageFourTests(unittest.TestCase):
         with self.assertRaises(Rejected) as raised:
             self.browser.input('owner', 'click', ref='ref_4')
         self.assertIn('frame', str(raised.exception))
+
+
+class FollowUpTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.browser = Browser(Path(self.directory.name), rpc=lambda *_: {'content': []})
+        self.browser.session, self.browser.page = 'owner', 7
+        self.browser.checkpoint = {'state': 'opened'}
+        self.page = FakePage()
+        self.browser.page_session_factory = lambda: self.page
+        self.browser.stopped.wait = lambda seconds: False
+        self.url = 'https://example.test/'
+
+    def tearDown(self):
+        self.directory.cleanup()
+
+    def test_find_matches_roles_and_words_in_both_languages(self):
+        tree = '\n'.join(['- searchbox "Search Wikipedia" [ref_1] value=""', '- button "Search" [ref_2]',
+                          '- link "Войти" [ref_3] href=https://x.test/login', '- button "Отправить заказ" [ref_4]',
+                          '- heading "Organic mango juice" [ref_6] level=2', '- text "no ref here"'])
+        best = lambda query: [m['ref'] for m in page_input.find_matches(tree, query)]
+        self.assertEqual(best('search button')[0], 'ref_2')
+        self.assertEqual(best('search field')[0], 'ref_1')
+        self.assertEqual(best('кнопка отправки'), ['ref_4'])
+        self.assertEqual(best('login link'), ['ref_3'])
+        self.assertEqual(best('ссылка войти'), ['ref_3'])
+        self.assertEqual(best('кнопку'), ['ref_2', 'ref_4'])
+        self.assertEqual(best('mango'), ['ref_6'])
+        self.assertEqual(best('the'), [])
+        self.assertEqual(best('checkout'), [])
+        self.assertEqual(len(page_input.find_matches('\n'.join('- link "Item %d" [ref_%d]' % (i, i) for i in range(1, 99)), 'item', 5)), 5)
+
+    def test_find_tool_reads_the_whole_tree(self):
+        self.page.model['read'] = {'kind': 'page_tree', 'tree': '- button "Pay now" [ref_9]', 'truncated': True}
+        result = self.browser.find('owner', 'pay button')
+        self.assertEqual([m['ref'] for m in result['matches']], ['ref_9'])
+        self.assertIn('partial', result)
+        self.assertEqual(self.page.requests[-1]['filter'], 'all')
+        self.assertIn('hint', self.browser.find('owner', 'nothing like this'))
+        with self.assertRaises(Rejected):
+            self.browser.find('owner', '')
+
+    def test_dialog_in_a_frame_is_answered_in_its_session(self):
+        routed = []
+        original = self.page.send
+
+        def send(method, params=None, seconds=None, interrupt=None, session=None):
+            routed.append((method, session))
+            if method == 'Page.handleJavaScriptDialog':
+                return {}
+            return original(method, params, seconds, interrupt, session)
+        self.page.send = send
+        self.browser.note_event(self.page, {'method': 'Page.javascriptDialogOpening', 'sessionId': 'child',
+                                            'params': {'type': 'confirm', 'message': 'Remove card?', 'url': 'https://pay.test/'}})
+        self.assertTrue(self.browser.dialog[1]['inFrame'])
+        with self.assertRaises(Rejected):
+            self.browser.read('owner')
+        self.browser.input('owner', 'dialog', 'dialog-frame-1', 'https://pay.test/', value='accept')
+        self.assertIn(('Page.handleJavaScriptDialog', 'child'), routed)
+        self.assertIsNone(self.browser.dialog)
+        # A detached frame takes its dialog with it.
+        self.browser.frames = {'F' * 32: {'session': 'child', 'parent': None, 'url': ''}}
+        self.browser.note_event(self.page, {'method': 'Page.javascriptDialogOpening', 'sessionId': 'child', 'params': {'type': 'alert'}})
+        self.browser.note_event(self.page, {'method': 'Target.detachedFromTarget', 'params': {'sessionId': 'child'}})
+        self.assertIsNone(self.browser.dialog)
+
+    def test_coordinate_click_inside_a_frame_is_classified_there(self):
+        self.browser.frames = {'F' * 32: {'session': 'child', 'parent': None, 'url': ''}}
+        original = self.page.send
+        classified = []
+
+        def send(method, params=None, seconds=None, interrupt=None, session=None):
+            if method == 'Runtime.evaluate' and '"op": "classify"' in params['expression']:
+                request = json.loads(params['expression'][len(server.PAGE_TREE) + 3:-1])
+                classified.append((session, request['x'], request['y']))
+                self.page.sent.append((method, params))
+                return {'result': {'value': {'risk': 'submit'} if session == 'child' else {'risk': None, 'crossFrame': True}}}
+            if method == 'DOM.getFrameOwner':
+                return {'backendNodeId': 5}
+            if method == 'DOM.resolveNode':
+                return {'object': {'objectId': 'iframe-1'}}
+            if method == 'Runtime.callFunctionOn':
+                self.assertFalse(params['arguments'][0]['value'])  # Classifying never scrolls.
+                return {'result': {'value': {'x': 100, 'y': 100, 'width': 400, 'height': 300, 'scrolled': False}}}
+            return original(method, params, seconds, interrupt, session)
+        self.page.send = send
+        self.browser.screenshot('owner')  # 640x400 image of a 1280x800 viewport.
+        with self.assertRaises(Rejected) as raised:
+            self.browser.input('owner', 'click', x=150, y=100)  # CSS (300, 200): inside the frame.
+        self.assertIn('expectedURL', str(raised.exception))
+        self.assertEqual(classified, [(None, 300, 200), ('child', 200, 100)])
+        self.assertEqual(self.browser.input('owner', 'click', 'frame-click-1', self.url, x=150, y=100)['risk'], 'submit')
 
 
 class WebSocketTests(unittest.TestCase):

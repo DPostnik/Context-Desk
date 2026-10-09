@@ -72,6 +72,10 @@ attaches files from the chat's project directory to a file field by ref.
 `browser_eval` runs JavaScript once (journaled, expectedURL required) and returns the
 last expression's value; `browser_logs` lists the tab's console messages or network
 requests collected by Chrome DevTools.
+`browser_find` returns refs for a short description ("submit button", "ссылка войти"),
+matching words against roles, labels, values and link addresses across the tree and
+its frames (lexical, not semantic). Dialogs raised inside frames and coordinate clicks
+on a frame's submit buttons follow the same rules as on the page itself.
 
 ## Русский
 
@@ -150,6 +154,10 @@ iframe с других сайтов читаются и управляются �
 JavaScript (с записью в журнал и обязательным expectedURL) и возвращает значение
 последнего выражения; `browser_logs` показывает сообщения консоли или сетевые запросы
 вкладки, собранные Chrome DevTools.
+`browser_find` возвращает ref по короткому описанию («кнопка отправки», «login link»),
+сопоставляя слова с ролями, подписями, значениями и адресами ссылок во всём дереве
+и фреймах (по словам, не по смыслу). Диалоги внутри фреймов и клики по координатам
+на кнопках отправки во фреймах подчиняются тем же правилам, что и на самой странице.
 
 ## Development contract
 
