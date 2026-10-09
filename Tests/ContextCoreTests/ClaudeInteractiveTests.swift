@@ -61,7 +61,9 @@ private func interactiveFixture(_ root: URL) throws -> URL {
             print(json.dumps({'type':'result','subtype':'error_during_execution','is_error':True,'result':'boom','usage':usage,'permission_denials':[]})); sys.exit(1)
         print(json.dumps({'type':'result','subtype':'success','is_error':False,'result':json.dumps(value),'structured_output':value,'usage':usage,'permission_denials':[]})); sys.exit(0)
     browser='--mcp-config' in sys.argv and 'context_desk_browser' in sys.argv[sys.argv.index('--mcp-config')+1]
-    assert ('--safe-mode' in sys.argv) != browser and '--setting-sources' in sys.argv and '--strict-mcp-config' in sys.argv
+    full=sys.argv[sys.argv.index('--permission-mode')+1]=='bypassPermissions'
+    assert ('--safe-mode' in sys.argv) == (not browser and not full) and '--setting-sources' in sys.argv
+    assert ('--strict-mcp-config' in sys.argv) != full and ('--settings' in sys.argv) == full
     assert '--append-system-prompt' in sys.argv
     assert len(sys.argv[sys.argv.index('--append-system-prompt')+1]) > 100
     assert sys.argv[sys.argv.index('--setting-sources')+1] == ''
@@ -80,13 +82,13 @@ private func interactiveFixture(_ root: URL) throws -> URL {
         elif value['type']=='user':
             record=json.loads((home/'contextdesk-sessions'/(sid+'.json')).read_text())
             assert record['active'] and record['sent']
-            with (home/'submitted').open('a') as f: f.write(json.dumps({'prompt':value['message']['content'],'args':sys.argv,'env':{k:os.environ.get(k) for k in ['MCP_TIMEOUT','MCP_TOOL_TIMEOUT','CLAUDE_CODE_DISABLE_CLAUDE_MDS','CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES']}})+'\n')
+            with (home/'submitted').open('a') as f: f.write(json.dumps({'prompt':value['message']['content'],'args':sys.argv,'env':{k:os.environ[k] for k in ['MCP_TIMEOUT','MCP_TOOL_TIMEOUT','CLAUDE_CODE_DISABLE_CLAUDE_MDS','CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES','MCP_CONNECTION_NONBLOCKING'] if k in os.environ}})+'\n')
             prompt=value['message']['content']
             if prompt=='broken': print('invalid-json',flush=True); continue
             if prompt=='unknown': out({'type':'control_request','request_id':'unknown','request':{'subtype':'unexpected_action'}}); continue
             if prompt=='wait': continue
-            if prompt in ['approval','question','outside']:
-                name='AskUserQuestion' if prompt=='question' else 'Write'
+            if prompt in ['approval','question','outside','connector']:
+                name='AskUserQuestion' if prompt=='question' else 'mcp__claude_ai_Gmail__send_message' if prompt=='connector' else 'Write'
                 args={'questions':[{'question':'Choose','options':[{'label':'Yes'},{'label':'No'}]}]} if prompt=='question' else {'file_path':'/outside-project/file' if prompt=='outside' else str(pathlib.Path.cwd()/'fixture.txt'),'content':'content'}
                 out({'type':'control_request','request_id':'permission','request':{'subtype':'can_use_tool','tool_name':name,'input':args}})
                 continue
@@ -118,9 +120,10 @@ private func waitFor(_ condition: @escaping () async -> Bool) async throws {
     }
     throw ClientFailure("Fixture timed out")
 }
-private func interactiveRequest(context: AgentContext, root: URL, session: AgentSessionReference? = nil, prompt: String = "hello", id: UUID = UUID()) -> AgentExecutionRequest {
-    .init(id: id, conversation: ConversationID(), session: session, kind: .interactive, prompt: prompt,
-          projectPath: root.path, permissions: .workspaceWrite(root: root.path, network: false, approval: .ask),
+private func interactiveRequest(context: AgentContext, root: URL, session: AgentSessionReference? = nil, prompt: String = "hello", id: UUID = UUID(),
+                                fullAccess: Bool = false) -> AgentExecutionRequest {
+    .init(id: id, conversation: ConversationID(), session: session, kind: .interactive, prompt: prompt, projectPath: root.path,
+          permissions: fullAccess ? .unrestricted(approval: .never) : .workspaceWrite(root: root.path, network: false, approval: .ask),
           model: .init(context: context, model: ""), route: .direct)
 }
 
@@ -288,6 +291,47 @@ private func interactiveRequest(context: AgentContext, root: URL, session: Agent
     let reply = try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: home.appendingPathComponent("answer")))["response"]["response"]
     #expect(reply["behavior"].string == (prompt == "outside" ? "deny" : "allow"))
     if prompt == "question" { #expect(reply["updatedInput"]["answers"]["Choose"].string == "Yes") }
+    await adapter.disconnect()
+}
+
+@Test func claudeFullAccessLoadsAccountConnectorsAndAsksBeforeTheirActions() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let binary = try interactiveFixture(root), home = root.appendingPathComponent("home")
+    let adapter = ClaudeIntegration(), events = ClaudeEvents()
+    let reader = Task { for await event in adapter.events { await events.append(event) } }
+    defer { reader.cancel() }
+    let descriptor = try await adapter.connect(.init(executable: binary, home: home)).value()
+    let session = try await adapter.prepare(interactiveRequest(context: descriptor.context, root: root, fullAccess: true)).value()
+    _ = try await adapter.submit(interactiveRequest(context: descriptor.context, root: root, session: session, prompt: "connector", fullAccess: true)).value()
+    try await waitFor {
+        let action = await events.interaction(), completion = await events.completion()
+        return action != nil || completion != nil
+    }
+    let interaction = try #require(await events.interaction())
+    #expect(interaction.reason == "mcp__claude_ai_Gmail__send_message")
+    _ = try await adapter.answer(interaction.id, session: session, context: descriptor.context, response: .deny).value()
+    try await waitFor { await events.completion() != nil }
+    let reply = try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: home.appendingPathComponent("answer")))["response"]["response"]
+    #expect(reply["behavior"].string == "deny")
+    let record = try #require(JSONSerialization.jsonObject(with: Data(try String(contentsOf: home.appendingPathComponent("submitted"), encoding: .utf8)
+        .split(separator: "\n")[0].utf8)) as? [String: Any])
+    let args = try #require(record["args"] as? [String])
+    #expect(!args.contains("--strict-mcp-config") && !args.contains("--safe-mode") && args.contains("--disable-slash-commands"))
+    let settings = try JSONDecoder().decode(JSONValue.self, from: Data(args[try #require(args.firstIndex(of: "--settings")) + 1].utf8))
+    let rules = settings["permissions"]["ask"].array.compactMap(\.string)
+    #expect(rules.contains("mcp__claude_ai_*__*send*") && rules.contains("mcp__claude_ai_*__*trash*") && !rules.contains { $0.contains("search") })
+    #expect(record["env"] as? [String: String] == ["MCP_TIMEOUT": "30000", "MCP_TOOL_TIMEOUT": "90000", "CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1",
+                                                      "CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES": "1", "MCP_CONNECTION_NONBLOCKING": "false"])
+    // The same chat in standard access launches without connectors; their requests fail closed.
+    _ = try await adapter.prepare(interactiveRequest(context: descriptor.context, root: root, session: session)).value()
+    _ = try await adapter.submit(interactiveRequest(context: descriptor.context, root: root, session: session, prompt: "connector")).value()
+    try await waitFor { await events.completionCount() == 2 }
+    let standard = try String(contentsOf: home.appendingPathComponent("submitted"), encoding: .utf8).split(separator: "\n")
+    try #require(standard.count == 2)
+    #expect(standard[1].contains("--strict-mcp-config") && standard[1].contains("--safe-mode"))
+    let denied = try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: home.appendingPathComponent("answer")))["response"]["response"]
+    #expect(denied["behavior"].string == "deny" && denied["message"].string == L10n.text("Неподдерживаемый запрос", "Unsupported request"))
     await adapter.disconnect()
 }
 

@@ -222,7 +222,8 @@ public actor ClaudeIntegration: AgentIntegration {
                                                    projectInstructions: ProjectInstructions.prompt(projectPath: record.cwd), browserServer: server)
                 var environment = ClaudeProfile.environment(home: home).merging(Self.sessionEnvironment) { _, new in new }
                 // Same startup/tool limits as the Codex MCP entry (30 s / 90 s).
-                if server != nil { environment.merge(Self.browserEnvironment) { _, new in new } }
+                if server != nil || expectedAccess == .fullAccess { environment.merge(Self.browserEnvironment) { _, new in new } }
+                if expectedAccess == .fullAccess { environment.merge(Self.connectorEnvironment) { _, new in new } }
                 try await wire.start(executable: executable, arguments: arguments, environment: environment, cwd: URL(fileURLWithPath: record.cwd))
                 wires[id] = wire
                 if let grant { wireGrants[id] = grant; try profiles.acknowledge(grant, session: reference(id)) }
@@ -254,14 +255,38 @@ public actor ClaudeIntegration: AgentIntegration {
     static let sessionEnvironment = ["CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES": "1"]
     /// `--safe-mode` would also drop `--mcp-config` servers, so browser chats spell out its isolation instead.
     static let browserEnvironment = ["MCP_TIMEOUT": "30000", "MCP_TOOL_TIMEOUT": "90000", "CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1"]
+    /// Full-access chats wait for claude.ai connectors so the first turn already has them.
+    static let connectorEnvironment = ["MCP_CONNECTION_NONBLOCKING": "false"]
+    /// claude.ai connector tools are `mcp__claude_ai_<Connector>__<tool>`.
+    static let connectorToolPrefix = "mcp__claude_ai_"
+    /// Connector actions that send, change or delete data still need approval in full-access chats;
+    /// `ask` rules hold even under bypassPermissions. Reads (search/get/list) run without a prompt.
+    static let connectorApprovalRules: [String] = {
+        let anywhere = ["send", "forward", "reply", "create", "update", "delete", "trash", "remove", "move", "archive", "publish",
+                        "share", "upload", "insert", "invite", "comment", "duplicate", "rename", "spam", "respond", "unlabel",
+                        "mark", "post", "edit", "write", "submit"]
+        let leading = ["label", "apply", "add", "set"]
+        return anywhere.map { connectorToolPrefix + "*__*" + $0 + "*" } + leading.map { connectorToolPrefix + "*__" + $0 + "*" }
+    }()
     static func arguments(id: String, resumed: Bool, access: AccessMode, model: String, effort: String?,
                           projectInstructions: String? = nil, browserServer: [String]? = nil) throws -> [String] {
+        // Only full-access chats (network allowed) load the account's claude.ai connectors such as Gmail.
+        let connectors = access == .fullAccess
         var args = ["--print", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
-                    "--permission-prompt-tool", "stdio", "--setting-sources", "", "--strict-mcp-config"]
+                    "--permission-prompt-tool", "stdio", "--setting-sources", ""]
+        if !connectors { args.append("--strict-mcp-config") }
         if let browserServer {
             // Only the app's browser server; its tools run without a prompt, like scheduled runs.
             args += ["--disable-slash-commands"] + (try ClaudeJobRunner.browserArguments(browserServer))
+        } else if connectors {
+            // `--safe-mode` would also drop claude.ai connectors, so its isolation is spelled out as in browser chats.
+            args += ["--disable-slash-commands", "--mcp-config", "{\"mcpServers\":{}}"]
         } else { args += ["--safe-mode", "--mcp-config", "{\"mcpServers\":{}}"] }
+        if connectors {
+            let settings: JSONValue = .object(["permissions": .object(["ask": .array(connectorApprovalRules.map(JSONValue.string))])])
+            let encoder = JSONEncoder(); encoder.outputFormatting = [.withoutEscapingSlashes, .sortedKeys]
+            args += ["--settings", String(decoding: try encoder.encode(settings), as: UTF8.self)]
+        }
         args += [resumed ? "--resume" : "--session-id", id]
         if access == .standard {
             args += ["--restricted", "--tools", "Read,Glob,Grep,Write,Edit,AskUserQuestion", "--permission-mode", "default"]
@@ -386,8 +411,9 @@ public actor ClaudeIntegration: AgentIntegration {
         guard seenRequests[id, default: []].insert(requestID).inserted else { await wire.close(); return }
         let request = value["request"], input = request["input"], name = request["tool_name"].string ?? ""
         guard request["subtype"].string == "can_use_tool" else { await wire.close(); return }
+        let connector = sessions[id]?.access == .fullAccess && name.hasPrefix(Self.connectorToolPrefix)
         guard let turn = sessions[id]?.active,
-              ["Read", "Glob", "Grep", "Write", "Edit", "Bash", "AskUserQuestion"].contains(name) else {
+              connector || ["Read", "Glob", "Grep", "Write", "Edit", "Bash", "AskUserQuestion"].contains(name) else {
             try? await respond(wire, requestID: requestID, response: .object(["behavior": .string("deny"), "message": .string(L10n.text("Неподдерживаемый запрос", "Unsupported request"))]))
             return
         }
