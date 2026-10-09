@@ -475,7 +475,12 @@ private func interactiveRequest(context: AgentContext, root: URL, session: Agent
     #expect(model.canGenerateSummary(claude.id) && !model.canGenerateSummary(codex.id))
     #expect(model.generationRunner(for: claude.id) === model.claudeSummaryRunner)
     #expect(model.generationEnvironment(for: claude.id, workspace: "w").home == model.claudeHome)
+    // An idle chat waiting for background tasks says so and holds a restart until its agent resumes.
+    await model.receive(.init(session: claude.nativeSession, payload: .background(tasks: 2)))
+    #expect(model.backgroundWaitNotice(claude.id)?.contains("2") == true && model.backgroundWaitNotice(codex.id) == nil)
+    #expect(model.restartBlockers.contains(L10n.text("Ждёт фоновые задачи: ", "Waiting for background tasks: ") + "Claude"))
     await model.receive(.init(session: claude.nativeSession, payload: .started(turn: "claude-turn")))
+    #expect(model.backgroundWaits.isEmpty && model.backgroundWaitNotice(claude.id) == nil)
     await model.receive(.init(session: codex.nativeSession, payload: .started(turn: "codex-turn")))
     await model.receive(.init(session: nil, payload: .disconnected))
     #expect(model.isBusy(threadID: claude.id))

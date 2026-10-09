@@ -135,7 +135,7 @@ private struct ChatRunState {
     @Published private(set) var isBootstrapping = true
     @Published private var runs: [String: ChatRunState] = [:]
     /// Idle chats whose agent still runs background tasks and will resume on its own; thread ID -> task count.
-    private var backgroundWaits: [String: Int] = [:]
+    @Published private(set) var backgroundWaits: [String: Int] = [:]
     @Published private(set) var deletingChatIDs: Set<String> = []
     @Published private(set) var archivingChatIDs: Set<String> = []
     func isChangingChat(_ id: String) -> Bool { deletingChatIDs.contains(id) || archivingChatIDs.contains(id) || configuringRemoteChats.contains(id) || configuringBrowserChats.contains(id) }
@@ -151,6 +151,12 @@ private struct ChatRunState {
     var priorityMessageID: String? { runs[currentRunKey]?.priorityMessageID }
     var anyBusy: Bool { preparingHandoff || creatingHandoff || jobLedger.runs.contains { $0.status.active } || summaryTask != nil || !deletingChatIDs.isEmpty || !archivingChatIDs.isEmpty || runs.values.contains { $0.running || $0.sending } }
     func isBusy(threadID: String) -> Bool { runs[threadID]?.running == true }
+    /// An idle chat whose agent will continue on its own once its background tasks finish.
+    func backgroundWaitNotice(_ threadID: String) -> String? {
+        guard !isBusy(threadID: threadID), let count = backgroundWaits[threadID] else { return nil }
+        return L10n.text("Агент ждёт фоновые задачи (\(count)) и продолжит сам, когда они завершатся. Писать можно как обычно.",
+                         "The agent is waiting for background tasks (\(count)) and will continue on its own when they finish. You can still write as usual.")
+    }
     private var turnStarts: [String: Date] = [:]
     private var tokenTotals: [String: TokenCounters] = [:]
     private var turnTokens: [String: ResponseTokenTracker] = [:]

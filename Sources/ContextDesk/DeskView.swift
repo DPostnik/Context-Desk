@@ -524,6 +524,10 @@ struct DeskView: View {
                         .accessibilityLabel(L10n.text("Непрочитанный ответ", "Unread response"))
                 }
                 if model.isBusy(threadID: chat.id) { ProgressView().controlSize(.small) }
+                else if let notice = model.backgroundWaitNotice(chat.id) {
+                    Image(systemName: "hourglass").font(.caption).foregroundStyle(.secondary)
+                        .help(notice).accessibilityLabel(notice)
+                }
             }.font(.callout).padding(.horizontal, 16).padding(.vertical, 4)
                 .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
     }
@@ -659,6 +663,11 @@ struct ChatView: View {
             }
             if let chat = model.selectedChat, chat.isScheduledRecord, !model.selectedChatIsArchived {
                 Label(DeskModel.scheduledRecordFollowUpNotice, systemImage: "clock.arrow.circlepath")
+                    .font(.callout).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 24).padding(.vertical, 8)
+            }
+            if let chat = model.selectedChat, let notice = model.backgroundWaitNotice(chat.id) {
+                Label(notice, systemImage: "hourglass")
                     .font(.callout).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 24).padding(.vertical, 8)
             }
