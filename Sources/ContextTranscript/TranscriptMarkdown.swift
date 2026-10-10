@@ -283,12 +283,42 @@ final class TableBox: NSObject {
         let control = NSMutableAttributedString(attributedString: view.copyControl(
             feedback: feedback, description: L10n.text("Скопировать текст блока", "Copy the block text"),
             label: L10n.text("Копировать", "Copy"), attributes: controlAttributes))
-        // Keep the control paragraph aligned as one unit, including its newline.
-        control.append(NSAttributedString(string: "\n", attributes: controlAttributes))
-        append(control, to: result, style: paragraph(indent + pad, tail - pad) {
-            $0.alignment = .right; $0.lineSpacing = 0
-        }, after: 2, before: 10)
-        renderBlocks(text, into: result, indent: indent + pad, tail: tail - pad)
+        var body = NSMutableAttributedString()
+        renderBlocks(text, into: body, indent: indent + pad, tail: tail - pad)
+        // The control sits at the trailing edge of the first line when that line leaves room for it;
+        // otherwise it gets its own row above the text so it never overlaps the text.
+        let string = body.string as NSString
+        let first = string.paragraphRange(for: NSRange(location: 0, length: 0))
+        let content = NSRange(location: first.location, length: max(0, first.length - 1))
+        let available = width - 10 - (indent + pad) + (tail - pad)
+        let lineWidth = body.attributedSubstring(from: content).size().width
+        if body.length > 0, !string.substring(with: content).contains("\t"),
+           lineWidth + control.size().width + 24 <= available,
+           let style = (body.attribute(.blockParagraphStyle, at: first.location, effectiveRange: nil) as? NSParagraphStyle)?
+               .mutableCopy() as? NSMutableParagraphStyle {
+            let font = content.length > 0 ? body.attribute(.font, at: content.location, effectiveRange: nil) ?? self.body[.font]! : self.body[.font]!
+            let inline = NSMutableAttributedString(string: "\t", attributes: [.font: font])
+            inline.append(control)
+            body.insert(inline, at: NSMaxRange(content))
+            let line = NSRange(location: first.location, length: first.length + inline.length)
+            body.addAttributes([.paragraphStyle: style, .blockParagraphStyle: style, .rightTabInset: -(tail - pad)], range: line)
+            // Spacing before a paragraph is outside the card's drawn area; a short spacer row pads the top.
+            let spacer = paragraph(indent + pad, tail - pad) { $0.minimumLineHeight = 12; $0.maximumLineHeight = 12; $0.lineSpacing = 0; $0.paragraphSpacingBefore = 8 }
+            body.insert(NSAttributedString(string: "\n", attributes: [.font: NSFont.systemFont(ofSize: 4),
+                                                                      .paragraphStyle: spacer, .blockParagraphStyle: spacer]), at: 0)
+        } else {
+            // Keep the control paragraph aligned as one unit, including its newline.
+            control.append(NSAttributedString(string: "\n", attributes: controlAttributes))
+            let spacer = paragraph(indent + pad, tail - pad) { $0.minimumLineHeight = 8; $0.maximumLineHeight = 8; $0.lineSpacing = 0; $0.paragraphSpacingBefore = 8 }
+            let header = NSMutableAttributedString(string: "\n", attributes: [.font: NSFont.systemFont(ofSize: 4),
+                                                                              .paragraphStyle: spacer, .blockParagraphStyle: spacer])
+            append(control, to: header, style: paragraph(indent + pad, tail - pad) {
+                $0.alignment = .right; $0.lineSpacing = 0
+            }, after: 2)
+            header.append(body)
+            body = header
+        }
+        result.append(body)
         trimTrailingSpacing(result, from: start, to: 0)
         result.addAttribute(.quoteCard, value: index, range: NSRange(location: start, length: result.length - start))
         appendSpacer(to: result, height: 20)

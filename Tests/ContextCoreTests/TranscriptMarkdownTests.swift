@@ -279,3 +279,38 @@ $ swift test
     let remote = location(of: "Remote", in: view)
     #expect((storage.attribute(.link, at: remote, effectiveRange: nil) as? URL)?.absoluteString == "https://example.com/x.png")
 }
+
+@Test @MainActor func quoteCopySharesTheFirstLineWhenItFits() throws {
+    let long = String(repeating: "Длинная первая строка письма ", count: 6)
+    let view = renderedView("> Короткая строка.\n>\n> Вторая.\n\n> \(long)\n> Дальше.", width: 760)
+    let storage = try #require(view.transcript.textStorage)
+    var controls: [Int] = []
+    storage.enumerateAttribute(NSAttributedString.Key("ContextDeskQuoteCopy"), in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+        if value != nil { controls.append(range.location) }
+    }
+    try #require(controls.count == 2)
+    let string = storage.string as NSString
+    // Short first line: the control ends the same paragraph as the text.
+    #expect(string.substring(with: string.paragraphRange(for: NSRange(location: controls[0], length: 0))).hasPrefix("Короткая строка."))
+    // Long first line: the control keeps its own row above the text.
+    #expect(!string.substring(with: string.paragraphRange(for: NSRange(location: controls[1], length: 0))).contains("Длинная"))
+    let pasteboard = NSPasteboard.withUniqueName()
+    defer { pasteboard.releaseGlobally() }
+    let copying = renderedView("> Короткая строка.\n>\n> Вторая.", pasteboard: pasteboard)
+    var control = 0
+    copying.transcript.textStorage!.enumerateAttribute(NSAttributedString.Key("ContextDeskQuoteCopy"),
+                                                       in: NSRange(location: 0, length: copying.transcript.textStorage!.length)) { value, range, stop in
+        if value != nil { control = range.location; stop.pointee = true }
+    }
+    _ = copying.textView(copying.transcript, clickedOnLink: "contextdesk-quote-copy", at: control)
+    #expect(pasteboard.string(forType: .string) == "Короткая строка.\n\nВторая.")
+    for width: CGFloat in [760, 380] {
+        view.frame.size.width = width
+        view.layoutSubtreeIfNeeded()
+        let manager = try #require(view.transcript.layoutManager)
+        let container = try #require(view.transcript.textContainer)
+        manager.ensureLayout(for: container)
+        #expect(manager.usedRect(for: container).maxX <= container.containerSize.width + 1)
+        try writeRender(view, name: "quote-\(Int(width))")
+    }
+}
