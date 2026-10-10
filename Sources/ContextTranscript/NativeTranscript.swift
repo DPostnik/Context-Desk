@@ -357,6 +357,23 @@ public struct NativeTranscript: NSViewRepresentable {
 
     // Each user message starts a new activity group. Assistant commentary stays
     // visible; all tool entries for that request share one disclosure row.
+    /// One readable line for the running action. A Claude tool call arrives as its name
+    /// and JSON input; show the name and its most telling field instead of raw JSON.
+    nonisolated public static func activityHeadline(_ text: String, limit: Int = 120) -> String {
+        var line = text
+        let parts = text.split(separator: "\n", maxSplits: 1).map(String.init)
+        if parts.count == 2, !parts[0].contains(" "),
+           let data = parts[1].data(using: .utf8),
+           let input = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], !input.isEmpty {
+            let keys = ["description", "command", "file_path", "path", "pattern", "url", "query", "prompt", "expression"]
+            let value = keys.lazy.compactMap { input[$0] as? String }.first { !$0.isEmpty }
+            line = value.map { parts[0] + " · " + $0 } ?? parts[0]
+        }
+        line = line.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }.joined(separator: " ")
+        return line.count > limit ? String(line.prefix(limit - 1)) + "…" : line
+    }
+
     private static func groupActivities(_ items: [TranscriptItem], isWorking: Bool) -> [TranscriptItem] {
         var result: [TranscriptItem] = []
         var segment: [TranscriptItem] = []
@@ -384,7 +401,7 @@ public struct NativeTranscript: NSViewRepresentable {
                 guard !inserted, let first = actions.first, let last = actions.last else { continue }
                 inserted = true
                 let summary = active
-                    ? L10n.text("Сейчас: ", "Now: ") + String(last.text.prefix(120)).replacingOccurrences(of: "\n", with: " ")
+                    ? L10n.text("Сейчас: ", "Now: ") + Self.activityHeadline(last.text)
                     : L10n.text("Действия \(first.agentName ?? "Codex") · \(actions.count)", "\(first.agentName ?? "Codex") actions · \(actions.count)")
                 result.append(TranscriptItem(id: first.id, kind: "activity", text: actions.enumerated().map {
                     "\($0.offset + 1). \($0.element.text)"

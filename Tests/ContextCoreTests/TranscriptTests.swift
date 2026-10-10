@@ -448,3 +448,11 @@ import ContextTranscript
     #expect(view.transcript.string.contains("Claude"))
     #expect(!view.transcript.string.contains("Codex"))
 }
+
+@Test func runningActivityShowsToolCallsAsReadableLines() {
+    #expect(TranscriptScrollView.activityHeadline("Bash\n{\n  \"command\" : \"cd \\/tmp && ls\",\n  \"timeout\" : 5\n}") == "Bash · cd /tmp && ls")
+    #expect(TranscriptScrollView.activityHeadline("Read\n{\"file_path\": \"/a/b.swift\"}") == "Read · /a/b.swift")
+    #expect(TranscriptScrollView.activityHeadline("TodoWrite\n{\"todos\": []}") == "TodoWrite")
+    #expect(TranscriptScrollView.activityHeadline("Вторая команда\nвывод") == "Вторая команда вывод")
+    #expect(TranscriptScrollView.activityHeadline(String(repeating: "x", count: 200)).count == 120)
+}

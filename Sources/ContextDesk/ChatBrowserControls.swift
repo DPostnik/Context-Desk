@@ -35,6 +35,7 @@ struct ChatBrowserControls: View {
         } label: {
             Label(L10n.text("Браузер", "Browser"), systemImage: "globe")
         }
+        .menuStyle(.borderlessButton).fixedSize().pointingHandCursor()
         .disabled(operating)
         .id(session)
         .sheet(isPresented: $importingCookies) {

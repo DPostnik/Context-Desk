@@ -135,6 +135,7 @@ struct NewChatBrowserProfilePicker: View {
         } label: {
             Label(selection.flatMap { id in profiles.first { $0.id == id }?.name } ?? L10n.text("Отдельный браузер", "Separate browser"), systemImage: "globe")
         }
+        .menuStyle(.borderlessButton).fixedSize().pointingHandCursor()
         .onAppear { reload() }
         .onChange(of: project) { _, _ in reload() }
         .onChange(of: connection) { _, _ in reload() }

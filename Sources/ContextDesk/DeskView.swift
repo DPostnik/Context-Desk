@@ -131,11 +131,12 @@ struct DeskView: View {
                         }.buttonStyle(PointerButtonStyle(base: .plain))
                     }.padding(.horizontal, 12).padding(.bottom, 8)
                 }
+                DeskPalette.border.frame(height: 0.5)
                 if !selection.isEmpty { selectionBar }
                 Button { limitsPlacement = limitsAnchor.placement; showingLimits = true } label: {
                     Label(L10n.text("Usage и лимиты", "Usage and limits"), systemImage: "chart.bar")
                         .frame(maxWidth: .infinity, alignment: .leading)
-                }.buttonStyle(DeskButtonStyle()).background(ScreenFrameReader(probe: limitsAnchor)).padding(.horizontal, 12)
+                }.buttonStyle(DeskButtonStyle()).background(ScreenFrameReader(probe: limitsAnchor)).padding(.horizontal, 12).padding(.top, 10)
                     .popover(isPresented: $showingLimits, arrowEdge: limitsPlacement.edge) {
                         AccountLimitsView(model: model, maxListHeight: limitsPlacement.listHeight)
                     }
@@ -590,12 +591,10 @@ struct ChatView: View {
     @State private var handoff: ContextHandoff?
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Image(systemName: "folder")
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(model.selectedProject?.name ?? "").font(.callout.weight(.semibold))
-                    Text(model.selectedProject?.path ?? "").font(.caption2).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
-                }
+            HStack(spacing: 12) {
+                Label(model.selectedProject?.name ?? "", systemImage: "folder")
+                    .font(.callout.weight(.semibold)).lineLimit(1)
+                    .help(model.selectedProject?.path ?? "")
                 Spacer()
                 if let chat = model.selectedChat {
                     if model.state.browserEnabled == true, let session = chat.nativeSession,
@@ -612,16 +611,16 @@ struct ChatView: View {
                         Text(model.handoffProgress).font(.caption).lineLimit(1)
                         Button(L10n.text("Отмена", "Cancel")) { Task { await model.cancelHandoffPreparation() } }
                     }
-                    Button(L10n.text("Передать контекст…", "Hand off context…")) {
-                        Task { handoff = await model.prepareHandoff(chat) }
-                    }.disabled(model.loadingChat || model.creatingHandoff || model.preparingHandoff || model.isBusy(threadID: chat.id))
+                    Button { Task { handoff = await model.prepareHandoff(chat) } } label: {
+                        Label(L10n.text("Передать контекст…", "Hand off context…"), systemImage: "arrowshape.turn.up.right")
+                    }.buttonStyle(.borderless).pointingHandCursor().disabled(model.loadingChat || model.creatingHandoff || model.preparingHandoff || model.isBusy(threadID: chat.id))
                 } else if model.state.browserEnabled == true, [.originalCodex, .appClaude].contains(model.currentAgent), let project = model.selectedProject {
                     NewChatBrowserProfilePicker(project: project.path, connection: model.currentAgent, ownerNames: model.browserProfileOwnerNames, selection: Binding(
                         get: { model.newChatBrowserProfiles[project.id] },
                         set: { model.newChatBrowserProfiles[project.id] = $0 }))
                         .disabled(model.sending)
                 }
-            }.padding(.horizontal, 24).padding(.vertical, 12)
+            }.padding(.horizontal, 24).padding(.vertical, 10)
                 .overlay(alignment: .bottom) { DeskPalette.border.frame(height: 0.5) }
             if !model.currentAgentAuthenticated {
                 HStack {
@@ -633,10 +632,6 @@ struct ChatView: View {
                         Button(L10n.text("Проверить вход", "Check sign-in")) { Task { await model.refreshClaudeAccount() } }
                     }
                 }.padding()
-            }
-            if model.currentAgent == .appClaude {
-                Text(L10n.text("Claude: стандартный режим — только файлы проекта, без команд и сети. Полный доступ разрешает команды и сеть. Плагины, браузер и метрики пока недоступны.", "Claude: standard mode allows project files only, without commands or network. Full access allows commands and network. Plugins, browser and metrics are not available yet."))
-                    .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 24).padding(.vertical, 6)
             }
             if let notice = model.localHistoryNotice {
                 Text(notice).font(.caption).foregroundStyle(.secondary)
@@ -723,7 +718,9 @@ struct ChatView: View {
                         if model.selectedChat != nil { Text(model.projectAccessTitle).tag(Optional<AccessMode>.none) }
                         ForEach(AccessMode.allCases, id: \.self) { mode in Text(mode.title).tag(Optional(mode)) }
                     }.pointingHandCursor().labelsHidden().fixedSize().disabled(model.busy || model.sending)
-                        .help(L10n.text("В новом чате задаёт режим по умолчанию для проекта; в существующем — переопределение этого чата. Полный доступ: команды, файлы и сеть без подтверждений агента. Применяется со следующего сообщения.", "In a new chat, sets the project default; in an existing chat, overrides its permissions. Full access allows commands, files, and network access without agent approvals. Applies from the next message."))
+                        .help(model.currentAgent == .appClaude
+                            ? L10n.text("Claude: стандартный режим — только файлы проекта, без команд и сети. Полный доступ разрешает команды и сеть. В новом чате задаёт режим по умолчанию для проекта; в существующем — переопределение этого чата. Применяется со следующего сообщения.", "Claude: standard mode allows project files only, without commands or network. Full access allows commands and network. In a new chat, sets the project default; in an existing chat, overrides its permissions. Applies from the next message.")
+                            : L10n.text("В новом чате задаёт режим по умолчанию для проекта; в существующем — переопределение этого чата. Полный доступ: команды, файлы и сеть без подтверждений агента. Применяется со следующего сообщения.", "In a new chat, sets the project default; in an existing chat, overrides its permissions. Full access allows commands, files, and network access without agent approvals. Applies from the next message."))
                     Spacer()
                     if model.chatID == nil {
                         Picker(L10n.text("Провайдер", "Provider"), selection: Binding(get: { model.currentAgent }, set: { model.selectAgent($0) })) {
@@ -732,7 +729,7 @@ struct ChatView: View {
                         }.pointingHandCursor().labelsHidden().fixedSize().disabled(model.sending)
                             .help(L10n.text("Провайдер нового чата", "Provider for the new chat"))
                     } else {
-                        Text(model.currentAgentName).font(.caption.bold())
+                        Label(model.currentAgentName, systemImage: "sparkle").font(.callout).foregroundStyle(.secondary)
                             .help(L10n.text("Провайдер этого чата", "Provider for this chat"))
                     }
                     if model.currentAgent == .appClaude {
@@ -777,7 +774,9 @@ struct ChatView: View {
                 .frame(maxWidth: .infinity).padding(.horizontal, 24).padding(.top, 10)
             }
             HStack {
-                Text(model.routeTitle(model.currentRoute)).help(model.currentAgent == .appClaude ? L10n.text("Claude работает напрямую.", "Claude works directly.") : model.routeMessage(model.currentRoute))
+                if model.currentRoute != .direct {
+                    Text(model.routeTitle(model.currentRoute)).help(model.routeMessage(model.currentRoute))
+                }
                 if !model.routeIsAvailable(model.currentRoute) {
                     Text(L10n.text("Недоступен", "Unavailable")).foregroundStyle(.orange)
                 }
