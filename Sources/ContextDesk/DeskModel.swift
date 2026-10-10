@@ -45,6 +45,7 @@ private struct ChatRunState {
     @Published var newChatBrowserProfiles: [UUID: UUID] = [:]
     /// Chat ID -> PID of its running Chrome for Testing; refreshed by `startBrowserActivityMonitor`.
     @Published var runningBrowserChats: [String: Int32] = [:]
+    @Published private(set) var composerFocusRequest: UUID?
     @Published private(set) var plugins: [ProviderPlugin] = []
     @Published private(set) var pluginIssues: [String] = []
     @Published private(set) var pluginStatuses: [String: PluginStatus] = [:]
@@ -234,10 +235,10 @@ private struct ChatRunState {
                 do { try await Task.sleep(for: .seconds(300)) } catch { return }
             }
         }
+        startBrowserActivityMonitor()
         await restoreSummaryQueue()
         for chat in state.chats where chat.hasUnreadResponse {
             let project = state.projects.first { $0.id == chat.projectID }
-        startBrowserActivityMonitor()
             notices.append(DeskNotice(threadID: chat.id, title: L10n.text("Непрочитанный ответ", "Unread response"),
                                       detail: [project?.name, chat.title].compactMap { $0 }.joined(separator: " · "),
                                       completionID: chat.unreadCompletionID))
@@ -572,13 +573,14 @@ private struct ChatRunState {
         selectionGeneration = UUID(); chatID = nil; items = []; localHistoryNotice = nil
         draft = projectID.flatMap { newChatDrafts[$0] } ?? ""
         showingJobs = false; loadingChat = false
+        composerFocusRequest = UUID()
     }
     func openChat(_ chat: Chat) async {
         guard !isChangingChat(chat.id), state.chats.contains(where: { $0.id == chat.id }) else { return }
         transcript.cancelPending()
         showingArchive = isArchived(chat.id)
         archiveViewingChat = showingArchive
-        showingJobs = false; projectID = chat.projectID; chatID = chat.id
+        showingJobs = false; projectID = chat.projectID; chatID = chat.id; composerFocusRequest = nil
         draft = chatDrafts[chat.id] ?? ""
         let generation = UUID(); selectionGeneration = generation
         defer { if selectionGeneration == generation { loadingChat = false } }

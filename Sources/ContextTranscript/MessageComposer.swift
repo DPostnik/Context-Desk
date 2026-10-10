@@ -5,12 +5,14 @@ import SwiftUI
 public struct MessageComposer: NSViewRepresentable {
     @Binding var text: String
     @Binding var focused: Bool
+    /// Each new value moves keyboard focus into the editor once.
+    let focusRequest: UUID?
     let onSubmit: () -> Void
     /// Reports the text's height so the composer can grow with what is typed.
     let onContentHeight: ((CGFloat) -> Void)?
-    public init(text: Binding<String>, focused: Binding<Bool>,
+    public init(text: Binding<String>, focused: Binding<Bool>, focusRequest: UUID? = nil,
                 onContentHeight: ((CGFloat) -> Void)? = nil, onSubmit: @escaping () -> Void) {
-        _text = text; _focused = focused; self.onSubmit = onSubmit
+        _text = text; _focused = focused; self.focusRequest = focusRequest; self.onSubmit = onSubmit
         self.onContentHeight = onContentHeight
     }
     public func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -46,9 +48,15 @@ public struct MessageComposer: NSViewRepresentable {
         editor.onSubmit = onSubmit
         editor.onContentHeight = onContentHeight
         if editor.string != text { editor.string = text }
+        if focusRequest != context.coordinator.focusRequest {
+            context.coordinator.focusRequest = focusRequest
+            // A freshly made editor is not in a window yet; focus after SwiftUI attaches it.
+            if focusRequest != nil { DispatchQueue.main.async { editor.window?.makeFirstResponder(editor) } }
+        }
     }
     public final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: MessageComposer
+        var focusRequest: UUID?
         init(_ parent: MessageComposer) { self.parent = parent }
         public func textDidChange(_ notification: Notification) {
             if let editor = notification.object as? NSTextView { parent.text = editor.string }

@@ -684,7 +684,7 @@ struct ChatView: View {
             VStack(spacing: 4) {
                 ZStack(alignment: .topLeading) {
                     if model.draft.isEmpty { Text(model.selectedChat?.isScheduledRecord == true ? L10n.text("Ответить в новом чате…", "Reply in a new chat…") : L10n.text("Напиши сообщение…", "Write a message…")).foregroundStyle(.secondary).padding(.horizontal, 21).padding(.top, 16).allowsHitTesting(false) }
-                    MessageComposer(text: $model.draft, focused: $composerFocused,
+                    MessageComposer(text: $model.draft, focused: $composerFocused, focusRequest: model.composerFocusRequest,
                                     onContentHeight: { composerHeight = $0 }) { Task { await model.send() } }
                         .frame(height: min(max(composerHeight, 40), 220)).padding(.horizontal, 16).padding(.top, 14).accessibilityLabel(L10n.text("Сообщение", "Message"))
                 }
