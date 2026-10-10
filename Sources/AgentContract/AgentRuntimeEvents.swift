@@ -21,6 +21,8 @@ public struct AgentEvent: Sendable {
         case status(turn: String?, text: String?)
         /// Background tasks an idle session's live engine still runs; the engine resumes the chat itself when they finish. Zero clears it.
         case background(tasks: Int)
+        /// Full current list of the session's sub-agents (running ones and those finished since the last user message).
+        case subagents([AgentSubagent])
     }
 }
 

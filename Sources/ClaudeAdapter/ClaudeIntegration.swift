@@ -22,6 +22,8 @@ public actor ClaudeIntegration: AgentIntegration {
     private var seenRequests: [String: Set<String>] = [:]
     /// Session -> background task IDs its live CLI reports (`background_tasks_changed`), including sub-agents.
     private var backgroundTasks: [String: Set<String>] = [:]
+    /// Session -> its sub-agents (running ones and those finished since the last user message).
+    private var subagents: [String: ClaudeSubagentTracker] = [:]
     /// Idle sessions whose CLI stays alive until its background tasks finish and the CLI resumes the agent itself.
     private var waiting: [String: UUID] = [:]
     /// Session -> launch arguments of its live CLI; a waiting CLI is reused only for an identical launch.
@@ -105,6 +107,8 @@ public actor ClaudeIntegration: AgentIntegration {
         wires.removeAll(); readers.removeAll(); interactions.removeAll(); seenRequests.removeAll()
         sessions.removeAll(); messageIDs.removeAll(); summaries.removeAll(); interrupted.removeAll(); meters.removeAll()
         backgroundTasks.removeAll(); waiting.removeAll(); wireArguments.removeAll()
+        for id in subagents.keys { sink.yield(.init(session: reference(id), payload: .subagents([]))) }
+        subagents.removeAll()
         home = nil; executable = nil; signedIn = false; accountIdentity = nil; browserResources = nil; wireGrants.removeAll()
         context = .init(connection: .appClaude, accountRevision: UUID())
     }
@@ -262,6 +266,7 @@ public actor ClaudeIntegration: AgentIntegration {
             // Turn-less report: the cumulative baseline for this turn's response tokens.
             sink.yield(.init(session: reference(id), payload: .usage(turn: nil, total: meter.total, snapshot: meter.snapshot())))
             sink.yield(.init(session: reference(id), payload: .started(turn: turn)))
+            if subagents[id]?.clearFinished() == true { publishSubagents(id) }
             emit(TranscriptItem(id: "user:" + turn, kind: "user", text: request.prompt), session: id)
             try await wire.send(.object(["type": .string("user"), "session_id": .string(id), "uuid": .string(UUID().uuidString),
                 "message": .object(["role": .string("user"), "content": .string(request.prompt)])]))
@@ -317,8 +322,26 @@ public actor ClaudeIntegration: AgentIntegration {
         // Only a documented level is forwarded; an unset value leaves the CLI default in place.
         if let level = ClaudeEffort.accepted(effort) { args += ["--effort", level.rawValue] }
         // `--setting-sources ""` also skips the project's CLAUDE.md, so project rules come in here.
-        args += ["--append-system-prompt", ([AgentAutonomy.instructions()] + [projectInstructions].compactMap { $0 }).joined(separator: "\n\n")]
+        // Only full access has the Agent tool; the guidance would be noise in restricted chats.
+        let delegation = access == .fullAccess ? delegationInstructions() : nil
+        args += ["--append-system-prompt", ([AgentAutonomy.instructions(), delegation, projectInstructions].compactMap { $0 }).joined(separator: "\n\n")]
         return args
+    }
+    /// The CLI resumes the agent after each background sub-agent, so results can be used as they arrive.
+    static func delegationInstructions(language: AppLanguage = L10n.language) -> String {
+        L10n.text(
+            """
+            Подагенты в Context Desk:
+            - Независимых подагентов запускай с `run_in_background: true`. Пользователь видит их ход в Context Desk, а ты получаешь каждый результат сразу по готовности: Context Desk держит сессию и возобновляет тебя после завершения каждого подагента. Блокирующий запуск используй только для короткой работы, без результата которой делать нечего.
+            - Решай по задаче, когда двигаться дальше. Если результат полезен сам по себе (его можно обработать, проверить, дать по нему следующий шаг), займись им сразу, не дожидаясь остальных. Если следующему шагу действительно нужны несколько результатов вместе (сравнение, объединение, общее решение), при промежуточных пробуждениях кратко отметь, что пришло и чего ещё ждёшь, и заверши ход до появления нужного набора. Начать можно и после части результатов, если её достаточно.
+            - Если пользователь указал, каких результатов ждать перед следующим шагом, следуй его указанию.
+            """,
+            """
+            Sub-agents in Context Desk:
+            - Launch independent sub-agents with `run_in_background: true`. The user follows their progress in Context Desk, and you get each result as soon as it is ready: Context Desk keeps the session alive and resumes you each time a sub-agent finishes. Use blocking sub-agents only for short work you cannot do anything without.
+            - Decide per task when to move on. If a result is useful on its own (it can be processed, checked or acted on), handle it right away without waiting for the others. If the next step genuinely needs several results together (comparison, merge, a combined decision), on intermediate resumes briefly note what arrived and what you still wait for, then end the turn until the required set is in. You may also start once a sufficient subset has arrived.
+            - If the user said which results to wait for before the next step, follow that.
+            """, language: language)
     }
     public func cancel(_ execution: AgentExecutionHandle) async -> AgentResult<AgentCancellation> {
         guard execution.context == context, let id = execution.session?.nativeID,
@@ -365,16 +388,18 @@ public actor ClaudeIntegration: AgentIntegration {
     private func receive(_ value: JSONValue, session id: String, wire: ClaudeWire) async {
         guard wires[id] === wire else { return }
         if let native = value["session_id"].string, native != id { await wire.close(); return }
+        if subagents[id, default: .init()].observe(value) { publishSubagents(id) }
         switch value["type"].string {
         case "transport_closed":
-            wires.removeValue(forKey: id); finish(id, outcome: .uncertain); abandonWait(id)
+            wires.removeValue(forKey: id); finish(id, outcome: .uncertain); abandonWait(id); stopSubagents(id)
         case "control_request": await permission(value, session: id, wire: wire)
         case "stream_event":
             guard let turn = sessions[id]?.active else { return }
             let event = value["event"], main = value["parent_tool_use_id"].string == nil
-            if event["type"].string == "message_start", let message = event["message"]["id"].string {
+            // Sub-agent messages belong to the sub-agent panel, not to the chat's own reply.
+            if event["type"].string == "message_start", main, let message = event["message"]["id"].string {
                 messageIDs[id] = message
-                if main { meters[id]?.current = message; observeUsage(event["message"]["usage"], message: message, session: id, turn: turn) }
+                meters[id]?.current = message; observeUsage(event["message"]["usage"], message: message, session: id, turn: turn)
             }
             if event["type"].string == "message_start" { status(summary(id, turn: turn) ?? Self.thinkingLabel, session: id, turn: turn) }
             if event["type"].string == "content_block_start" {
@@ -391,22 +416,21 @@ public actor ClaudeIntegration: AgentIntegration {
             if event["type"].string == "message_delta", main, let message = meters[id]?.current {
                 observeUsage(event["usage"], message: message, session: id, turn: turn)
             }
-            if event["type"].string == "content_block_delta", event["delta"]["type"].string == "text_delta",
+            if event["type"].string == "content_block_delta", main, event["delta"]["type"].string == "text_delta",
                let text = event["delta"]["text"].string, let message = messageIDs[id] {
                 sink.yield(.init(session: reference(id), payload: .delta(turn: turn, item: message, text: text)))
             }
         case "assistant":
-            guard let turn = sessions[id]?.active else { return }
+            guard let turn = sessions[id]?.active, value["parent_tool_use_id"].string == nil else { return }
             let message = value["message"], parts = message["content"].array
-            if value["parent_tool_use_id"].string == nil, let key = message["id"].string {
-                observeUsage(message["usage"], message: key, session: id, turn: turn)
-            }
+            if let key = message["id"].string { observeUsage(message["usage"], message: key, session: id, turn: turn) }
             let text = parts.filter { $0["type"].string == "text" }.compactMap { $0["text"].string }.joined(separator: "\n")
             if !text.isEmpty, let key = message["id"].string { emit(.init(id: key, kind: "assistant", text: text), session: id) }
             for part in parts where part["type"].string == "tool_use" {
                 if let key = part["id"].string { emit(.init(id: key, kind: "activity", text: (part["name"].string ?? "") + "\n" + part["input"].display), session: id) }
             }
         case "user":
+            guard value["parent_tool_use_id"].string == nil else { return }
             for part in value["message"]["content"].array where part["type"].string == "tool_result" {
                 if let key = part["tool_use_id"].string { emit(.init(id: key + ":result", kind: "activity", text: part["content"].display), session: id) }
             }
@@ -420,7 +444,7 @@ public actor ClaudeIntegration: AgentIntegration {
                 sink.yield(.init(session: reference(id), payload: .usage(turn: turn, total: meter.total, snapshot: meter.snapshot())))
             }
             finish(id, outcome: interrupted.contains(id) ? .cancelled : value["is_error"].bool == true ? .failed : .completed)
-            if keep { beginWaiting(id, wire: wire) } else { await wire.close() }
+            if keep { beginWaiting(id, wire: wire) } else { stopSubagents(id); await wire.close() }
         case "tool_use_summary":
             guard let turn = sessions[id]?.active, let text = Self.progressSummary(value["summary"].string) else { return }
             summaries[id] = (turn, text)
@@ -563,7 +587,7 @@ public actor ClaudeIntegration: AgentIntegration {
                 "Фоновые задачи Claude не завершились за отведённое время; процесс остановлен, их результат не получен. Ничего не повторялось.",
                 "Claude's background tasks did not finish in time; the process was stopped and their result was not received. Nothing was retried."))))
         }
-        wires.removeValue(forKey: id); await wire.close()
+        wires.removeValue(forKey: id); stopSubagents(id); await wire.close()
     }
     /// Starts the turn the CLI began on its own: there is no user message, and it is never resent.
     private func wake(_ id: String) {
@@ -583,8 +607,15 @@ public actor ClaudeIntegration: AgentIntegration {
     private func stopWaiting(_ id: String) {
         if waiting.removeValue(forKey: id) != nil { publishBackground(id) }
     }
+    private func publishSubagents(_ id: String) {
+        sink.yield(.init(session: reference(id), payload: .subagents(subagents[id]?.agents ?? [])))
+    }
+    private func stopSubagents(_ id: String) {
+        if subagents[id]?.stopRunning() == true { publishSubagents(id) }
+    }
     /// The CLI holding background tasks is gone before they resumed the agent.
     private func abandonWait(_ id: String) {
+        stopSubagents(id)
         guard waiting[id] != nil else { return }
         stopWaiting(id)
         sink.yield(.init(session: reference(id), payload: .diagnostic(L10n.text(
@@ -640,6 +671,7 @@ public actor ClaudeIntegration: AgentIntegration {
     public func delete(_ session: AgentSessionReference, context: AgentContext) async -> AgentResult<Void> {
         guard checked(session, context: context), sessions[session.nativeID]?.active == nil else { return .rejected(.wrongConnection) }
         if let wire = wires.removeValue(forKey: session.nativeID) { waiting.removeValue(forKey: session.nativeID); await wire.close() }
+        subagents.removeValue(forKey: session.nativeID)
         // Native execution files stay in the isolated engine home; app deletion only hides the chat.
         return .success(())
     }

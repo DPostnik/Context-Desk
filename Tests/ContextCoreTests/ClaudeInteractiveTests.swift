@@ -20,6 +20,9 @@ private actor ClaudeEvents {
     func statuses() -> [String?] {
         values.compactMap { if case .status(_, let text) = $0.payload { return .some(text) }; return nil }
     }
+    func subagents() -> [[AgentSubagent]] {
+        values.compactMap { if case .subagents(let list) = $0.payload { return list }; return nil }
+    }
     func background() -> [Int] {
         values.compactMap { if case .background(let tasks) = $0.payload { return tasks }; return nil }
     }
@@ -87,7 +90,8 @@ private func interactiveFixture(_ root: URL) throws -> URL {
     with (home/'launches').open('a') as f: f.write(sid+'\n')
     def tasks(*ids): out({'type':'system','subtype':'background_tasks_changed','session_id':sid,'tasks':[{'task_id':i,'task_type':'local_agent'} for i in ids]})
     def woke():
-        out({'type':'system','subtype':'task_notification','session_id':sid,'task_id':'b1','status':'completed'})
+        out({'type':'assistant','session_id':sid,'parent_tool_use_id':'call1','message':{'id':'sub-done','content':[{'type':'text','text':'sub-report'}]}})
+        out({'type':'system','subtype':'task_notification','session_id':sid,'task_id':'b1','tool_use_id':'call1','status':'completed','summary':'sub-report','usage':{'total_tokens':120,'tool_uses':1}})
         tasks()
         out({'type':'system','subtype':'init','session_id':sid,'model':'claude-test'})
         out({'type':'assistant','session_id':sid,'message':{'id':'woke-'+sid,'content':[{'type':'text','text':'woke'}]}})
@@ -107,6 +111,10 @@ private func interactiveFixture(_ root: URL) throws -> URL {
             if prompt=='wait': continue
             if prompt.startswith('background'):
                 tasks('b1')
+                out({'type':'system','subtype':'task_started','session_id':sid,'task_id':'b1','tool_use_id':'call1','description':'Check sources','subagent_type':'general-purpose','is_backgrounded':True,'task_type':'local_agent','prompt':'Look'})
+                out({'type':'assistant','session_id':sid,'parent_tool_use_id':'call1','message':{'id':'sub-1','content':[{'type':'text','text':'sub-step'},{'type':'tool_use','id':'r1','name':'Read','input':{'file_path':'a.txt'}}]}})
+                out({'type':'user','session_id':sid,'parent_tool_use_id':'call1','message':{'content':[{'type':'tool_result','tool_use_id':'r1','content':'contents'}]}})
+                out({'type':'system','subtype':'task_progress','session_id':sid,'task_id':'b1','description':'Reading a.txt','usage':{'total_tokens':50,'tool_uses':1}})
                 out({'type':'assistant','session_id':sid,'message':{'id':'launched-'+sid,'content':[{'type':'text','text':'launched'}]}})
                 result()
                 if prompt=='background': threading.Timer(0.3, woke).start()
@@ -521,6 +529,13 @@ private func interactiveRequest(context: AgentContext, root: URL, session: Agent
     #expect(model.restartBlockers.contains(L10n.text("Ждёт фоновые задачи: ", "Waiting for background tasks: ") + "Claude"))
     await model.receive(.init(session: claude.nativeSession, payload: .started(turn: "claude-turn")))
     #expect(model.backgroundWaits.isEmpty && model.backgroundWaitNotice(claude.id) == nil)
+    // Sub-agent previews belong to their own chat and disappear with an empty list.
+    let subagent = AgentSubagent(id: "a1", title: "Check", type: nil, prompt: "", background: true, depth: 1, startedAt: Date())
+    await model.receive(.init(session: claude.nativeSession, payload: .subagents([subagent])))
+    #expect(model.subagents[claude.id] == [subagent] && model.subagents[codex.id] == nil)
+    #expect(SubagentsBar.summary([subagent]) == L10n.text("Подагенты: работают 1", "Sub-agents: 1 running"))
+    await model.receive(.init(session: claude.nativeSession, payload: .subagents([])))
+    #expect(model.subagents.isEmpty)
     await model.receive(.init(session: codex.nativeSession, payload: .started(turn: "codex-turn")))
     await model.receive(.init(session: nil, payload: .disconnected))
     #expect(model.isBusy(threadID: claude.id))
@@ -780,11 +795,19 @@ private func completedClaudeSession(_ adapter: ClaudeIntegration, binary: URL, h
     #expect(await events.startedCount() == 2)
     #expect(await events.background() == [1, 0])
     let history = try await adapter.history(session, context: descriptor.context).value()
+    // Sub-agent messages stay out of the chat's own reply and go to the sub-agent preview.
     #expect(history.map { $0.items.map(\.text) } == [["background", "launched"], ["woke"]])
+    let preview = try #require(await events.subagents().last?.first)
+    #expect(preview.title == "Check sources" && preview.background && preview.status == .completed && preview.report == "sub-report")
+    #expect(preview.steps.map(\.kind) == [.text, .tool, .result, .text] && preview.steps[1].text == "Read: a.txt")
+    #expect(preview.tokens == 120 && preview.toolUses == 1 && preview.endedAt != nil)
+    #expect(await events.subagents().contains { $0.first?.activity == "Reading a.txt" })
     // Nothing is left to wait for, so the CLI was released and the next message starts a fresh one.
     _ = try await adapter.prepare(interactiveRequest(context: descriptor.context, root: root, session: session)).value()
     _ = try await adapter.submit(interactiveRequest(context: descriptor.context, root: root, session: session)).value()
     try await waitFor { await events.completionCount() == 3 }
+    // A new user message starts a fresh round: finished sub-agents leave the preview.
+    #expect(await events.subagents().last == [])
     #expect(try String(contentsOf: home.appendingPathComponent("launches"), encoding: .utf8).split(separator: "\n").count == 2)
     #expect(await events.diagnostics().isEmpty)
     await adapter.disconnect()

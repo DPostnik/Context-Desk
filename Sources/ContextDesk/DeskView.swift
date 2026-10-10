@@ -666,6 +666,7 @@ struct ChatView: View {
                     .font(.callout).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 24).padding(.vertical, 8)
             }
+            if let chat = model.selectedChat { SubagentsBar(model: model, chatID: chat.id) }
             if let chat = model.selectedChat, let notice = model.backgroundWaitNotice(chat.id) {
                 Label(notice, systemImage: "hourglass")
                     .font(.callout).foregroundStyle(.secondary)

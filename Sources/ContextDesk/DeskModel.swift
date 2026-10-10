@@ -136,6 +136,8 @@ private struct ChatRunState {
     @Published private var runs: [String: ChatRunState] = [:]
     /// Idle chats whose agent still runs background tasks and will resume on its own; thread ID -> task count.
     @Published private(set) var backgroundWaits: [String: Int] = [:]
+    /// Thread ID -> sub-agents its agent delegated to (running ones and those finished since the last user message).
+    @Published private(set) var subagents: [String: [AgentSubagent]] = [:]
     @Published private(set) var deletingChatIDs: Set<String> = []
     @Published private(set) var archivingChatIDs: Set<String> = []
     func isChangingChat(_ id: String) -> Bool { deletingChatIDs.contains(id) || archivingChatIDs.contains(id) || configuringRemoteChats.contains(id) || configuringBrowserChats.contains(id) }
@@ -1576,7 +1578,7 @@ private struct ChatRunState {
     private func resetAgentState(_ agent: AgentConnectionID) {
         let ids = Set(state.chats.filter { $0.nativeSession?.connection == agent }.map(\.id))
         clearAgentInteractions(agent)
-        for id in ids { runs[id] = nil; backgroundWaits[id] = nil; loadedThreads.remove(id) }
+        for id in ids { runs[id] = nil; backgroundWaits[id] = nil; subagents[id] = nil; loadedThreads.remove(id) }
     }
     private func clearAgentInteractions(_ agent: AgentConnectionID) {
         let actions = pending.filter { $0.interaction.session.connection == agent }
@@ -1726,6 +1728,8 @@ private struct ChatRunState {
             runs[thread]?.status = text
         case .background(let tasks):
             if let thread { backgroundWaits[thread] = tasks > 0 ? tasks : nil }
+        case .subagents(let list):
+            if let thread { subagents[thread] = list.isEmpty ? nil : list }
         }
     }
     private func flushDeltas() { transcript.flush() }
