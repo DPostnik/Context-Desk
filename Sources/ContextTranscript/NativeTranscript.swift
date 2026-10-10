@@ -15,12 +15,10 @@ public struct NativeTranscript: NSViewRepresentable {
     let unreadResponseItemID: String?
     let onReadToEnd: ((String, String) -> Void)?
     let projectPath: String?
-    let onOpenFile: ((URL, Int?) -> Void)?
     public init(items: [TranscriptItem], conversationID: String?, followOutput: Bool, isWorking: Bool = false, workingStatus: String? = nil,
                 workingSince: Date? = nil, unreadCompletionID: String? = nil, unreadResponseItemID: String? = nil, projectPath: String? = nil,
-                onOpenFile: ((URL, Int?) -> Void)? = nil, onReadToEnd: ((String, String) -> Void)? = nil) {
+                onReadToEnd: ((String, String) -> Void)? = nil) {
         self.unreadCompletionID = unreadCompletionID; self.onReadToEnd = onReadToEnd; self.projectPath = projectPath
-        self.onOpenFile = onOpenFile
         self.unreadResponseItemID = unreadResponseItemID
         self.isWorking = isWorking; self.workingStatus = workingStatus; self.workingSince = workingSince
         self.items = items; self.conversationID = conversationID; self.followOutput = followOutput
@@ -31,7 +29,6 @@ public struct NativeTranscript: NSViewRepresentable {
     }
     public func updateNSView(_ view: TranscriptScrollView, context: Context) {
         view.onReadToEnd = onReadToEnd
-        view.onOpenFile = onOpenFile
         view.update(items: items, conversationID: conversationID, followOutput: followOutput,
                     isWorking: isWorking, workingStatus: workingStatus, workingSince: workingSince, unreadCompletionID: unreadCompletionID,
                     unreadResponseItemID: unreadResponseItemID, projectPath: projectPath)
@@ -54,12 +51,6 @@ public struct NativeTranscript: NSViewRepresentable {
     /// Answer section under the pointer; its heading shows a copy control.
     private(set) var hoveredSection: String?
     private var projectPath: String?
-    /// Previews a file the user clicked in an answer (URL and optional line); without it files open externally.
-    public var onOpenFile: ((URL, Int?) -> Void)?
-    /// A document shown in the preview pane: no grouping, author headers or copy-all control, code never collapses.
-    public var isDocument = false
-    /// The file shown in document mode; wiki links and relative paths resolve from it.
-    public var documentURL: URL?
     private var copyFeedbackTask: Task<Void, Never>?
     private var needsEndScroll = false
     private let positions: TranscriptReadingPositions
@@ -132,7 +123,7 @@ public struct NativeTranscript: NSViewRepresentable {
         self.unreadResponseItemID = unreadResponseItemID
         self.unreadCompletionID = unreadCompletionID
         let workingStatus = isWorking ? Self.currentActivity(items).map { Self.activityHeadline($0.text) } ?? workingStatus : workingStatus
-        var items = isDocument ? items : Self.groupActivities(items, isWorking: isWorking)
+        var items = Self.groupActivities(items, isWorking: isWorking)
         if isWorking {
             items.append(Self.workingRow(status: workingStatus, since: workingSince))
         }
@@ -245,8 +236,7 @@ public struct NativeTranscript: NSViewRepresentable {
         guard !previous.isEmpty, contentSize.width > 0, contentSize.height > 0,
               let manager = transcript.layoutManager, let container = transcript.textContainer,
               let storage = transcript.textStorage, storage.length > 0 else { return nil }
-        // Documents keep their place by anchor; checking the end lays out the whole text, which is costly for long files.
-        if needsEndScroll || (!isDocument && isAtTranscriptEnd) { return .end }
+        if needsEndScroll || isAtTranscriptEnd { return .end }
         let origin = contentView.bounds.origin
         let point = NSPoint(x: container.lineFragmentPadding,
                             y: max(0, origin.y - transcript.textContainerOrigin.y))
@@ -261,13 +251,7 @@ public struct NativeTranscript: NSViewRepresentable {
 
     private func restorePosition(_ position: TranscriptReadingPositions.Position) {
         guard let manager = transcript.layoutManager, let container = transcript.textContainer else { return }
-        // A document growing part by part only needs layout up to the reading position, not to its end.
-        if isDocument, case let .anchor(itemID, character, _, _) = position, let storage = transcript.textStorage,
-           let index = previous.firstIndex(where: { $0.id == itemID }), ranges.indices.contains(index) {
-            manager.ensureLayout(forCharacterRange: NSRange(location: 0, length: min(storage.length, ranges[index].location + character + 1)))
-        } else {
-            manager.ensureLayout(for: container)
-        }
+        manager.ensureLayout(for: container)
         switch position {
         case .end:
             transcript.scrollRangeToVisible(NSRange(location: transcript.textStorage?.length ?? 0, length: 0))
@@ -586,14 +570,13 @@ public struct NativeTranscript: NSViewRepresentable {
         }
         // Exactly one blank line between messages: rendered Markdown already ends its last paragraph.
         while result.string.hasSuffix("\n") { result.deleteCharacters(in: NSRange(location: result.length - 1, length: 1)) }
-        // Document parts continue on the next line; messages are separated by a gap.
-        result.append(NSAttributedString(string: isDocument ? "\n" : "\n\n", attributes: [.font: NSFont.systemFont(ofSize: 14)]))
+        result.append(NSAttributedString(string: "\n\n", attributes: [.font: NSFont.systemFont(ofSize: 14)]))
         applyMessageStyle(item, to: result, range: NSRange(location: 0, length: result.length))
         return result
     }
 
     var linkOptions: TranscriptLinks.Options {
-        TranscriptLinks.Options(chips: true, baseDirectory: projectPath.map { URL(fileURLWithPath: $0, isDirectory: true) }, source: documentURL)
+        TranscriptLinks.Options(chips: true, baseDirectory: projectPath.map { URL(fileURLWithPath: $0, isDirectory: true) })
     }
 
     func copyControl(feedback: Bool?, description: String, hoverItemID: String? = nil, label: String? = nil,
@@ -753,10 +736,6 @@ public struct NativeTranscript: NSViewRepresentable {
             showCopyFeedback(id: previous[index].id, succeeded: pasteboard.setString(body, forType: .string), block: block)
             return true
         }
-        if value.hasPrefix("contextdesk-anchor:") {
-            scroll(toAnchor: String(value.dropFirst("contextdesk-anchor:".count)))
-            return true
-        }
         if value.hasPrefix("contextdesk-toggle:") {
             let key = String(value.dropFirst("contextdesk-toggle:".count))
             guard let index = ranges.firstIndex(where: { NSLocationInRange(charIndex, $0) }) else { return true }
@@ -813,34 +792,11 @@ public struct NativeTranscript: NSViewRepresentable {
             return true
         }
         guard let url = TranscriptLinks.destination(value) else { return true }
-        if url.isFileURL {
-            let line = transcript.textStorage.flatMap { storage in
-                charIndex >= 0 && charIndex < storage.length ? storage.attribute(.fileLine, at: charIndex, effectiveRange: nil) as? Int : nil
-            }
-            // Links to a heading of the document already shown just scroll.
-            if isDocument, let fragment = url.fragment, url.path == documentURL?.path {
-                scroll(toAnchor: TranscriptLinks.slug(fragment)); return true
-            }
-            switch Self.fileClickAction(NSApp.currentEvent?.modifierFlags ?? [], url: url, canPreview: onOpenFile != nil) {
-            case .preview: onOpenFile?(url, line)
-            case .reveal: NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: url.path)])
-            case .open: NSWorkspace.shared.open(URL(fileURLWithPath: url.path))
-            }
-            return true
+        // Option-click shows a file in Finder instead of opening it.
+        if url.isFileURL, NSApp.currentEvent?.modifierFlags.contains(.option) == true {
+            NSWorkspace.shared.activateFileViewerSelecting([url]); return true
         }
         NSWorkspace.shared.open(url); return true
-    }
-
-    public enum FileClickAction: Equatable { case preview, reveal, open }
-
-    /// Click previews a file in the app, Option-click reveals it in Finder, Command-click opens it externally.
-    /// Folders and missing files are never previewed.
-    public static func fileClickAction(_ flags: NSEvent.ModifierFlags, url: URL, canPreview: Bool) -> FileClickAction {
-        if flags.contains(.option) { return .reveal }
-        var directory: ObjCBool = false
-        let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &directory)
-        if flags.contains(.command) || !canPreview || !exists || directory.boolValue { return .open }
-        return .preview
     }
 
     /// Links get their own actions above the standard text menu.
@@ -854,13 +810,8 @@ public struct NativeTranscript: NSViewRepresentable {
         }
         let pasteboard = self.pasteboard
         if url.isFileURL {
-            if let onOpenFile, Self.fileClickAction([], url: url, canPreview: true) == .preview {
-                let line = storage.attribute(.fileLine, at: charIndex, effectiveRange: nil) as? Int
-                add(L10n.text("Предпросмотр", "Preview")) { onOpenFile(url, line) }
-            }
-            let file = URL(fileURLWithPath: url.path)
-            add(L10n.text("Открыть в программе по умолчанию", "Open in Default App")) { NSWorkspace.shared.open(file) }
-            add(L10n.text("Показать в Finder", "Show in Finder")) { NSWorkspace.shared.activateFileViewerSelecting([file]) }
+            add(L10n.text("Открыть", "Open")) { NSWorkspace.shared.open(url) }
+            add(L10n.text("Показать в Finder", "Show in Finder")) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
             add(L10n.text("Скопировать путь", "Copy Path")) { pasteboard.clearContents(); pasteboard.setString(url.path, forType: .string) }
         } else {
             add(L10n.text("Открыть ссылку", "Open Link")) { NSWorkspace.shared.open(url) }
@@ -946,6 +897,53 @@ extension NSAttributedString.Key {
 
 /// Paint only visible message fragments; keep native selection and TextKit's bounded layout.
 private final class BubbleLayoutManager: NSLayoutManager {
+    /// Selection follows the text line by line: it skips blank lines and the empty column, and stays inside user bubbles.
+    override func fillBackgroundRectArray(_ rectArray: UnsafePointer<NSRect>, count rectCount: Int,
+                                          forCharacterRange charRange: NSRange, color: NSColor) {
+        // Only the selection is reshaped; table cells and other fills keep their full rectangles.
+        let selection = textContainers.first?.textView?.selectedTextAttributes[.backgroundColor] as? NSColor
+        guard color == (selection ?? .selectedTextBackgroundColor) || color == .unemphasizedSelectedTextBackgroundColor,
+              let storage = textStorage, storage.length > 0, let container = textContainers.first,
+              let origin = container.textView?.textContainerOrigin else {
+            super.fillBackgroundRectArray(rectArray, count: rectCount, forCharacterRange: charRange, color: color)
+            return
+        }
+        // A multi-line selection arrives as one block; split it into lines so bubble lines can be narrowed.
+        var rects: [NSRect] = []
+        for index in 0..<rectCount {
+            let rect = rectArray[index]
+            let local = rect.offsetBy(dx: -origin.x, dy: -origin.y)
+            let glyphs = glyphRange(forBoundingRect: local, in: container)
+            var pieces: [NSRect] = []
+            if glyphs.length > 0 {
+                enumerateLineFragments(forGlyphRange: glyphs) { line, used, _, lineGlyphs, _ in
+                    // Highlight the line's text, not the empty column beside it; blank lines stay unmarked.
+                    guard used.width > 1 else { return }
+                    // Lines holding only hidden controls (copy icons) or spacing have nothing to highlight.
+                    let characters = self.characterRange(forGlyphRange: lineGlyphs, actualGlyphRange: nil)
+                    let visible = (storage.string as NSString).substring(with: characters)
+                        .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "\u{FFFC}")))
+                    guard !visible.isEmpty else { return }
+                    // Paragraph spacing stays out of the highlight; only the text's own line box is filled.
+                    let textLine = NSRect(x: used.minX - 2, y: used.minY, width: used.width + 4, height: used.height)
+                    var piece = textLine.offsetBy(dx: origin.x, dy: origin.y).intersection(rect)
+                    guard !piece.isEmpty else { return }
+                    let character = self.characterIndexForGlyph(at: lineGlyphs.location)
+                    if character < storage.length,
+                       let inset = storage.attribute(.outgoingBubble, at: character, effectiveRange: nil) as? CGFloat {
+                        let left = origin.x + inset + 14, right = origin.x + container.containerSize.width - 14
+                        piece = NSRect(x: max(piece.minX, left), y: piece.minY, width: min(piece.maxX, right) - max(piece.minX, left), height: piece.height)
+                    }
+                    if piece.width > 0 { pieces.append(piece) }
+                }
+            }
+            rects += glyphs.length > 0 ? pieces : [rect]
+        }
+        guard !rects.isEmpty else { return }
+        rects.withUnsafeBufferPointer { buffer in
+            super.fillBackgroundRectArray(buffer.baseAddress!, count: buffer.count, forCharacterRange: charRange, color: color)
+        }
+    }
     override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
         guard let storage = textStorage, glyphsToShow.length > 0,
               let container = textContainer(forGlyphAt: glyphsToShow.location, effectiveRange: nil) else {

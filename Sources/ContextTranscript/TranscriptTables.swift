@@ -18,11 +18,6 @@ extension NSAttributedString.Key {
         table.hidesEmptyCells = false
         table.setContentWidth(100, type: .percentageValueType)
         let alignments = model.displayAlignments
-        // Wide tables: smaller type and short URLs keep columns readable in narrow panes.
-        let wide = model.alignments.count >= 5
-        var options = options
-        if wide { options.urlDisplayLimit = 24 }
-        let size: CGFloat = wide ? 12 : 13.5
         // Table borders ignore dynamic separator transparency; a translucent gray works in both appearances.
         let border = NSColor(calibratedWhite: 0.5, alpha: 1)
         for (rowIndex, row) in model.rows.enumerated() {
@@ -57,9 +52,9 @@ extension NSAttributedString.Key {
                 case .right: style.alignment = .right
                 }
                 var cellAttributes = attributes
-                cellAttributes[.font] = NSFont.systemFont(ofSize: rowIndex == 0 ? size - 0.5 : size, weight: rowIndex == 0 ? .semibold : .regular)
+                cellAttributes[.font] = NSFont.systemFont(ofSize: rowIndex == 0 ? 13 : 13.5, weight: rowIndex == 0 ? .semibold : .regular)
                 if alignments[column] == .right, rowIndex > 0 {
-                    cellAttributes[.font] = NSFont.monospacedDigitSystemFont(ofSize: size, weight: .regular)
+                    cellAttributes[.font] = NSFont.monospacedDigitSystemFont(ofSize: 13.5, weight: .regular)
                 }
                 cellAttributes[.paragraphStyle] = style
                 cellAttributes[.transcriptTableStyle] = style
