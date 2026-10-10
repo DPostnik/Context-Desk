@@ -289,7 +289,9 @@ import ContextTranscript
     #expect(copyLinks == ["contextdesk-copy:u", "contextdesk-copy:answer"])
     var icons = 0
     storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
-        guard let attachment = value as? NSTextAttachment else { return }
+        // Code blocks carry their own copy control; count message controls only.
+        guard let attachment = value as? NSTextAttachment,
+              storage.attribute(NSAttributedString.Key("ContextDeskMessageCopy"), at: range.location, effectiveRange: nil) != nil else { return }
         // Message copy icons are drawn by a hover cell; they stay in place and clickable.
         #expect(attachment.image != nil || (attachment.attachmentCell as? NSCell)?.image != nil)
         #expect(storage.attribute(.toolTip, at: range.location, effectiveRange: nil) as? String ==
@@ -405,7 +407,8 @@ import ContextTranscript
     let first = try #require(controls().first)
     let icon = try #require(storage.attribute(.attachment, at: first.0, effectiveRange: nil) as? NSTextAttachment)
     #expect(icon.image != nil)
-    #expect(icon.bounds.size == NSSize(width: 18, height: 18))
+    #expect(icon.bounds.size == NSSize(width: 14, height: 14))
+    #expect(storage.attributedSubstring(from: NSRange(location: first.0, length: 12)).string.contains(L10n.text("Копировать", "Copy")))
     #expect(storage.attribute(.toolTip, at: first.0, effectiveRange: nil) as? String ==
             L10n.text("Скопировать текст блока", "Copy the block text"))
     _ = view.textView(view.transcript, clickedOnLink: "contextdesk-quote-copy", at: first.0)

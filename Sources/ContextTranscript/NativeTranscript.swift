@@ -14,9 +14,11 @@ public struct NativeTranscript: NSViewRepresentable {
     let unreadCompletionID: String?
     let unreadResponseItemID: String?
     let onReadToEnd: ((String, String) -> Void)?
+    let projectPath: String?
     public init(items: [TranscriptItem], conversationID: String?, followOutput: Bool, isWorking: Bool = false, workingStatus: String? = nil,
-                workingSince: Date? = nil, unreadCompletionID: String? = nil, unreadResponseItemID: String? = nil, onReadToEnd: ((String, String) -> Void)? = nil) {
-        self.unreadCompletionID = unreadCompletionID; self.onReadToEnd = onReadToEnd
+                workingSince: Date? = nil, unreadCompletionID: String? = nil, unreadResponseItemID: String? = nil, projectPath: String? = nil,
+                onReadToEnd: ((String, String) -> Void)? = nil) {
+        self.unreadCompletionID = unreadCompletionID; self.onReadToEnd = onReadToEnd; self.projectPath = projectPath
         self.unreadResponseItemID = unreadResponseItemID
         self.isWorking = isWorking; self.workingStatus = workingStatus; self.workingSince = workingSince
         self.items = items; self.conversationID = conversationID; self.followOutput = followOutput
@@ -28,7 +30,8 @@ public struct NativeTranscript: NSViewRepresentable {
     public func updateNSView(_ view: TranscriptScrollView, context: Context) {
         view.onReadToEnd = onReadToEnd
         view.update(items: items, conversationID: conversationID, followOutput: followOutput,
-                    isWorking: isWorking, workingStatus: workingStatus, workingSince: workingSince, unreadCompletionID: unreadCompletionID, unreadResponseItemID: unreadResponseItemID)
+                    isWorking: isWorking, workingStatus: workingStatus, workingSince: workingSince, unreadCompletionID: unreadCompletionID,
+                    unreadResponseItemID: unreadResponseItemID, projectPath: projectPath)
     }
 }
 
@@ -42,7 +45,12 @@ public struct NativeTranscript: NSViewRepresentable {
     private var wasWorking = false
     private var expandedActions: Set<String> = []
     private var expandedMetrics: Set<String> = []
-    private var copyFeedback: (id: String, succeeded: Bool, block: Int?)?
+    private(set) var copyFeedback: (id: String, succeeded: Bool, block: Int?)?
+    /// Collapsible code, `<details>` and source lists the user opened, keyed by item and block.
+    private(set) var expandedBlocks: Set<String> = []
+    /// Answer section under the pointer; its heading shows a copy control.
+    private(set) var hoveredSection: String?
+    private var projectPath: String?
     private var copyFeedbackTask: Task<Void, Never>?
     private var needsEndScroll = false
     private let positions: TranscriptReadingPositions
@@ -108,7 +116,10 @@ public struct NativeTranscript: NSViewRepresentable {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     public func update(items: [TranscriptItem], conversationID: String?, followOutput: Bool, isWorking: Bool = false, workingStatus: String? = nil,
-                       workingSince: Date? = nil, unreadCompletionID: String? = nil, unreadResponseItemID: String? = nil) {
+                       workingSince: Date? = nil, unreadCompletionID: String? = nil, unreadResponseItemID: String? = nil, projectPath: String? = nil) {
+        // Relative file links resolve against the project; a different project re-renders everything.
+        let projectChanged = self.projectPath != projectPath
+        self.projectPath = projectPath
         self.unreadResponseItemID = unreadResponseItemID
         self.unreadCompletionID = unreadCompletionID
         let workingStatus = isWorking ? Self.currentActivity(items).map { Self.activityHeadline($0.text) } ?? workingStatus : workingStatus
@@ -124,7 +135,7 @@ public struct NativeTranscript: NSViewRepresentable {
         wasWorking = isWorking
         let switched = self.conversationID != conversationID
         if switched || finished { expandedActions.removeAll() }
-        if switched { expandedMetrics.removeAll() }
+        if switched { expandedMetrics.removeAll(); expandedBlocks.removeAll() }
         if let feedback = copyFeedback,
            switched || previous.first(where: { $0.id == feedback.id })?.text != items.first(where: { $0.id == feedback.id })?.text {
             copyFeedbackTask?.cancel()
@@ -132,7 +143,7 @@ public struct NativeTranscript: NSViewRepresentable {
         }
         let resumeFollowing = followOutput && !followed
         followed = followOutput
-        guard switched || finished || items != previous else {
+        guard switched || finished || projectChanged || items != previous else {
             if resumeFollowing { scrollToEnd() }
             scheduleReadCheck()
             return
@@ -145,7 +156,7 @@ public struct NativeTranscript: NSViewRepresentable {
         guard let storage = transcript.textStorage else { return }
         let oldOrigin = contentView.bounds.origin
         var common = 0
-        if !switched && !finished {
+        if !switched && !finished && !projectChanged {
             while common < min(previous.count, items.count), previous[common] == items[common] { common += 1 }
         }
         let start = common < ranges.count ? ranges[common].location : storage.length
@@ -374,6 +385,7 @@ public struct NativeTranscript: NSViewRepresentable {
 
     private func updateHover(at point: NSPoint?) {
         var id: String?
+        var section: String?
         if let point, let manager = transcript.layoutManager, let container = transcript.textContainer,
            let storage = transcript.textStorage, storage.length > 0 {
             let local = NSPoint(x: point.x - transcript.textContainerOrigin.x, y: point.y - transcript.textContainerOrigin.y)
@@ -382,13 +394,14 @@ public struct NativeTranscript: NSViewRepresentable {
             let line = manager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
             if line.minY - 8 <= local.y, local.y <= line.maxY + 8 {
                 let character = manager.characterIndexForGlyph(at: glyph)
+                if character < storage.length { section = storage.attribute(.sectionKey, at: character, effectiveRange: nil) as? String }
                 if let index = ranges.firstIndex(where: { NSLocationInRange(character, $0) }), previous[index].showsCopyControl {
                     id = previous[index].id
                 }
             }
         }
-        guard id != hoveredItemID else { return }
-        hoveredItemID = id
+        guard id != hoveredItemID || section != hoveredSection else { return }
+        hoveredItemID = id; hoveredSection = section
         transcript.setNeedsDisplay(transcript.visibleRect)
     }
 
@@ -530,18 +543,19 @@ public struct NativeTranscript: NSViewRepresentable {
                 }
             }
         }
-        var quoteIndex = 0
-        for (index, block) in item.text.components(separatedBy: "```").enumerated() {
-            let isCode = index % 2 == 1 || item.kind == "activity"
-            let font = isCode ? NSFont.monospacedSystemFont(ofSize: 12, weight: .regular) : NSFont.systemFont(ofSize: 14)
-            let attributes: [NSAttributedString.Key: Any] = [
-                .font: font, .foregroundColor: item.kind == "activity" ? NSColor.secondaryLabelColor : NSColor.labelColor,
-                .paragraphStyle: paragraph
-            ]
-            // Code and tool output stay literal, including link-like text.
-            if !isCode && item.kind == "assistant" {
-                appendQuotedText(block, item: item, quoteIndex: &quoteIndex, to: result, attributes: attributes)
-            } else {
+        if item.kind == "assistant" {
+            var markdown = TranscriptMarkdown(view: self, item: item, options: linkOptions,
+                                              width: transcript.textContainer?.containerSize.width ?? 600)
+            markdown.render(into: result)
+        } else {
+            for (index, block) in item.text.components(separatedBy: "```").enumerated() {
+                let isCode = index % 2 == 1 || item.kind == "activity"
+                let font = isCode ? NSFont.monospacedSystemFont(ofSize: 12, weight: .regular) : NSFont.systemFont(ofSize: 14)
+                let attributes: [NSAttributedString.Key: Any] = [
+                    .font: font, .foregroundColor: item.kind == "activity" ? NSColor.secondaryLabelColor : NSColor.labelColor,
+                    .paragraphStyle: paragraph
+                ]
+                // Code and tool output stay literal, including link-like text.
                 result.append(isCode ? NSAttributedString(string: block, attributes: attributes)
                               : TranscriptLinks.render(block, attributes: attributes))
             }
@@ -559,82 +573,39 @@ public struct NativeTranscript: NSViewRepresentable {
         return result
     }
 
-    private func copyControl(feedback: Bool?, description: String, hoverItemID: String? = nil,
-                             attributes: [NSAttributedString.Key: Any]) -> NSAttributedString {
+    var linkOptions: TranscriptLinks.Options {
+        TranscriptLinks.Options(chips: true, baseDirectory: projectPath.map { URL(fileURLWithPath: $0, isDirectory: true) })
+    }
+
+    func copyControl(feedback: Bool?, description: String, hoverItemID: String? = nil, label: String? = nil,
+                     visible: (@MainActor @Sendable () -> Bool)? = nil, attributes: [NSAttributedString.Key: Any]) -> NSAttributedString {
         let feedbackText = feedback.map { $0 ? L10n.text("Скопировано", "Copied") : L10n.text("Не удалось скопировать", "Could not copy") }
         let description = feedbackText ?? description
         let color: NSColor = feedback.map { $0 ? .systemGreen : .systemRed } ?? .secondaryLabelColor
         let symbol = feedback.map { $0 ? "checkmark" : "exclamationmark.circle" } ?? "doc.on.doc"
         let attachment = NSTextAttachment()
         let image = NSImage(systemSymbolName: symbol, accessibilityDescription: description)?
-            .withSymbolConfiguration(.init(pointSize: 13, weight: .regular)
+            .withSymbolConfiguration(.init(pointSize: label == nil ? 13 : 11, weight: .regular)
                 .applying(.init(paletteColors: [color])))
-        if let itemID = hoverItemID, feedback == nil {
-            // Message copy controls appear while the pointer is over their message.
+        if visible != nil || hoverItemID != nil, feedback == nil {
+            // Message and section copy controls appear while the pointer is over their content.
             let cell = HoverAttachmentCell(imageCell: image ?? NSImage())
-            cell.isVisible = { [weak self] in self?.hoveredItemID == itemID }
+            if let visible { cell.isVisible = { MainActor.assumeIsolated { visible() } } }
+            else if let itemID = hoverItemID { cell.isVisible = { [weak self] in self?.hoveredItemID == itemID } }
             attachment.attachmentCell = cell
         } else {
             attachment.image = image
-            attachment.bounds = NSRect(x: 0, y: -3, width: 18, height: 18)
+            attachment.bounds = label == nil ? NSRect(x: 0, y: -3, width: 18, height: 18) : NSRect(x: 0, y: -2, width: 14, height: 14)
         }
         let result = NSMutableAttributedString(attachment: attachment)
-        if let feedbackText {
-            result.append(NSAttributedString(string: " " + feedbackText, attributes: [
-                .font: NSFont.systemFont(ofSize: 11), .foregroundColor: color
+        if let text = feedbackText ?? label {
+            result.append(NSAttributedString(string: " " + text, attributes: [
+                .font: NSFont.systemFont(ofSize: 11, weight: label == nil ? .regular : .medium), .foregroundColor: color
             ]))
         }
         result.addAttributes(attributes, range: NSRange(location: 0, length: result.length))
         result.addAttribute(.toolTip, value: description, range: NSRange(location: 0, length: result.length))
         return result
-    }
-
-    /// Only explicit Markdown quotes become cards. Prose and tool output are never guessed to be drafts.
-    private func appendQuotedText(_ source: String, item: TranscriptItem, quoteIndex: inout Int,
-                                  to result: NSMutableAttributedString, attributes: [NSAttributedString.Key: Any]) {
-        let lines = source.components(separatedBy: "\n")
-        var index = 0
-        while index < lines.count {
-            guard Self.quoteBody(lines[index]) != nil else {
-                let start = index
-                repeat { index += 1 } while index < lines.count && Self.quoteBody(lines[index]) == nil
-                var text = lines[start..<index].joined(separator: "\n")
-                if index < lines.count { text += "\n" }
-                result.append(TranscriptTables.render(text, attributes: attributes))
-                continue
-            }
-            var quoted: [String] = []
-            while index < lines.count, let body = Self.quoteBody(lines[index]) {
-                quoted.append(body)
-                index += 1
-            }
-            let body = TranscriptLinks.render(quoted.joined(separator: "\n"), attributes: attributes)
-            let start = result.length
-            let feedback = copyFeedback.flatMap { $0.id == item.id && $0.block == quoteIndex ? $0.succeeded : nil }
-            let controlAttributes: [NSAttributedString.Key: Any] = [
-                .link: "contextdesk-quote-copy", .quoteCopy: body.string, .quoteIndex: quoteIndex
-            ]
-            result.append(copyControl(feedback: feedback,
-                                      description: L10n.text("Скопировать текст блока", "Copy the block text"),
-                                      attributes: controlAttributes))
-            // Keep the control paragraph aligned as one unit, including its newline.
-            result.append(NSAttributedString(string: "\n", attributes: controlAttributes))
-            result.append(body)
-            result.append(NSAttributedString(string: "\n", attributes: attributes))
-            result.addAttribute(.quoteCard, value: quoteIndex, range: NSRange(location: start, length: result.length - start))
-            result.append(NSAttributedString(string: "\n", attributes: attributes))
-            quoteIndex += 1
-        }
-    }
-
-    private static func quoteBody(_ line: String) -> String? {
-        let prefix = line.prefix(while: { $0 == " " })
-        guard prefix.count <= 3 else { return nil }
-        let trimmed = line.dropFirst(prefix.count)
-        guard trimmed.first == ">" else { return nil }
-        var body = trimmed.dropFirst()
-        if body.first == " " || body.first == "\t" { body = body.dropFirst() }
-        return String(body)
     }
 
     private func applyMessageStyle(_ item: TranscriptItem, to text: NSMutableAttributedString, range: NSRange) {
@@ -668,19 +639,19 @@ public struct NativeTranscript: NSViewRepresentable {
             if outgoing { footer.alignment = .right; footer.tailIndent = -6 }
             text.addAttribute(.paragraphStyle, value: footer, range: copyRange)
         }
-        text.enumerateAttribute(.quoteCard, in: range) { value, cardRange, _ in
-            guard value != nil else { return }
-            let card = paragraph.mutableCopy() as! NSMutableParagraphStyle
-            card.firstLineHeadIndent = 16; card.headIndent = 16; card.tailIndent = -16
-            card.paragraphSpacing = 4
-            text.addAttribute(.paragraphStyle, value: card, range: cardRange)
-        }
-        text.enumerateAttribute(.quoteCopy, in: range) { value, controlRange, _ in
-            guard value != nil else { return }
-            let control = paragraph.mutableCopy() as! NSMutableParagraphStyle
-            control.alignment = .right; control.tailIndent = -16
-            control.paragraphSpacingBefore = 12; control.paragraphSpacing = 12
-            text.addAttribute(.paragraphStyle, value: control, range: controlRange)
+        // Blocks of an answer (headings, lists, cards) keep the styles they chose; header
+        // controls get a right tab stop at the trailing edge of the current width.
+        text.enumerateAttribute(.blockParagraphStyle, in: range) { value, blockRange, _ in
+            guard let style = value as? NSParagraphStyle else { return }
+            if let inset = text.attribute(.rightTabInset, at: blockRange.location, effectiveRange: nil) as? CGFloat,
+               let tabbed = style.mutableCopy() as? NSMutableParagraphStyle {
+                // Tab locations are measured inside the line fragment padding on both sides.
+                let padding = transcript.textContainer?.lineFragmentPadding ?? 5
+                tabbed.tabStops = [NSTextTab(textAlignment: .right, location: max(tabbed.headIndent + 40, width - 2 * padding - inset - 1))]
+                text.addAttribute(.paragraphStyle, value: tabbed, range: blockRange)
+            } else {
+                text.addAttribute(.paragraphStyle, value: style, range: blockRange)
+            }
         }
         TranscriptTables.restoreStyles(in: text, range: range)
         // Leave the final empty paragraph, and a user's copy control, outside the bubble.
@@ -741,6 +712,35 @@ public struct NativeTranscript: NSViewRepresentable {
 
     public func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
         let value = (link as? URL)?.absoluteString ?? (link as? String) ?? ""
+        if value == "contextdesk-block-copy" || value.hasPrefix("contextdesk-table:") {
+            guard let storage = transcript.textStorage, charIndex >= 0, charIndex < storage.length,
+                  let block = storage.attribute(.quoteIndex, at: charIndex, effectiveRange: nil) as? Int,
+                  let index = ranges.firstIndex(where: { NSLocationInRange(charIndex, $0) }) else { return true }
+            let body: String
+            if value == "contextdesk-block-copy" {
+                guard let text = storage.attribute(.blockCopy, at: charIndex, effectiveRange: nil) as? String else { return true }
+                body = text
+            } else {
+                guard let table = (storage.attribute(.tableData, at: charIndex, effectiveRange: nil) as? TableBox)?.table else { return true }
+                switch value {
+                case "contextdesk-table:md": body = table.markdown
+                case "contextdesk-table:tsv": body = table.tabSeparated
+                default:
+                    TranscriptTableWindow.show(table, relativeTo: window)
+                    return true
+                }
+            }
+            pasteboard.clearContents()
+            showCopyFeedback(id: previous[index].id, succeeded: pasteboard.setString(body, forType: .string), block: block)
+            return true
+        }
+        if value.hasPrefix("contextdesk-toggle:") {
+            let key = String(value.dropFirst("contextdesk-toggle:".count))
+            guard let index = ranges.firstIndex(where: { NSLocationInRange(charIndex, $0) }) else { return true }
+            if expandedBlocks.contains(key) { expandedBlocks.remove(key) } else { expandedBlocks.insert(key) }
+            rerenderItem(id: previous[index].id)
+            return true
+        }
         if value == "contextdesk-quote-copy" {
             guard let storage = transcript.textStorage, charIndex >= 0, charIndex < storage.length,
                   let body = storage.attribute(.quoteCopy, at: charIndex, effectiveRange: nil) as? String,
@@ -790,8 +790,53 @@ public struct NativeTranscript: NSViewRepresentable {
             return true
         }
         guard let url = TranscriptLinks.destination(value) else { return true }
+        // Option-click shows a file in Finder instead of opening it.
+        if url.isFileURL, NSApp.currentEvent?.modifierFlags.contains(.option) == true {
+            NSWorkspace.shared.activateFileViewerSelecting([url]); return true
+        }
         NSWorkspace.shared.open(url); return true
     }
+
+    /// Links get their own actions above the standard text menu.
+    public func textView(_ view: NSTextView, menu: NSMenu, for event: NSEvent, at charIndex: Int) -> NSMenu? {
+        guard let storage = transcript.textStorage, charIndex >= 0, charIndex < storage.length,
+              let url = storage.attribute(.link, at: charIndex, effectiveRange: nil) as? URL,
+              TranscriptLinks.destination(url.absoluteString) != nil else { return menu }
+        var items: [NSMenuItem] = []
+        func add(_ title: String, _ action: @escaping () -> Void) {
+            items.append(LinkMenuItem(title: title, perform: action))
+        }
+        let pasteboard = self.pasteboard
+        if url.isFileURL {
+            add(L10n.text("Открыть", "Open")) { NSWorkspace.shared.open(url) }
+            add(L10n.text("Показать в Finder", "Show in Finder")) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+            add(L10n.text("Скопировать путь", "Copy Path")) { pasteboard.clearContents(); pasteboard.setString(url.path, forType: .string) }
+        } else {
+            add(L10n.text("Открыть ссылку", "Open Link")) { NSWorkspace.shared.open(url) }
+            add(L10n.text("Скопировать ссылку", "Copy Link")) {
+                pasteboard.clearContents()
+                pasteboard.setString(url.absoluteString.hasPrefix("mailto:") ? String(url.absoluteString.dropFirst(7)) : url.absoluteString, forType: .string)
+            }
+        }
+        // Replace AppKit's own link items; keep selection items such as Copy.
+        let linkActions: Set<String> = ["openLink:", "copyLink:", "_openLinkFromMenu:", "_copyLinkFromMenu:"]
+        for item in menu.items.reversed() where item.action.map({ linkActions.contains(NSStringFromSelector($0)) }) == true {
+            menu.removeItem(item)
+        }
+        items.append(.separator())
+        for (offset, item) in items.enumerated() { menu.insertItem(item, at: offset) }
+        return menu
+    }
+}
+
+@MainActor private final class LinkMenuItem: NSMenuItem {
+    private var perform: (() -> Void)?
+    convenience init(title: String, perform: @escaping () -> Void) {
+        self.init(title: title, action: #selector(run), keyEquivalent: "")
+        self.perform = perform
+        target = self
+    }
+    @objc private func run() { perform?() }
 }
 
 private final class TranscriptTextView: NSTextView {
@@ -835,7 +880,7 @@ private final class HoverAttachmentCell: NSTextAttachmentCell {
     }
 }
 
-private extension NSAttributedString.Key {
+extension NSAttributedString.Key {
     static let compactionBadge = NSAttributedString.Key("ContextDeskCompactionBadge")
     static let compactionActive = NSAttributedString.Key("ContextDeskCompactionActive")
     static let quoteCard = NSAttributedString.Key("ContextDeskQuoteCard")
@@ -895,18 +940,108 @@ private final class BubbleLayoutManager: NSLayoutManager {
             DeskPalette.outgoingBubble.setFill()
             NSBezierPath(roundedRect: rect, xRadius: 18, yRadius: 18).fill()
         }
+        let whole = NSRange(location: 0, length: storage.length)
+        let padding = container.lineFragmentPadding
+        /// A card spans its whole attribute run; its sides follow the first paragraph's indents.
+        func card(_ key: NSAttributedString.Key, at location: Int, inset: CGFloat) -> (NSRect, NSRange) {
+            var full = NSRange()
+            _ = storage.attribute(key, at: location, longestEffectiveRange: &full, in: whole)
+            let bounds = boundingRect(forGlyphRange: glyphRange(forCharacterRange: full, actualCharacterRange: nil), in: container)
+            let style = storage.attribute(.paragraphStyle, at: full.location, effectiveRange: nil) as? NSParagraphStyle
+            let left = padding + (style?.firstLineHeadIndent ?? inset) - inset
+            let right = container.containerSize.width - padding + (style?.tailIndent ?? 0) + inset + 4
+            // The last paragraph's spacing is not part of its line fragment; pad the card below.
+            return (NSRect(x: origin.x + left, y: origin.y + bounds.minY - 2, width: max(1, right - left), height: bounds.height + 12), full)
+        }
+        var drawn = Set<String>()
         storage.enumerateAttribute(.quoteCard, in: characters) { value, range, _ in
-            guard value != nil else { return }
-            var fullRange = NSRange()
-            _ = storage.attribute(.quoteCard, at: range.location, longestEffectiveRange: &fullRange,
-                                  in: NSRange(location: 0, length: storage.length))
-            let glyphs = glyphRange(forCharacterRange: fullRange, actualCharacterRange: nil)
-            let bounds = boundingRect(forGlyphRange: glyphs, in: container)
-            let rect = NSRect(x: origin.x + 2, y: origin.y + bounds.minY - 4,
-                              width: max(1, container.containerSize.width - 4), height: bounds.height + 8)
-            let path = NSBezierPath(roundedRect: rect, xRadius: 14, yRadius: 14)
+            guard let index = value as? Int, drawn.insert("q\(index)@\(range.location)").inserted else { return }
+            let (rect, _) = card(.quoteCard, at: range.location, inset: 16)
+            let path = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: 12, yRadius: 12)
             NSColor.controlBackgroundColor.setFill(); path.fill()
             NSColor.separatorColor.setStroke(); path.lineWidth = 1; path.stroke()
+        }
+        storage.enumerateAttribute(.calloutCard, in: characters) { value, range, _ in
+            guard let value = value as? String else { return }
+            let (rect, _) = card(.calloutCard, at: range.location, inset: 16)
+            let color: NSColor = switch value.split(separator: "|").first.map(String.init) ?? "" {
+            case "tip": .systemGreen
+            case "important": .systemPurple
+            case "warning": .systemOrange
+            case "caution": .systemRed
+            default: .systemBlue
+            }
+            let path = NSBezierPath(roundedRect: rect, xRadius: 8, yRadius: 8)
+            color.withAlphaComponent(0.07).setFill(); path.fill()
+            NSGraphicsContext.saveGraphicsState()
+            path.addClip()
+            color.withAlphaComponent(0.85).setFill()
+            NSRect(x: rect.minX, y: rect.minY, width: 3, height: rect.height).fill()
+            NSGraphicsContext.restoreGraphicsState()
+        }
+        storage.enumerateAttribute(.codeCard, in: characters) { value, range, _ in
+            guard value != nil else { return }
+            let (rect, full) = card(.codeCard, at: range.location, inset: 14)
+            let path = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: 10, yRadius: 10)
+            NSColor.textColor.withAlphaComponent(0.035).setFill(); path.fill()
+            NSColor.separatorColor.withAlphaComponent(0.6).setStroke(); path.lineWidth = 1; path.stroke()
+            // Hairline under the header row.
+            var header = NSRange()
+            if storage.attribute(.rightTabInset, at: full.location, longestEffectiveRange: &header, in: full) != nil {
+                let headerRect = boundingRect(forGlyphRange: glyphRange(forCharacterRange: header, actualCharacterRange: nil), in: container)
+                NSColor.separatorColor.withAlphaComponent(0.5).setFill()
+                NSRect(x: rect.minX + 1, y: origin.y + headerRect.maxY + 3, width: rect.width - 2, height: 0.5).fill()
+            }
+            NSGraphicsContext.saveGraphicsState()
+            path.addClip()
+            storage.enumerateAttribute(.diffLine, in: NSIntersectionRange(full, characters)) { value, lineRange, _ in
+                guard let sign = value as? String else { return }
+                (sign == "+" ? NSColor.systemGreen : NSColor.systemRed).withAlphaComponent(0.11).setFill()
+                let glyphs = glyphRange(forCharacterRange: lineRange, actualCharacterRange: nil)
+                enumerateLineFragments(forGlyphRange: glyphs) { lineRect, _, _, _, _ in
+                    NSRect(x: rect.minX, y: origin.y + lineRect.minY, width: rect.width, height: lineRect.height).fill()
+                }
+            }
+            NSGraphicsContext.restoreGraphicsState()
+        }
+        let numberFont = NSFont.monospacedDigitSystemFont(ofSize: 10.5, weight: .regular)
+        storage.enumerateAttribute(.codeLineNumber, in: characters) { value, range, _ in
+            guard let number = value as? Int else { return }
+            let glyph = glyphIndexForCharacter(at: range.location)
+            guard glyph < numberOfGlyphs else { return }
+            let line = lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+            let baseline = location(forGlyphAt: glyph).y
+            let style = storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle
+            let label = NSAttributedString(string: "\(number)", attributes: [.font: numberFont, .foregroundColor: NSColor.tertiaryLabelColor])
+            let right = origin.x + padding + (style?.headIndent ?? 0) - 10
+            label.draw(at: NSPoint(x: right - label.size().width, y: origin.y + line.minY + baseline - numberFont.ascender))
+        }
+        storage.enumerateAttribute(.horizontalRule, in: characters) { value, range, _ in
+            guard value != nil else { return }
+            let glyphs = glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            let bounds = boundingRect(forGlyphRange: glyphs, in: container)
+            let style = storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle
+            let left = padding + (style?.headIndent ?? 0)
+            NSColor.separatorColor.setFill()
+            NSRect(x: origin.x + left, y: origin.y + bounds.midY.rounded() - 0.5,
+                   width: max(1, container.containerSize.width - padding - left), height: 1).fill()
+        }
+        storage.enumerateAttribute(.inlineChip, in: characters) { value, range, _ in
+            guard let raw = value as? Int, let chip = TranscriptLinks.Chip(rawValue: raw), chip != .web else { return }
+            let glyphs = glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            let font = storage.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont ?? .systemFont(ofSize: 13)
+            (chip == .code ? NSColor.textColor.withAlphaComponent(0.06) : NSColor.controlAccentColor.withAlphaComponent(0.08)).setFill()
+            enumerateLineFragments(forGlyphRange: glyphs) { _, _, _, lineGlyphs, _ in
+                let part = NSIntersectionRange(lineGlyphs, glyphs)
+                guard part.length > 0 else { return }
+                let rect = self.boundingRect(forGlyphRange: part, in: container)
+                let baseline = self.location(forGlyphAt: part.location).y
+                let line = self.lineFragmentRect(forGlyphAt: part.location, effectiveRange: nil)
+                let top = line.minY + baseline - font.ascender - 1.5
+                let height = font.ascender - font.descender + 3
+                NSBezierPath(roundedRect: NSRect(x: origin.x + rect.minX - 3, y: origin.y + top, width: rect.width + 6, height: height),
+                             xRadius: 4, yRadius: 4).fill()
+            }
         }
         super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
     }

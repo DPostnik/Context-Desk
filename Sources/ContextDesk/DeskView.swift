@@ -484,14 +484,11 @@ struct DeskView: View {
 
     private func chatLabel(_ chat: Chat, favorite: Bool) -> some View {
             HStack(spacing: 8) {
-                // Titles line up with their project's name; the slot only carries selection or archive marks.
-                Color.clear.frame(width: favorite ? 0 : 29, height: 1).overlay(alignment: .trailing) {
-                    if !favorite && selection.contains(chat.id) {
-                        Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.accentColor)
-                            .accessibilityLabel(L10n.text("Выбран", "Selected"))
-                    } else if chat.isArchived {
-                        Image(systemName: "archivebox").foregroundStyle(.secondary)
-                    }
+                if !favorite && selection.contains(chat.id) {
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.accentColor)
+                        .accessibilityLabel(L10n.text("Выбран", "Selected"))
+                } else if chat.isArchived {
+                    Image(systemName: "archivebox").foregroundStyle(.secondary)
                 }
                 VStack(alignment: .leading, spacing: 3) {
                     Text(chat.title)
@@ -837,7 +834,8 @@ struct ChatHistoryView: View {
             let renderedItems = transcript.items
             NativeTranscript(items: renderedItems, conversationID: model.chatID, followOutput: followOutput,
                              isWorking: model.busy, workingStatus: model.workingStatus, workingSince: model.workingSince, unreadCompletionID: model.selectedChat?.unreadCompletionID,
-                             unreadResponseItemID: model.chatID.flatMap { model.unreadResponseItems[$0] }) { threadID, completionID in
+                             unreadResponseItemID: model.chatID.flatMap { model.unreadResponseItems[$0] },
+                             projectPath: model.selectedProject?.path) { threadID, completionID in
                 guard transcript.items == renderedItems else { return }
                 model.markResponseRead(threadID: threadID, completionID: completionID)
             }
