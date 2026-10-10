@@ -410,11 +410,11 @@ struct MobileNewChatView: View {
                             Text(choice.project.name + " · " + choice.device.name).tag(choice.id)
                         }
                     }.accessibilityIdentifier("new-chat-project")
-                    Text(L10n.text("Чат Codex создаётся на Mac. Выбранные модель и доступ сохраняются для этого чата.", "The Codex chat is created on your Mac. Your model and access choices are saved for this chat."))
+                    Text(L10n.text("Чат создаётся на Mac. Модель определяет агента — Codex или Claude. Выбранные модель и доступ сохраняются для этого чата.", "The chat is created on your Mac. The model determines the agent: Codex or Claude. Your model and access choices are saved for this chat."))
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 if let choice = choices.first(where: { $0.id == selection }), let settings = choice.project.settings {
-                    MobileOptionsSection(options: $options, models: choice.project.models ?? [], projectAccess: settings.projectAccess)
+                    MobileOptionsSection(options: $options, models: choice.project.newChatModels ?? choice.project.models ?? [], projectAccess: settings.projectAccess)
                         .disabled(model.sending || !settings.canEdit)
                 }
                 Section(L10n.text("Первое сообщение", "First message")) {
@@ -423,7 +423,7 @@ struct MobileNewChatView: View {
                 }
                 if let choice = choices.first(where: { $0.id == selection }) {
                     if choice.project.canCreateChat != true {
-                        Text(L10n.text("Обнови и открой Context Desk на Mac, подключи Codex и включи мобильный доступ.", "Update and open Context Desk on your Mac, connect Codex and enable mobile access."))
+                        Text(L10n.text("Обнови и открой Context Desk на Mac, подключи Codex или Claude и включи мобильный доступ.", "Update and open Context Desk on your Mac, connect Codex or Claude and enable mobile access."))
                             .font(.footnote).foregroundStyle(.secondary)
                     }
                     Button {
@@ -490,8 +490,20 @@ struct MobileOptionsSection: View {
                 if !models.contains(where: { $0.id == options.model }) {
                     Text(options.model.isEmpty ? L10n.text("Недоступна", "Unavailable") : options.model).tag(options.model)
                 }
-                ForEach(models) { Text($0.name).tag($0.id) }
+                // Models tagged with agents are grouped, so the choice shows which agent runs the chat.
+                let agents = models.reduce(into: [String]()) { if !$0.contains($1.agentTitle) { $0.append($1.agentTitle) } }
+                if models.contains(where: { $0.agent != nil }) {
+                    ForEach(agents, id: \.self) { agent in
+                        Section(agent) { ForEach(models.filter { $0.agentTitle == agent }) { Text($0.name).tag($0.id) } }
+                    }
+                } else {
+                    ForEach(models) { Text($0.name).tag($0.id) }
+                }
             }.accessibilityIdentifier("chat-model")
+            if let agent = models.first(where: { $0.id == options.model && $0.agent != nil })?.agentTitle {
+                Text(L10n.text("Агент: \(agent)", "Agent: \(agent)")).font(.footnote).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("chat-agent")
+            }
             Picker(L10n.text("Доступ к системе", "System access"), selection: Binding(
                 get: { options.access?.rawValue ?? "" }, set: { options.access = RemoteAccessMode(rawValue: $0) })) {
                 Text(L10n.text("По умолчанию проекта", "Project default") + ": " + projectAccess.title).tag("")
@@ -935,6 +947,9 @@ extension MobileModel {
     func loadPreview() {
         var project = RemoteProject(id: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", name: "Context Desk", canCreateChat: true)
         project.models = [RemoteModelOption(id: "fixture-a", name: "Model A"), RemoteModelOption(id: "fixture-b", name: "Model B")]
+        project.newChatModels = [RemoteModelOption(id: "fixture-a", name: "Model A", agent: RemoteModelOption.codexAgent),
+                                 RemoteModelOption(id: "fixture-b", name: "Model B", agent: RemoteModelOption.codexAgent),
+                                 RemoteModelOption(id: "fixture-claude", name: "Claude Model", agent: RemoteModelOption.claudeAgent)]
         project.settings = RemoteChatSettings(options: RemoteChatOptions(model: "fixture-a"), projectAccess: .standard, canEdit: true)
         var chat = RemoteChat(id: "preview-chat", project: project.id, title: L10n.text("Мобильное приложение", "Mobile app"), running: false,
             messages: [RemoteMessage(id: "m1", role: "user", text: L10n.text("Сделаем удобный интерфейс для iPhone. Поле ввода должно быть всегда под рукой.", "Let's make the iPhone interface comfortable. Keep the message field within reach.")),

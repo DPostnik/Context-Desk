@@ -139,6 +139,13 @@ import Testing
         let command = RemoteCommand.newChat(owner: UUID().uuidString, device: UUID().uuidString, project: project.id.uuidString, text: "From phone")
         let before = await model.remoteSnapshot(projects: [project.id.uuidString])
         #expect(before.projects.first?.canCreateChat == true && before.chats.isEmpty)
+        // Claude is not connected: only Codex models are offered, and a Claude model is refused before anything starts.
+        #expect(before.projects.first?.newChatModels?.map(\.id) == ["fixture-model", "fixture-alternate"])
+        #expect(before.projects.first?.newChatModels?.allSatisfy { $0.agent == RemoteModelOption.codexAgent } == true)
+        let claude = RemoteCommand.newChat(owner: command.owner, device: command.device, project: command.project, text: "Claude",
+                                           options: RemoteChatOptions(model: ClaudeModel.defaultID))
+        await #expect(throws: RemoteFailure.self) { try await model.executeRemote(claude) }
+        #expect(model.state.chats.isEmpty)
         #expect(try await model.executeRemote(command) == "submitted")
         let chat = try #require(model.state.chats.first)
         #expect(chat.id == command.chat && chat.nativeSession?.nativeID == "created-native")

@@ -424,6 +424,46 @@ private func interactiveRequest(context: AgentContext, root: URL, session: Agent
     await model.shutdown()
 }
 
+@Test @MainActor func phoneStartsClaudeChatWithChosenModelWhileCodexIsOffline() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let binary = try interactiveFixture(root), home = root.appendingPathComponent("home")
+    let adapter = ClaudeIntegration()
+    _ = try await adapter.connect(.init(executable: binary, home: home)).value()
+    let model = DeskModel(claudeIntegration: adapter, store: AppStore(file: root.appendingPathComponent("store.sqlite")),
+                          pluginDirectory: root.appendingPathComponent("plugins"), claudeHome: home,
+                          jobStore: JobStore(file: root.appendingPathComponent("jobs.json")))
+    let pump = Task { for await event in model.claudeConnection.events { await model.receiveClaude(event) } }
+    defer { pump.cancel() }
+    let project = Project(path: root.path)
+    model.state.projects = [project]; model.state.defaultConnection = .appClaude; model.state.claudeModel = "claude-sonnet-5-5"
+    let ids = [project.id.uuidString]
+    #expect(await model.remoteSnapshot(projects: Set(ids)).projects.first?.canCreateChat == false)
+    model.claudeConnected = true; model.claudeAuthenticated = true
+    let offered = try #require(await model.remoteSnapshot(projects: Set(ids)).projects.first)
+    #expect(offered.canCreateChat == true && offered.settings?.canEdit == true)
+    #expect(offered.settings?.options.model == "claude-sonnet-5-5")
+    #expect(offered.newChatModels?.map(\.id) == ClaudeModel.catalog.filter { $0.isSupported() }.map(\.id))
+    #expect(offered.newChatModels?.allSatisfy { $0.agent == RemoteModelOption.claudeAgent } == true)
+    let unknown = RemoteCommand.newChat(owner: UUID().uuidString, device: UUID().uuidString, project: ids[0], text: "hello",
+                                        options: RemoteChatOptions(model: "claude-unknown"))
+    await #expect(throws: RemoteFailure.self) { try await model.executeRemote(unknown) }
+    let command = RemoteCommand.newChat(owner: unknown.owner, device: unknown.device, project: ids[0], text: "hello",
+                                        options: RemoteChatOptions(model: "claude-fable-5-1", access: .fullAccess))
+    #expect(try await model.executeRemote(command) == "submitted")
+    let chat = try #require(model.state.chats.first)
+    #expect(chat.id == command.chat && chat.nativeSession?.connection == .appClaude)
+    #expect(chat.model == "claude-fable-5-1" && chat.route == .direct && chat.accessMode == .fullAccess)
+    #expect(model.chatID == nil && model.state.claudeModel == "claude-sonnet-5-5")
+    let submitted = home.appendingPathComponent("submitted")
+    for _ in 0..<1500 where (try? String(contentsOf: submitted, encoding: .utf8))?.contains("claude-fable-5-1") != true {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(try String(contentsOf: submitted, encoding: .utf8).contains("claude-fable-5-1"))
+    #expect(model.state.chats.count == 1)
+    await model.shutdown()
+}
+
 @Test(arguments: ["broken", "unknown", "wait"]) func claudeInteractiveUncertainAndInterrupt(_ prompt: String) async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }

@@ -1386,11 +1386,21 @@ private struct ChatRunState {
             }
             chats.append(remote)
         }
+        let codexOptions = models.map { RemoteModelOption(id: $0.id, name: $0.displayName) }
+        let codexNew = codexRemoteReady && !models.isEmpty
+            ? models.map { RemoteModelOption(id: $0.id, name: $0.displayName, agent: RemoteModelOption.codexAgent) } : []
+        let claudeNew = claudeRemoteReady ? remoteClaudeModels.map { RemoteModelOption(id: $0.id, name: $0.name, agent: RemoteModelOption.claudeAgent) } : []
+        let claudeFirst = (state.defaultConnection == .appClaude && !claudeNew.isEmpty) || codexNew.isEmpty
+        let newChatModels = claudeFirst ? claudeNew + codexNew : codexNew + claudeNew
+        let claudeDefault = ClaudeModel.resolved(state.claudeModel)
+        let defaultModel = !claudeFirst ? state.model
+            : claudeNew.contains(where: { $0.id == claudeDefault }) ? claudeDefault : claudeNew.first?.id ?? state.model
         return RemoteSnapshot(projects: selected.map {
             var project = RemoteProject(id: $0.id.uuidString, name: $0.name, canCreateChat: canCreateRemoteChat)
-            project.models = models.map { RemoteModelOption(id: $0.id, name: $0.displayName) }
-            project.settings = RemoteChatSettings(options: RemoteChatOptions(model: state.model),
-                projectAccess: RemoteAccessMode(rawValue: ($0.defaultChatAccessMode ?? .standard).rawValue)!, canEdit: canCreateRemoteChat && !models.isEmpty)
+            project.models = codexOptions
+            project.newChatModels = newChatModels
+            project.settings = RemoteChatSettings(options: RemoteChatOptions(model: defaultModel),
+                projectAccess: RemoteAccessMode(rawValue: ($0.defaultChatAccessMode ?? .standard).rawValue)!, canEdit: !newChatModels.isEmpty)
             return project
         }, chats: chats)
     }
@@ -1405,18 +1415,31 @@ private struct ChatRunState {
         guard let model = models.first(where: { $0.id == options.model }) else { throw RemoteFailure.invalidCommand }
         return model
     }
+    /// A phone may start a chat on either agent, independent of the desktop's default agent.
+    private var codexRemoteReady: Bool { connected && authenticated && routeIsAvailable(defaultRoute) }
+    private var claudeRemoteReady: Bool { claudeConnected && claudeAuthenticated }
+    /// Catalog models the pinned Claude Code build can run.
+    private var remoteClaudeModels: [ClaudeModel] { ClaudeModel.catalog.filter { $0.isSupported() } }
     private var canCreateRemoteChat: Bool {
-        state.defaultConnection == .originalCodex && connected && authenticated && routeIsAvailable(defaultRoute)
+        codexRemoteReady || claudeRemoteReady
     }
     private func createRemoteChat(_ command: RemoteCommand) async throws -> String {
-        guard canCreateRemoteChat, !state.chats.contains(where: { $0.id == command.chat }),
+        guard !state.chats.contains(where: { $0.id == command.chat }),
               let project = state.projects.first(where: { $0.id.uuidString == command.project }) else { throw RemoteFailure.invalidCommand }
         let options = command.settings?.options
-        let chosen = try options.map { try remoteModel($0) }
-        let model = chosen?.id ?? state.model, effort = chosen?.defaultEffort ?? draftEffort, route = defaultRoute
+        // The command carries only a model ID; the Mac resolves its agent. Older phones without options mean Codex.
+        let claude = options.map { option in !models.contains { $0.id == option.model } && remoteClaudeModels.contains { $0.id == option.model } } ?? false
+        guard claude ? claudeRemoteReady : codexRemoteReady else { throw RemoteFailure.invalidCommand }
+        let model: String, effort: String, route: RequestRoute
+        if claude, let options {
+            model = options.model; effort = ClaudeEffort.resolved(state.claudeEffort); route = .direct
+        } else {
+            let chosen = try options.map { try remoteModel($0) }
+            model = chosen?.id ?? state.model; effort = chosen?.defaultEffort ?? draftEffort; route = defaultRoute
+        }
         let access = options?.access.flatMap { AccessMode(rawValue: $0.rawValue) } ?? project.defaultChatAccessMode ?? .standard
         // Persist the stable app ID before sending. Native identity never comes from the phone.
-        let session = try await connection.createSession(projectPath: project.path, access: access, model: model, route: route)
+        let session = try await (claude ? claudeConnection : connection).createSession(projectPath: project.path, access: access, model: model, route: route)
         guard !state.chats.contains(where: { $0.id == command.chat }),
               ConversationIdentity.appID(for: session.nativeID, in: state, connection: session.connection) == nil else { throw RemoteFailure.invalidCommand }
         var chat = Chat(session: session, projectID: project.id, title: ChatTitle.placeholder(), model: model)

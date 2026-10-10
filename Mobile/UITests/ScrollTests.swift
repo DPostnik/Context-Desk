@@ -93,7 +93,13 @@ final class ScrollTests: XCTestCase {
             XCTAssertTrue(input.waitForExistence(timeout: 5))
             app.buttons["new-chat-project"].tap()
             app.buttons[empty + " · Mac"].tap()
+            // Models from every ready agent are offered; the choice names the agent that will run the chat.
+            app.buttons["chat-model"].tap(); app.buttons["Claude Model"].tap()
+            XCTAssertEqual(app.staticTexts["chat-agent"].label, language == "ru" ? "Агент: Claude" : "Agent: Claude")
+            let agents = XCTAttachment(screenshot: app.screenshot())
+            agents.name = "New chat agent " + language; agents.lifetime = .keepAlways; add(agents)
             app.buttons["chat-model"].tap(); app.buttons["Model B"].tap()
+            XCTAssertEqual(app.staticTexts["chat-agent"].label, language == "ru" ? "Агент: Codex" : "Agent: Codex")
             app.buttons["chat-access"].tap()
             app.buttons[language == "ru" ? "Полный доступ" : "Full access"].tap()
             XCTAssertFalse(app.buttons["create-chat"].isEnabled)

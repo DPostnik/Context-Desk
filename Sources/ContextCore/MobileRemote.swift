@@ -28,9 +28,13 @@ public enum RemoteAccessMode: String, Codable, CaseIterable, Sendable {
     }
 }
 public struct RemoteModelOption: Codable, Identifiable, Sendable, Equatable {
+    public static let codexAgent = "codex", claudeAgent = "claude"
     public var id: String
     public var name: String
-    public init(id: String, name: String) { self.id = id; self.name = name }
+    /// Engine that runs the model; nil means Codex (older hosts). Kept a string so a future agent never breaks snapshot decoding.
+    public var agent: String?
+    public init(id: String, name: String, agent: String? = nil) { self.id = id; self.name = name; self.agent = agent }
+    public var agentTitle: String { agent == Self.claudeAgent ? "Claude" : "Codex" }
 }
 public struct RemoteChatOptions: Codable, Sendable, Equatable {
     public var model: String
@@ -62,7 +66,10 @@ public struct RemoteProject: Codable, Identifiable, Sendable, Equatable {
     public var name: String
     /// Absent on older hosts. Creation is an initial send to a reserved app conversation ID.
     public var canCreateChat: Bool?
+    /// Codex models for existing Codex chats' settings.
     public var models: [RemoteModelOption]?
+    /// Models a new chat can start with, from every ready agent; the chosen model selects the agent. Absent on older hosts: use `models`.
+    public var newChatModels: [RemoteModelOption]?
     public var settings: RemoteChatSettings?
     public init(id: String, name: String, canCreateChat: Bool? = nil) {
         self.id = id; self.name = name; self.canCreateChat = canCreateChat
