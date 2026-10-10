@@ -50,3 +50,77 @@ public enum ScheduledBrowserImport {
         try ChromeSessionImportPolicy.save(checked, environment: environment, grant: grant, browserRoot: root)
     }
 }
+
+/// Result of the app-side sign-in transfer that runs before the first model turn of a scheduled run.
+public enum ScheduledBrowserPreflight: Equatable, Sendable {
+    /// Site cookies were written to and read back from the run's fresh profile; website sign-in is not yet verified.
+    case imported(verified: Int)
+    /// Definite failure; nothing that could need a retry was left behind.
+    case blocked(ChromeCookieError)
+    /// The write may have happened. Never retried in this run.
+    case uncertain
+    /// Wildcard policy: the site is known only once the agent opens a page, so the agent keeps the import step.
+    case skipped
+}
+
+extension ScheduledBrowserImport {
+    /// Transfers only the policy site's cookies into the run's own fresh profile, once, before dispatch.
+    /// A fresh per-run profile has no cookies, so missing sign-in is certain and no agent turn is spent observing it.
+    public static func preflight(_ policy: ChromeSessionImportPolicy, session: AgentSessionReference, runtime: URL, maxBrowsers: Int,
+                                 root: URL = BrowserEnvironmentStore.directory, sourceIsRunning: @escaping @Sendable () -> Bool,
+                                 read: (@Sendable (String, String) throws -> ChromeCookieRead)? = nil,
+                                 transfer: (@Sendable (ChromeCookieRead, URL, BrowserProfileGrant) async throws -> ChromeCookieImportResult)? = nil) async -> ScheduledBrowserPreflight {
+        guard !policy.coversAnySite else { return .skipped }
+        do {
+            let store = BrowserProfileStore(root: root)
+            guard let profile = try store.current(session: session) else { return .blocked(.missingEnvironment) }
+            let environment = store.environment(profile.id)
+            let grant = try store.ownedGrant(session: session, allowHuman: false)
+            let cookies = try (read ?? { try ChromeCookieSource.read(profile: $0, site: $1, sourceIsRunning: sourceIsRunning) })(policy.profile, policy.site)
+            guard !cookies.cookies.isEmpty else { return .blocked(.empty) }
+            let result = try await (transfer ?? { read, environment, grant in
+                try await ChromeCookieImporter.transfer(read, environment: environment, runtime: runtime, maxBrowsers: maxBrowsers,
+                                                        grant: grant, browserRoot: root)
+            })(cookies, environment, grant)
+            return result.verified > 0 ? .imported(verified: result.verified) : .blocked(.empty)
+        } catch let error as ChromeCookieError {
+            return error == .uncertain ? .uncertain : .blocked(error)
+        } catch {
+            return .blocked(.connection)
+        }
+    }
+
+    /// Run instructions after the preflight. The import step is replaced; the agent never imports again in this run.
+    public static func instructions(_ policy: ChromeSessionImportPolicy, preflight: ScheduledBrowserPreflight, tool: String = "browser_import_session",
+                                    language: AppLanguage = L10n.language) -> String {
+        let site = policy.site
+        let tail = L10n.text(
+            " Не вызывай \(tool) в этом запуске и не закрывай обычный Chrome. Если вход недоступен, укажи один конкретный blocker и продолжай независимые этапы исходной задачи. Это не расширяет права на отправку сообщений, приглашений, заявок или другие внешние действия.",
+            " Do not call \(tool) in this run and do not close regular Chrome. If sign-in is unavailable, report one specific blocker and continue independent stages of the original task. This does not expand authority to send messages, invitations, applications or perform other external actions.", language: language)
+        switch preflight {
+        case .skipped:
+            return instructions(policy, tool: tool, language: language)
+        case .imported(let verified):
+            return L10n.text(
+                "Context Desk до начала запуска перенёс в браузер этой задачи cookies сайта \(site) из выбранного профиля Chrome (подтверждено: \(verified)). Вход на сайте ещё не проверен: открой \(site) обычным действием и проверь доступ к защищённому содержимому. Если сайт всё равно просит войти, значит сессия в обычном Chrome истекла — blocker: «войди в \(site) в обычном Chrome».",
+                "Before this run, Context Desk transferred \(site) cookies from the selected Chrome profile into this task's browser (\(verified) confirmed). Website sign-in is not verified yet: open \(site) normally and check access to protected content. If the site still asks to sign in, the session in regular Chrome has expired — blocker: \"sign in to \(site) in regular Chrome\".", language: language) + tail
+        case .uncertain:
+            return L10n.text(
+                "Context Desk пытался до начала запуска перенести cookies сайта \(site), но результат не подтверждён; повтора не было. Проверь вход обычным чтением страницы.",
+                "Before this run, Context Desk attempted to transfer \(site) cookies, but the outcome is unconfirmed; it was not retried. Check sign-in by reading the page normally.", language: language) + tail
+        case .blocked(let error):
+            return L10n.text(
+                "Context Desk не смог до начала запуска перенести вход на сайт \(site): \(error.message(language: language)) Считай \(site) недоступным без входа в этом запуске.",
+                "Before this run, Context Desk could not transfer sign-in for \(site): \(error.message(language: language)) Treat \(site) as unavailable without sign-in in this run.", language: language) + tail
+        }
+    }
+
+    /// Swaps the standard import paragraph that `browserExecutionPrompt` appended for the preflight outcome.
+    public static func applying(_ preflight: ScheduledBrowserPreflight, policy: ChromeSessionImportPolicy, to prompt: String,
+                                tool: String, language: AppLanguage = L10n.language) -> String {
+        let standard = instructions(policy, tool: tool, language: language)
+        let replacement = instructions(policy, preflight: preflight, tool: tool, language: language)
+        guard standard != replacement else { return prompt }
+        return prompt.contains(standard) ? prompt.replacingOccurrences(of: standard, with: replacement) : prompt + "\n\n" + replacement
+    }
+}

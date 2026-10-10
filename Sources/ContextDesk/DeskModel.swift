@@ -1125,10 +1125,23 @@ private struct ChatRunState {
                 try Task.checkCancellation()
                 guard !schedulerStopping else { throw CancellationError() }
             }
+            var outgoing = text
             if let scheduledBrowserImport, scheduledRun != nil, state.browserEnabled == true {
-                try ScheduledBrowserImport.install(scheduledBrowserImport, session: sessionForChat(id), browserEnabled: state.browserEnabled == true)
+                let session = try sessionForChat(id)
+                try ScheduledBrowserImport.install(scheduledBrowserImport, session: session, browserEnabled: state.browserEnabled == true)
+                if let resources = Bundle.main.resourceURL {
+                    let limit = UserDefaults.standard.object(forKey: "parallelBrowserLimit") as? Int ?? 2
+                    let preflight = await Task.detached {
+                        await ScheduledBrowserImport.preflight(scheduledBrowserImport, session: session,
+                            runtime: resources.appendingPathComponent("BrowserRuntime"), maxBrowsers: limit,
+                            sourceIsRunning: { !NSRunningApplication.runningApplications(withBundleIdentifier: "com.google.Chrome").isEmpty })
+                    }.value
+                    AppLog.delivery.info("Scheduled sign-in preflight for chat \(id, privacy: .public): \(String(describing: preflight), privacy: .public)")
+                    let tool = scheduledAgent == .appClaude ? ScheduledBrowserImport.claudeImportTool : "browser_import_session"
+                    outgoing = ScheduledBrowserImport.applying(preflight, policy: scheduledBrowserImport, to: text, tool: tool)
+                }
             }
-            let submittedTurn = try await client.send(text, to: sessionForChat(id), projectPath: project.path,
+            let submittedTurn = try await client.send(outgoing, to: sessionForChat(id), projectPath: project.path,
                                                           access: access, model: selectedModel, effort: selectedEffort,
                                                           kind: scheduledRun == nil ? .interactive : .scheduled, conversation: ConversationID(id))
             if threadID == nil && scheduledRun == nil {

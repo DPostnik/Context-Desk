@@ -110,3 +110,67 @@ import Testing
     #expect(try response(revoked).jobs?.first?.browserSessionImport == nil)
     await store.release()
 }
+
+@Test func scheduledPreflightTransfersOnlyPolicySiteOnceBeforeDispatch() async throws {
+    let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = BrowserProfileStore(root: root)
+    let session = AgentSessionReference(connection: .appClaude, nativeID: "preflight-run")
+    let grant = try store.prepareNew(project: root.path, connection: .appClaude)
+    try store.acknowledge(grant, session: session)
+    let policy = try ChromeSessionImportPolicy(profile: "Profile 2", site: "linkedin.com")
+    let runtime = root.appendingPathComponent("runtime")
+    let cookie = ImportedChromeCookie(host: ".linkedin.com", name: "li_at", value: "secret", path: "/", secure: true, httpOnly: true, sameSite: nil, expires: nil)
+    final class Calls: @unchecked Sendable { var reads: [[String]] = []; var transfers = 0 }
+    let calls = Calls()
+    let read: @Sendable (String, String) throws -> ChromeCookieRead = { profile, site in
+        calls.reads.append([profile, site]); return ChromeCookieRead(cookies: [cookie])
+    }
+    let imported = await ScheduledBrowserImport.preflight(policy, session: session, runtime: runtime, maxBrowsers: 2, root: root,
+        sourceIsRunning: { true }, read: read, transfer: { _, environment, owned in
+            calls.transfers += 1
+            #expect(environment == store.environment(grant.environment) && owned == grant)
+            return ChromeCookieImportResult(verified: 1, skipped: 0, unverified: 0)
+        })
+    #expect(imported == .imported(verified: 1))
+    #expect(calls.reads == [["Profile 2", "linkedin.com"]] && calls.transfers == 1)
+    // Wildcard policies keep the agent-driven import; nothing is read up front.
+    let any = try ChromeSessionImportPolicy(profile: "Default", site: ChromeSessionImportPolicy.anySite)
+    #expect(await ScheduledBrowserImport.preflight(any, session: session, runtime: runtime, maxBrowsers: 2, root: root,
+        sourceIsRunning: { true }, read: read, transfer: { _, _, _ in Issue.record("no transfer"); throw ChromeCookieError.connection }) == .skipped)
+    #expect(calls.reads.count == 1)
+    // Definite failures block; an unconfirmed write is reported as uncertain and never retried.
+    #expect(await ScheduledBrowserImport.preflight(policy, session: session, runtime: runtime, maxBrowsers: 2, root: root,
+        sourceIsRunning: { true }, read: { _, _ in throw ChromeCookieError.keychain }, transfer: { _, _, _ in throw ChromeCookieError.connection }) == .blocked(.keychain))
+    #expect(await ScheduledBrowserImport.preflight(policy, session: session, runtime: runtime, maxBrowsers: 2, root: root,
+        sourceIsRunning: { true }, read: { _, _ in ChromeCookieRead() }, transfer: { _, _, _ in Issue.record("no transfer"); throw ChromeCookieError.connection }) == .blocked(.empty))
+    let before = calls.transfers
+    #expect(await ScheduledBrowserImport.preflight(policy, session: session, runtime: runtime, maxBrowsers: 2, root: root,
+        sourceIsRunning: { true }, read: read, transfer: { _, _, _ in calls.transfers += 1; throw ChromeCookieError.uncertain }) == .uncertain)
+    #expect(calls.transfers == before + 1)
+    let stranger = AgentSessionReference(connection: .appClaude, nativeID: "no-environment")
+    #expect(await ScheduledBrowserImport.preflight(policy, session: stranger, runtime: runtime, maxBrowsers: 2, root: root,
+        sourceIsRunning: { true }, read: read, transfer: { _, _, _ in throw ChromeCookieError.connection }) == .blocked(.missingEnvironment))
+}
+
+@Test func scheduledPreflightReplacesImportStepInBothLanguages() throws {
+    let policy = try ChromeSessionImportPolicy(profile: "Default", site: "linkedin.com")
+    let tool = ScheduledBrowserImport.claudeImportTool
+    for language in [AppLanguage.russian, .english] {
+        let prompt = "Routine." + "\n\n" + ScheduledBrowserImport.instructions(policy, tool: tool, language: language) + "\n\nMarkers."
+        let imported = ScheduledBrowserImport.applying(.imported(verified: 7), policy: policy, to: prompt, tool: tool, language: language)
+        #expect(imported.hasPrefix("Routine.") && imported.hasSuffix("Markers."))
+        #expect(!imported.contains(ScheduledBrowserImport.instructions(policy, tool: tool, language: language)))
+        #expect(imported.contains("7") && imported.contains("linkedin.com"))
+        let blocked = ScheduledBrowserImport.applying(.blocked(.keychain), policy: policy, to: prompt, tool: tool, language: language)
+        #expect(blocked.contains(ChromeCookieError.keychain.message(language: language)))
+        #expect(ScheduledBrowserImport.applying(.skipped, policy: policy, to: prompt, tool: tool, language: language) == prompt)
+        // A prompt without the standard paragraph still receives the outcome.
+        #expect(ScheduledBrowserImport.applying(.uncertain, policy: policy, to: "Plain", tool: tool, language: language).hasPrefix("Plain\n\n"))
+    }
+    let en = ScheduledBrowserImport.instructions(policy, preflight: .imported(verified: 3), tool: tool, language: .english)
+    let ru = ScheduledBrowserImport.instructions(policy, preflight: .imported(verified: 3), tool: tool, language: .russian)
+    #expect(en.contains("Do not call \(tool) in this run") && en.contains("sign in to linkedin.com in regular Chrome"))
+    #expect(ru.contains("Не вызывай \(tool) в этом запуске") && ru.contains("войди в linkedin.com в обычном Chrome"))
+    #expect(en.contains("does not expand authority") && ru.contains("не расширяет права"))
+}
