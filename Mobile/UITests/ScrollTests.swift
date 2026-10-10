@@ -226,3 +226,38 @@ final class ScrollTests: XCTestCase {
         XCTAssertTrue(tail.isHittable)
     }
 }
+
+final class AnswerControlTests: XCTestCase {
+    @MainActor func testRichAnswerControlsInBothLanguages() throws {
+        for (language, copied, commands, cut, access) in [
+            ("ru", "Скопировано", "Копировать команды", "Сокращено · полный текст на Mac", "С подтверждениями"),
+            ("en", "Copied", "Copy commands", "Shortened · full text on Mac", "Ask for approval")
+        ] {
+            let app = XCUIApplication()
+            app.launchArguments = ["-mobile-preview", "-preview-rich", "-preview-chat", "-interfaceLanguage", language]
+            app.launch()
+            let running = app.descendants(matching: .any)["running-activity"].firstMatch
+            XCTAssertTrue(running.waitForExistence(timeout: 10))
+            XCTAssertTrue(running.label.contains("Bash · zsh scripts/test.sh --changed"), running.label)
+            XCTAssertTrue(app.staticTexts[cut].exists)
+            XCTAssertTrue(app.buttons["chat-settings"].exists)
+            XCTAssertTrue(app.buttons["chat-access-chip"].label.contains(access))
+            let shell = app.buttons.matching(identifier: "copy-code").matching(NSPredicate(format: "label CONTAINS %@", commands)).firstMatch
+            XCTAssertTrue(shell.exists)
+            shell.tap()
+            XCTAssertTrue(app.buttons.matching(identifier: "copy-code").matching(NSPredicate(format: "label CONTAINS %@", copied)).firstMatch.waitForExistence(timeout: 2))
+            let bottom = XCTAttachment(screenshot: app.screenshot())
+            bottom.name = "Rich answer bottom " + language; bottom.lifetime = .keepAlways; add(bottom)
+            app.scrollViews["conversation-scroll"].swipeDown(velocity: .fast)
+            app.scrollViews["conversation-scroll"].swipeDown(velocity: .fast)
+            XCTAssertTrue(app.staticTexts["message-text-rich"].waitForExistence(timeout: 3))
+            let top = XCTAttachment(screenshot: app.screenshot())
+            top.name = "Rich answer top " + language; top.lifetime = .keepAlways; add(top)
+            app.navigationBars.buttons.firstMatch.tap()
+            XCTAssertTrue(app.buttons["chat-row-preview-chat"].waitForExistence(timeout: 5))
+            let list = XCTAttachment(screenshot: app.screenshot())
+            list.name = "Chat list " + language; list.lifetime = .keepAlways; add(list)
+            app.terminate()
+        }
+    }
+}

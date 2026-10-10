@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import ContextCore
+import ContextTranscript
 import AgentContract
 import Combine
 import IOKit.pwr_mgt
@@ -24,6 +25,8 @@ import IOKit.ps
     private weak var model: DeskModel?
     private var lastPublished: RemoteSnapshot?
     private var liveMessages: [String: [RemoteMessage]] = [:]
+    /// Thread ID -> readable current tool call of its running turn.
+    private var liveActivity: [String: String] = [:]
     private var workspaceObservers: [NSObjectProtocol] = []
     private var powerSource: CFRunLoopSource?
     private var sleeping = false
@@ -140,7 +143,11 @@ import IOKit.ps
                 snapshot.chats[index].messages = Array(messages.suffix(20))
             }
         }
+        for index in snapshot.chats.indices where snapshot.chats[index].running {
+            if let action = liveActivity[snapshot.chats[index].id] { snapshot.chats[index].activity = action }
+        }
         liveMessages = liveMessages.filter { key, _ in snapshot.chats.contains { $0.id == key } }
+        liveActivity = liveActivity.filter { key, _ in snapshot.chats.contains { $0.id == key && $0.running } }
         guard snapshot != lastPublished else { return }
         try await api.publishChanges(RemoteDevice(id: device, owner: api.owner(), snapshot: snapshot), previous: lastPublished)
         try Task.checkCancellation()
@@ -156,17 +163,26 @@ import IOKit.ps
         guard enabled, let thread, let model,
               let chat = model.state.chats.first(where: { $0.id == thread }), projects.contains(chat.projectID.uuidString) else { return }
         switch event.payload {
+        case .item(let item) where item.kind == "activity":
+            // Same one-line headline as the desktop working row.
+            liveActivity[thread] = String(TranscriptScrollView.activityHeadline(item.text).prefix(RemoteChat.activityLimit))
+        case .started:
+            liveActivity[thread] = nil
         case .item(let item) where ["user", "assistant"].contains(item.kind):
-            let message = RemoteMessage(id: item.id, role: item.kind, text: String(item.text.prefix(2000)))
+            if item.kind == "assistant" { liveActivity[thread] = nil }
+            let message = RemoteMessage(id: item.id, role: item.kind, fullText: item.text)
             var entries = liveMessages[thread] ?? []
             if let i = entries.firstIndex(where: { $0.id == item.id }) { entries[i] = message } else { entries.append(message) }
             liveMessages[thread] = Array(entries.suffix(20))
         case .delta(_, let id, let text):
             var entries = liveMessages[thread] ?? []
-            if let i = entries.firstIndex(where: { $0.id == id }) { entries[i].text = String((entries[i].text + text).prefix(2000)) }
+            liveActivity[thread] = nil
+            if let i = entries.firstIndex(where: { $0.id == id }) { entries[i].append(text) }
             else {
-                let base = lastPublished?.chats.first(where: { $0.id == thread })?.messages.first(where: { $0.id == id })?.text ?? ""
-                entries.append(RemoteMessage(id: id, role: "assistant", text: String((base + text).prefix(2000))))
+                var message = lastPublished?.chats.first(where: { $0.id == thread })?.messages.first(where: { $0.id == id })
+                    ?? RemoteMessage(id: id, role: "assistant", text: "")
+                message.append(text)
+                entries.append(message)
             }
             liveMessages[thread] = Array(entries.suffix(20))
         default: break
@@ -210,7 +226,7 @@ import IOKit.ps
         workspaceObservers.forEach(NSWorkspace.shared.notificationCenter.removeObserver)
         workspaceObservers = []
         if let powerSource { CFRunLoopRemoveSource(CFRunLoopGetMain(), powerSource, .commonModes) }
-        powerSource = nil; liveMessages = [:]; lastPublished = nil
+        powerSource = nil; liveMessages = [:]; liveActivity = [:]; lastPublished = nil
         releaseSleepAssertion()
         status = L10n.text("Удалённый доступ выключен. Очередь в облаке сохранена.", "Remote access disabled. Cloud queue retained.")
     }

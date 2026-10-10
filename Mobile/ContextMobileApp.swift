@@ -251,12 +251,13 @@ struct MobileRoot: View {
                 if model.signedIn {
                     List {
                         ForEach(model.devices) { device in
-                            Section {
-                                ConnectionStatus(model: model, device: device)
+                            if device.snapshot.projects.isEmpty {
+                                Section { } header: { ConnectionStatus(model: model, device: device, compact: true) }
                             }
                             ForEach(device.snapshot.projects) { project in
                                 MobileProjectSection(project: project, deviceID: device.id,
-                                    chats: device.snapshot.chats.filter { $0.project == project.id }, search: search)
+                                    chats: device.snapshot.chats.filter { $0.project == project.id }, search: search,
+                                    connection: project.id == device.snapshot.projects.first?.id ? ConnectionStatus(model: model, device: device, compact: true) : nil)
                             }
                         }
                     }
@@ -338,6 +339,8 @@ struct MobileProjectSection: View {
     let deviceID: String
     let chats: [RemoteChat]
     let search: String
+    /// The Mac's connection line, shown above the first project of that Mac.
+    var connection: ConnectionStatus?
     @State private var visibleCount = 5
     private let pageSize = 5
 
@@ -374,10 +377,13 @@ struct MobileProjectSection: View {
                     }.accessibilityIdentifier("fewer-chats-" + project.id)
                 }
             } header: {
-                HStack {
-                    Text(project.name)
-                    Spacer()
-                    Text(matches.count.formatted())
+                VStack(alignment: .leading, spacing: 10) {
+                    if let connection { connection.textCase(nil) }
+                    HStack {
+                        Text(project.name)
+                        Spacer()
+                        Text(matches.count.formatted())
+                    }
                 }
             } footer: {
                 if hiddenApprovals > 0 {
@@ -451,32 +457,40 @@ struct ChatRow: View, Equatable {
     let title: String
     let preview: String?
     let running: Bool
+    let activity: String?
     let needsApproval: Bool
     let readOnly: Bool
     init(chat: RemoteChat) {
-        title = chat.title; preview = chat.messages.last?.text
-        running = chat.running; needsApproval = !chat.approvals.isEmpty; readOnly = chat.readOnly == true
+        title = chat.title; preview = chat.messages.last.map { MarkdownInline.plain($0.text) }
+        running = chat.running; activity = chat.activity
+        needsApproval = !chat.approvals.isEmpty; readOnly = chat.readOnly == true
     }
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: needsApproval ? "hand.raised" : "bubble.left.and.bubble.right")
-                .font(.title3).foregroundStyle(needsApproval ? .orange : Color.accentColor)
-                .frame(width: 40, height: 40).background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
-            VStack(alignment: .leading, spacing: 6) {
-                Text(title).font(.headline).lineLimit(2)
+        HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.body.weight(.semibold)).lineLimit(2)
                 Text(preview ?? L10n.text("Пока нет сообщений", "No messages yet"))
                     .font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
-                if running || needsApproval {
-                    Label(needsApproval ? L10n.text("Нужен ответ", "Needs your attention") : L10n.text("Работает", "Working"),
-                          systemImage: needsApproval ? "exclamationmark.circle" : "circle.dotted")
-                        .font(.caption.weight(.medium)).foregroundStyle(needsApproval ? .orange : Color.accentColor)
+                if needsApproval {
+                    Label(L10n.text("Нужен ответ", "Needs your attention"), systemImage: "hand.raised.fill")
+                        .font(.caption.weight(.medium)).foregroundStyle(.orange)
+                } else if running {
+                    Text(activity ?? L10n.text("Работает", "Working"))
+                        .font(.caption.weight(.medium)).foregroundStyle(Color.accentColor).lineLimit(1).truncationMode(.middle)
                 }
                 if readOnly {
                     Label(L10n.text("Только чтение", "Read-only"), systemImage: "lock")
                         .font(.caption.weight(.medium)).foregroundStyle(.secondary).accessibilityIdentifier("read-only-badge")
                 }
             }
-        }.padding(.vertical, 7)
+            Spacer(minLength: 0)
+            // One quiet status mark: orange when an answer is needed, a spinner while working.
+            if needsApproval {
+                Circle().fill(Color.orange).frame(width: 9, height: 9).padding(.top, 6).accessibilityHidden(true)
+            } else if running {
+                ProgressView().controlSize(.small).padding(.top, 2).accessibilityHidden(true)
+            }
+        }.padding(.vertical, 4)
     }
 }
 
@@ -570,13 +584,14 @@ struct MobileChatSettingsView: View {
 struct ConnectionStatus: View {
     @ObservedObject var model: MobileModel
     let device: RemoteDevice
+    var compact = false
     var body: some View {
         let server = model.connectionState == .connected
         let host = server && model.onlineMacs.contains(device.id.lowercased())
         HStack(spacing: 10) {
             Circle().fill(host ? Color.green : .orange).frame(width: 7, height: 7)
             Text(server ? (host ? L10n.text("Mac на связи", "Mac connected") : L10n.text("Mac недоступен", "Mac unavailable")) : model.connectionState.text)
-                .font(.subheadline)
+                .font(compact ? .footnote : .subheadline).foregroundStyle(compact ? .secondary : .primary)
             Spacer()
             if let date = ISO8601DateFormatter().date(from: device.seen) {
                 Text(date, style: .relative).font(.caption).foregroundStyle(.secondary)
@@ -656,8 +671,12 @@ struct MobileChatView: View {
     }
     var body: some View {
         if let device = model.devices.first(where: { $0.id == deviceID }), let chat = device.snapshot.chats.first(where: { $0.id == chatID }) {
+            let project = device.snapshot.projects.first { $0.id == chat.project }
+            let lastCommand = model.commands.first { $0.chat == chatID && $0.device == deviceID }
             VStack(spacing: 0) {
-                ConnectionStatus(model: model, device: device).padding(.horizontal).padding(.vertical, 9).background(.bar)
+                if !(model.connectionState == .connected && model.onlineMacs.contains(device.id.lowercased())) {
+                    ConnectionStatus(model: model, device: device).padding(.horizontal).padding(.vertical, 9).background(.bar)
+                }
                 if !chat.approvals.isEmpty {
                     Button { writing = false; approvalJump += 1 } label: {
                         Label(L10n.text("Ожидают подтверждения: \(chat.approvals.count)", "Awaiting approval: \(chat.approvals.count)"), systemImage: "hand.raised.fill")
@@ -670,25 +689,54 @@ struct MobileChatView: View {
                         VStack(alignment: .leading, spacing: 20) {
                             Text(L10n.text("Последние сообщения · полная история на Mac", "Recent messages · full history on Mac"))
                                 .font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.top, 8)
-                            ForEach(chat.messages) { message in MessageBubble(message: message) }
+                            let lastUser = chat.messages.last { $0.role == "user" }?.id
+                            ForEach(chat.messages) { message in
+                                MessageBubble(message: message)
+                                if message.id == lastUser, let status = sendStatus(lastCommand, chat: chat) {
+                                    Text(status).font(.caption).foregroundStyle(.secondary)
+                                        .frame(maxWidth: .infinity, alignment: .trailing).padding(.top, -14)
+                                        .accessibilityIdentifier("send-status")
+                                }
+                            }
+                            if lastUser == nil, let status = sendStatus(lastCommand, chat: chat) {
+                                Text(status).font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .trailing)
+                                    .accessibilityIdentifier("send-status")
+                            }
                             if chat.running {
-                                HStack(spacing: 10) { ProgressView(); Text(L10n.text("Агент работает…", "Agent is working…")).font(.subheadline).foregroundStyle(.secondary) }
+                                TimelineView(.periodic(from: .now, by: 1)) { context in
+                                    HStack(spacing: 10) {
+                                        ProgressView().controlSize(.small)
+                                        Text(chat.activity ?? L10n.text("Агент работает…", "Agent is working…"))
+                                            .lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary)
+                                        if let elapsed = chat.elapsed(now: context.date) {
+                                            Text(elapsed).monospacedDigit().foregroundStyle(.tertiary).layoutPriority(1)
+                                        }
+                                    }.font(.subheadline)
+                                }.accessibilityElement(children: .combine).accessibilityIdentifier("running-activity")
                             }
                             Color.clear.frame(height: 1).id("approvals")
                             ForEach(chat.approvals) { approval in
                                 let response = model.approvalCommand(device: deviceID, chat: chatID, approval: approval.id)
                                 VStack(alignment: .leading, spacing: 12) {
-                                    Label(L10n.text("Требуется подтверждение", "Approval required"), systemImage: "hand.raised.fill").font(.headline)
-                                    Text(approval.details).font(.callout).textSelection(.enabled)
-                                    HStack {
-                                        Button(L10n.text("Отклонить", "Decline"), role: .destructive) { Task { _ = await model.send(device: device, chat: chat, kind: "deny", approval: approval.id) } }
-                                            .accessibilityIdentifier("deny-approval")
-                                        Spacer()
+                                    Label(L10n.text("Требуется подтверждение", "Approval required"), systemImage: "hand.raised.fill")
+                                        .font(.headline).foregroundStyle(.orange)
+                                    Text(approval.details).font(.system(.footnote, design: .monospaced)).textSelection(.enabled)
+                                        .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                                        .background(Color(.systemBackground).opacity(0.7), in: RoundedRectangle(cornerRadius: 10))
+                                    HStack(spacing: 10) {
+                                        Button(role: .destructive) {
+                                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                            Task { _ = await model.send(device: device, chat: chat, kind: "deny", approval: approval.id) }
+                                        } label: { Text(L10n.text("Отклонить", "Decline")).frame(maxWidth: .infinity) }
+                                            .buttonStyle(.bordered).accessibilityIdentifier("deny-approval")
                                         if approval.canAllow {
-                                            Button(L10n.text("Разрешить один раз", "Allow once")) { Task { _ = await model.send(device: device, chat: chat, kind: "allow", approval: approval.id) } }
-                                                .accessibilityIdentifier("allow-approval")
+                                            Button {
+                                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                                Task { _ = await model.send(device: device, chat: chat, kind: "allow", approval: approval.id) }
+                                            } label: { Text(L10n.text("Разрешить один раз", "Allow once")).lineLimit(1).minimumScaleFactor(0.8).frame(maxWidth: .infinity) }
+                                                .buttonStyle(.borderedProminent).tint(.orange).accessibilityIdentifier("allow-approval")
                                         }
-                                    }.buttonStyle(.bordered).disabled(model.sending || model.unresolved != nil || response.map { $0.status != "rejected" } == true)
+                                    }.controlSize(.large).disabled(model.sending || model.unresolved != nil || response.map { $0.status != "rejected" } == true)
                                     if let response { Text(commandLabel(response.status)).font(.caption).foregroundStyle(.secondary) }
                                     if !approval.canAllow {
                                         Text(L10n.text("Подтвердить этот запрос с телефона нельзя. Проверь полные детали на Mac или отклони запрос.", "This request cannot be approved on your phone. Review the full details on your Mac or decline it."))
@@ -696,8 +744,9 @@ struct MobileChatView: View {
                                     }
                                 }.padding().background(Color.orange.opacity(0.09), in: RoundedRectangle(cornerRadius: 18))
                             }
-                            if let command = model.commands.first(where: { $0.chat == chatID && $0.device == deviceID }) {
-                                Text(command.kind == "configure" && command.status == "submitted" ? L10n.text("Настройки сохранены", "Settings saved") : commandLabel(command.status)).font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity)
+                            if let command = lastCommand, !["send", "create"].contains(command.kind), command.approval == nil {
+                                Text(command.kind == "configure" && command.status == "submitted" ? L10n.text("Настройки сохранены", "Settings saved") : commandLabel(command.status))
+                                    .font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .trailing)
                             }
                             Color.clear.frame(height: 1).id("tail")
                                 .background(GeometryReader { geometry in
@@ -775,6 +824,22 @@ struct MobileChatView: View {
                             .font(.footnote).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.vertical, 6).accessibilityIdentifier("read-only-notice")
                     } else {
+                    if let settings = chat.settings {
+                        let access = settings.options.access ?? settings.projectAccess
+                        let modelName = project?.models?.first { $0.id == settings.options.model }?.name ?? settings.options.model
+                        HStack(spacing: 8) {
+                            Button { showingChatSettings = true } label: {
+                                ComposerChip(icon: access == .fullAccess ? "lock.open" : "lock", text: access.title)
+                            }.accessibilityLabel(L10n.text("Доступ: ", "Access: ") + access.title).accessibilityIdentifier("chat-access-chip")
+                            Button { showingChatSettings = true } label: {
+                                ComposerChip(icon: "cpu", text: modelName.isEmpty ? L10n.text("Модель", "Model") : modelName)
+                            }.accessibilityLabel(L10n.text("Настройки чата", "Chat settings") + ": " + modelName).accessibilityIdentifier("chat-settings")
+                            if model.pendingSettings(device: deviceID, chat: chatID) {
+                                ProgressView().controlSize(.mini)
+                            }
+                            Spacer()
+                        }.buttonStyle(.plain)
+                    }
                     HStack(alignment: .bottom, spacing: 8) {
                         PhotosPicker(selection: $photoSelection, maxSelectionCount: max(1, RemotePhoto.maximumCount - photos.count), matching: .images) {
                             Image(systemName: "photo.badge.plus").font(.title3).frame(width: 44, height: 44)
@@ -832,11 +897,11 @@ struct MobileChatView: View {
             }
             .navigationTitle(chat.title).navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    if chat.settings != nil {
-                        Button { showingChatSettings = true } label: { Image(systemName: "slider.horizontal.3") }
-                            .accessibilityLabel(L10n.text("Настройки чата", "Chat settings")).accessibilityIdentifier("chat-settings")
-                    }
+                ToolbarItem(placement: .principal) {
+                    VStack(spacing: 1) {
+                        Text(chat.title).font(.headline).lineLimit(1)
+                        if let project { Text(project.name).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+                    }.accessibilityElement(children: .combine).accessibilityAddTraits(.isHeader)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     if writing {
@@ -878,6 +943,12 @@ struct MobileChatView: View {
             }
         }
         throw RemoteFailure.invalidPhoto
+    }
+    /// Status of the last message sent from the phone, shown under it until the agent takes over.
+    private func sendStatus(_ command: RemoteCommand?, chat: RemoteChat) -> String? {
+        guard let command, ["send", "create"].contains(command.kind) else { return nil }
+        if command.status == "submitted" && (chat.running || chat.messages.last?.role != "user") { return nil }
+        return commandLabel(command.status)
     }
     private func commandLabel(_ status: String) -> String {
         switch status {
@@ -921,24 +992,83 @@ private struct TranscriptHeightKey: PreferenceKey {
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
 
+struct ComposerChip: View {
+    let icon: String
+    let text: String
+    var body: some View {
+        Label(text, systemImage: icon).font(.caption.weight(.medium)).lineLimit(1)
+            .padding(.horizontal, 10).padding(.vertical, 5)
+            .background(Color(.tertiarySystemFill), in: Capsule())
+            .foregroundStyle(.secondary)
+    }
+}
+
 struct MessageBubble: View {
     let message: RemoteMessage
+    @State private var copiedPath = false
     var body: some View {
-        HStack(alignment: .top) {
-            if message.role == "user" { Spacer(minLength: 30) }
-            VStack(alignment: .leading, spacing: 6) {
-                if message.role != "user" { Text(L10n.text("Ассистент", "Assistant")).font(.caption.weight(.semibold)).foregroundStyle(.secondary) }
-                Text((try? AttributedString(markdown: message.text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(message.text))
-                    .font(.body).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+        if message.role == "user" {
+            // The user's words stay literal, like on the Mac.
+            HStack(alignment: .top) {
+                Spacer(minLength: 56)
+                Text(message.text).font(.body).textSelection(.enabled)
+                    .padding(.horizontal, 14).padding(.vertical, 10)
+                    .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                    .contextMenu { menu }
                     .accessibilityIdentifier("message-text-" + message.id)
+            }.accessibilityElement(children: .contain).accessibilityIdentifier("message-" + message.id)
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                MarkdownMessageView(text: message.text, identifier: "message-text-" + message.id)
+                if message.truncated == true {
+                    Label(L10n.text("Сокращено · полный текст на Mac", "Shortened · full text on Mac"), systemImage: "scissors")
+                        .font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("message-truncated-" + message.id)
+                }
+                HStack(spacing: 18) {
+                    CopyControl(title: L10n.text("Копировать ответ", "Copy answer"), text: message.text, identifier: "copy-message-" + message.id)
+                    ShareLink(item: message.text) { Label(L10n.text("Поделиться", "Share"), systemImage: "square.and.arrow.up").font(.caption.weight(.medium)) }
+                    if copiedPath { Text(L10n.text("Путь скопирован", "Path copied")).font(.caption) }
+                }.labelStyle(.iconOnly).foregroundStyle(.secondary).buttonStyle(.borderless)
             }
-            .padding(message.role == "user" ? 14 : 0)
-            .background(message.role == "user" ? Color(.secondarySystemBackground) : .clear, in: RoundedRectangle(cornerRadius: 20))
-            .contextMenu {
-                Button { UIPasteboard.general.string = message.text } label: { Label(L10n.text("Копировать", "Copy"), systemImage: "doc.on.doc") }
-            }
-            if message.role != "user" { Spacer(minLength: 4) }
-        }.accessibilityElement(children: .contain).accessibilityIdentifier("message-" + message.id)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contextMenu { menu }
+            .environment(\.openURL, OpenURLAction { url in
+                // Path chips copy instead of opening: the file lives on the Mac.
+                guard let path = MarkdownInline.copiedValue(url) else { return .systemAction }
+                UIPasteboard.general.string = path
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                copiedPath = true
+                Task { try? await Task.sleep(for: .seconds(1.5)); copiedPath = false }
+                return .handled
+            })
+            .accessibilityElement(children: .contain).accessibilityIdentifier("message-" + message.id)
+        }
+    }
+    @ViewBuilder private var menu: some View {
+        Button { UIPasteboard.general.string = message.text } label: { Label(L10n.text("Копировать", "Copy"), systemImage: "doc.on.doc") }
+        ShareLink(item: message.text) { Label(L10n.text("Поделиться", "Share"), systemImage: "square.and.arrow.up") }
+        let links = Self.links(in: message.text)
+        if !links.isEmpty {
+            Menu {
+                ForEach(links, id: \.self) { url in
+                    Link(destination: url) { Label(MarkdownInline.shortened(url), systemImage: "safari") }
+                }
+            } label: { Label(L10n.text("Открыть ссылку", "Open link"), systemImage: "link") }
+            Menu {
+                ForEach(links, id: \.self) { url in
+                    Button(MarkdownInline.shortened(url)) { UIPasteboard.general.url = url }
+                }
+            } label: { Label(L10n.text("Копировать ссылку", "Copy link"), systemImage: "link.badge.plus") }
+        }
+    }
+    static func links(in text: String) -> [URL] {
+        guard text.contains("http"), let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else { return [] }
+        var result: [URL] = []
+        for match in detector.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+            if let url = match.url, ["http", "https"].contains(url.scheme?.lowercased() ?? ""), !result.contains(url) { result.append(url) }
+            if result.count == 8 { break }
+        }
+        return result
     }
 }
 
@@ -959,6 +1089,17 @@ extension MobileModel {
                 RemoteMessage(id: "long-\(index)", role: index.isMultiple(of: 2) ? "user" : "assistant",
                     text: "Message \(index)\n" + String(repeating: "Long transcript layout verification. ", count: index.isMultiple(of: 3) ? 70 : 10))
             }
+        }
+        if ProcessInfo.processInfo.arguments.contains("-preview-rich") {
+            let answer = L10n.text("## Итог проверки\n\nСборка прошла, осталось **два** шага. Подробности — https://developer.apple.com/documentation/swiftui/grid и в `Sources/ContextCore/MobileRemote.swift`.\n\n- [x] Тесты ядра\n- [ ] Проверка на телефоне\n  - снимок экрана\n\n> [!WARNING]\n> Профиль подписи истекает 12.10.\n\n```swift\nlet limit = 2000 // phone history\nfunc clip(_ text: String) -> String { String(text.prefix(limit)) }\n```\n\n```bash\n$ zsh scripts/build-mobile.sh\nBUILD SUCCEEDED\n```\n\n| Проверка | Время, с |\n|---|---|\n| Ядро | 12 |\n| UI | 184 |",
+                                   "## Check summary\n\nThe build passed, **two** steps remain. Details: https://developer.apple.com/documentation/swiftui/grid and `Sources/ContextCore/MobileRemote.swift`.\n\n- [x] Core tests\n- [ ] Phone check\n  - screenshot\n\n> [!WARNING]\n> The signing profile expires on Oct 12.\n\n```swift\nlet limit = 2000 // phone history\nfunc clip(_ text: String) -> String { String(text.prefix(limit)) }\n```\n\n```bash\n$ zsh scripts/build-mobile.sh\nBUILD SUCCEEDED\n```\n\n| Check | Time, s |\n|---|---|\n| Core | 12 |\n| UI | 184 |")
+            var long = RemoteMessage(id: "rich-cut", role: "assistant", fullText: String(repeating: L10n.text("Длинный ответ. ", "Long answer. "), count: 160))
+            long.text = String(long.text.prefix(120))
+            chat.messages = [RemoteMessage(id: "rich-user", role: "user", text: L10n.text("Как прошла проверка?", "How did the check go?")),
+                             RemoteMessage(id: "rich", role: "assistant", text: answer), long]
+            chat.running = true
+            chat.activity = "Bash · zsh scripts/test.sh --changed"
+            chat.runningSince = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-75))
         }
         var projects = [project]
         if ProcessInfo.processInfo.arguments.contains("-preview-actions") {

@@ -1382,8 +1382,13 @@ private struct ChatRunState {
             }
             var remote = RemoteChat(id: chat.id, project: chat.projectID.uuidString, title: chat.title,
                 running: isBusy(threadID: chat.id), messages: messages.filter { ["user", "assistant"].contains($0.kind) }.suffix(20).map {
-                    RemoteMessage(id: $0.id, role: $0.kind, text: String($0.text.prefix(2000)))
+                    RemoteMessage(id: $0.id, role: $0.kind, fullText: $0.text)
                 }, approvals: approvals, turn: runs[chat.id]?.turnID)
+            if remote.running, let run = runs[chat.id] {
+                // The host replaces this with the current tool call when it saw one.
+                remote.activity = run.status.map { String($0.prefix(RemoteChat.activityLimit)) }
+                remote.runningSince = run.turnID.flatMap { turnStarts[chat.id + ":" + $0] }.map { ISO8601DateFormatter().string(from: $0) }
+            }
             if chat.isScheduledRecord { remote.readOnly = true; remote.supportsPhotos = false }
             if let project = selected.first(where: { $0.id == chat.projectID }), chat.nativeSession?.connection == .originalCodex {
                 remote.settings = remoteSettings(chat, project: project)

@@ -87,17 +87,50 @@ public struct RemoteChat: Codable, Identifiable, Sendable, Equatable {
     public var settings: RemoteChatSettings?
     /// Absent on older hosts. A Claude scheduled-run record accepts no messages from any device.
     public var readOnly: Bool?
+    /// The running turn's current action ("Bash · npm test") or agent status; nil when idle or on older hosts.
+    public var activity: String?
+    /// ISO 8601 start of the running turn; nil when idle or on older hosts.
+    public var runningSince: String?
+    public static let activityLimit = 160
     public init(id: String, project: String, title: String, running: Bool, messages: [RemoteMessage], approvals: [RemoteApproval], turn: String? = nil) { self.id = id; self.project = project; self.title = title; self.running = running; self.messages = messages; self.approvals = approvals; self.turn = turn; supportsPhotos = true }
     public static var readOnlyNotice: String {
         L10n.text("Запись запуска задания Claude — только для чтения. Чтобы продолжить, начни новый чат.",
                   "A Claude scheduled run record is read-only. Start a new chat to follow up.")
     }
 }
+extension RemoteChat {
+    /// Compact elapsed time of the running turn, matching the desktop working row.
+    public func elapsed(now: Date = Date()) -> String? {
+        guard running, let runningSince, let start = ISO8601DateFormatter().date(from: runningSince) else { return nil }
+        let value = now.timeIntervalSince(start)
+        guard value.isFinite, value < 1e9 else { return nil }
+        let seconds = max(0, Int(value))
+        return seconds >= 60
+            ? L10n.text("\(seconds / 60) мин \(seconds % 60) с", "\(seconds / 60)m \(seconds % 60)s")
+            : L10n.text("\(seconds) с", "\(seconds)s")
+    }
+}
 public struct RemoteMessage: Codable, Identifiable, Sendable, Equatable {
+    /// Phone history keeps at most this many characters per message.
+    public static let textLimit = 2000
     public var id: String
     public var role: String
     public var text: String
+    /// Set when the Mac cut the message at `textLimit`; absent on older hosts.
+    public var truncated: Bool?
     public init(id: String, role: String, text: String) { self.id = id; self.role = role; self.text = text }
+    /// Clips the full message text to the phone limit and records whether anything was cut.
+    public init(id: String, role: String, fullText: String) {
+        self.init(id: id, role: role, text: String(fullText.prefix(Self.textLimit)))
+        if fullText.count > Self.textLimit { truncated = true }
+    }
+    /// Appends streamed text within the limit.
+    public mutating func append(_ more: String) {
+        guard truncated != true else { return }
+        let combined = text + more
+        text = String(combined.prefix(Self.textLimit))
+        if combined.count > Self.textLimit { truncated = true }
+    }
 }
 public struct RemoteApproval: Codable, Identifiable, Sendable, Equatable {
     public var id: String

@@ -160,3 +160,55 @@ import ContextCore
     #expect(try await model.executeRemote(correct) == "stop_requested")
     await connection.stop()
 }
+
+@Test func phoneMessagesRecordTruncationAndOlderSnapshotsStillDecode() throws {
+    let long = String(repeating: "a", count: RemoteMessage.textLimit + 5)
+    let clipped = RemoteMessage(id: "m", role: "assistant", fullText: long)
+    #expect(clipped.text.count == RemoteMessage.textLimit)
+    #expect(clipped.truncated == true)
+    #expect(RemoteMessage(id: "s", role: "assistant", fullText: "short").truncated == nil)
+
+    var streamed = RemoteMessage(id: "d", role: "assistant", text: String(repeating: "b", count: RemoteMessage.textLimit - 2))
+    streamed.append("cc")
+    #expect(streamed.truncated == nil)
+    streamed.append("d")
+    #expect(streamed.text.count == RemoteMessage.textLimit && streamed.truncated == true)
+    streamed.append("e")
+    #expect(streamed.text.hasSuffix("cc"))
+
+    // Hosts and phones built before these fields keep working in both directions.
+    let old = try JSONDecoder().decode(RemoteChat.self, from: Data(#"{"id":"c","project":"p","title":"t","running":true,"messages":[{"id":"m","role":"user","text":"hi"}],"approvals":[]}"#.utf8))
+    #expect(old.activity == nil && old.runningSince == nil && old.messages[0].truncated == nil)
+    #expect(old.elapsed() == nil)
+}
+
+@Test func runningChatShowsElapsedTimeOnlyWhileRunning() {
+    var chat = RemoteChat(id: "c", project: "p", title: "t", running: true, messages: [], approvals: [])
+    let start = Date(timeIntervalSince1970: 1_800_000_000)
+    chat.runningSince = ISO8601DateFormatter().string(from: start)
+    let english = L10n.language == .english
+    #expect(chat.elapsed(now: start.addingTimeInterval(42)) == (english ? "42s" : "42 с"))
+    #expect(chat.elapsed(now: start.addingTimeInterval(125)) == (english ? "2m 5s" : "2 мин 5 с"))
+    #expect(chat.elapsed(now: start.addingTimeInterval(-10)) == (english ? "0s" : "0 с"))
+    chat.running = false
+    #expect(chat.elapsed(now: start.addingTimeInterval(42)) == nil)
+}
+
+@Test @MainActor func phoneSnapshotPublishesRunningActivityAndStartUntilTheTurnEnds() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let model = DeskModel(store: AppStore(file: root.appendingPathComponent("store.sqlite")), pluginDirectory: root.appendingPathComponent("plugins"), summaryResources: nil)
+    let project = Project(path: root.path)
+    let chat = Chat(session: .init(connection: .appClaude, nativeID: "native"), projectID: project.id, title: "Work", model: "claude")
+    model.state.projects = [project]; model.state.chats = [chat]
+    var published = await model.remoteSnapshot(projects: [project.id.uuidString]).chats[0]
+    #expect(!published.running && published.activity == nil && published.runningSince == nil)
+
+    await model.receive(.init(session: chat.nativeSession, payload: .started(turn: "turn")))
+    await model.receive(.init(session: chat.nativeSession, payload: .status(turn: "turn", text: "Reading " + String(repeating: "x", count: 300))))
+    published = await model.remoteSnapshot(projects: [project.id.uuidString]).chats[0]
+    #expect(published.running)
+    #expect(published.activity?.hasPrefix("Reading ") == true && published.activity?.count == RemoteChat.activityLimit)
+    let start = try #require(published.runningSince.flatMap { ISO8601DateFormatter().date(from: $0) })
+    #expect(abs(start.timeIntervalSinceNow) < 60)
+}
