@@ -104,7 +104,7 @@ private func interactiveFixture(_ root: URL) throws -> URL {
         elif value['type']=='user':
             record=json.loads((home/'contextdesk-sessions'/(sid+'.json')).read_text())
             assert record['active'] and record['sent']
-            with (home/'submitted').open('a') as f: f.write(json.dumps({'prompt':value['message']['content'],'args':sys.argv,'env':{k:os.environ[k] for k in ['MCP_TIMEOUT','MCP_TOOL_TIMEOUT','CLAUDE_CODE_DISABLE_CLAUDE_MDS','CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES','MCP_CONNECTION_NONBLOCKING'] if k in os.environ}})+'\n')
+            with (home/'submitted').open('a') as f: f.write(json.dumps({'prompt':value['message']['content'],'args':sys.argv,'pid':os.getpid(),'env':{k:os.environ[k] for k in ['MCP_TIMEOUT','MCP_TOOL_TIMEOUT','CLAUDE_CODE_DISABLE_CLAUDE_MDS','CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES','MCP_CONNECTION_NONBLOCKING'] if k in os.environ}})+'\n')
             prompt=value['message']['content']
             if prompt=='broken': print('invalid-json',flush=True); continue
             if prompt=='unknown': out({'type':'control_request','request_id':'unknown','request':{'subtype':'unexpected_action'}}); continue
@@ -154,10 +154,65 @@ private func waitFor(_ condition: @escaping () async -> Bool) async throws {
     throw ClientFailure("Fixture timed out")
 }
 private func interactiveRequest(context: AgentContext, root: URL, session: AgentSessionReference? = nil, prompt: String = "hello", id: UUID = UUID(),
-                                fullAccess: Bool = false, kind: AgentExecutionRequest.Kind = .interactive) -> AgentExecutionRequest {
+                                fullAccess: Bool = false, kind: AgentExecutionRequest.Kind = .interactive, model: String = "") -> AgentExecutionRequest {
     .init(id: id, conversation: ConversationID(), session: session, kind: kind, prompt: prompt, projectPath: root.path,
           permissions: fullAccess ? .unrestricted(approval: .never) : .workspaceWrite(root: root.path, network: false, approval: .ask),
-          model: .init(context: context, model: ""), route: .direct)
+          model: .init(context: context, model: model), route: .direct)
+}
+
+@Test func claudeInteractiveKeepsProcessWarmAcrossTurnsUntilSettingsChange() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let binary = try interactiveFixture(root), home = root.appendingPathComponent("home")
+    let adapter = ClaudeIntegration(), events = ClaudeEvents()
+    let reader = Task { for await event in adapter.events { await events.append(event) } }
+    defer { reader.cancel() }
+    let descriptor = try await adapter.connect(.init(executable: binary, home: home)).value()
+    let session = try await adapter.prepare(interactiveRequest(context: descriptor.context, root: root)).value()
+    func turn(_ model: String, expected: Int) async throws {
+        _ = try await adapter.submit(interactiveRequest(context: descriptor.context, root: root, session: session, model: model)).value()
+        try await waitFor { await events.completionCount() == expected }
+    }
+    try await turn("", expected: 1)
+    try await turn("", expected: 2)
+    try await turn("claude-other", expected: 3)
+    let sent = try String(contentsOf: home.appendingPathComponent("submitted"), encoding: .utf8).split(separator: "\n")
+        .map { try JSONDecoder().decode(JSONValue.self, from: Data($0.utf8)) }
+    try #require(sent.count == 3)
+    // The second turn is written to the first process; a model change starts a resumed one.
+    #expect(sent[0]["pid"] == sent[1]["pid"])
+    #expect(sent[2]["pid"] != sent[1]["pid"])
+    #expect(sent[2]["args"].array.contains(.string("--resume")))
+    #expect(sent[2]["args"].array.contains(.string("claude-other")))
+    // A warm process is idle, so the chat can still be summarized.
+    _ = try await adapter.summarySource(session, context: descriptor.context).value()
+    let history = try await adapter.history(session, context: descriptor.context).value()
+    #expect(history.count == 3 && history.allSatisfy { $0.items.map(\.kind) == ["user", "assistant"] })
+    await adapter.disconnect()
+}
+
+@Test func claudeWarmProcessIsClosedAfterIdleTimeout() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let binary = try interactiveFixture(root), home = root.appendingPathComponent("home")
+    let adapter = ClaudeIntegration(warmTimeout: .milliseconds(200)), events = ClaudeEvents()
+    let reader = Task { for await event in adapter.events { await events.append(event) } }
+    defer { reader.cancel() }
+    let descriptor = try await adapter.connect(.init(executable: binary, home: home)).value()
+    let session = try await adapter.prepare(interactiveRequest(context: descriptor.context, root: root)).value()
+    _ = try await adapter.submit(interactiveRequest(context: descriptor.context, root: root, session: session)).value()
+    try await waitFor { await events.completionCount() == 1 }
+    try await Task.sleep(for: .milliseconds(600))
+    _ = try await adapter.submit(interactiveRequest(context: descriptor.context, root: root, session: session)).value()
+    try await waitFor { await events.completionCount() == 2 }
+    let sent = try String(contentsOf: home.appendingPathComponent("submitted"), encoding: .utf8).split(separator: "\n")
+        .map { try JSONDecoder().decode(JSONValue.self, from: Data($0.utf8)) }
+    try #require(sent.count == 2)
+    // The idle process was closed, so the next turn resumes native history in a new one.
+    #expect(sent[0]["pid"] != sent[1]["pid"])
+    #expect(sent[1]["args"].array.contains(.string("--resume")))
+    #expect(await events.diagnostics().isEmpty)
+    await adapter.disconnect()
 }
 
 @Test func claudeChatsLaunchTheirOwnBrowserProfileAndRestartAfterReassignment() async throws {
@@ -802,13 +857,13 @@ private func completedClaudeSession(_ adapter: ClaudeIntegration, binary: URL, h
     #expect(preview.steps.map(\.kind) == [.text, .tool, .result, .text] && preview.steps[1].text == "Read: a.txt")
     #expect(preview.tokens == 120 && preview.toolUses == 1 && preview.endedAt != nil)
     #expect(await events.subagents().contains { $0.first?.activity == "Reading a.txt" })
-    // Nothing is left to wait for, so the CLI was released and the next message starts a fresh one.
+    // Nothing is left to wait for, so the CLI stays warm and the next message goes to the same process.
     _ = try await adapter.prepare(interactiveRequest(context: descriptor.context, root: root, session: session)).value()
     _ = try await adapter.submit(interactiveRequest(context: descriptor.context, root: root, session: session)).value()
     try await waitFor { await events.completionCount() == 3 }
     // A new user message starts a fresh round: finished sub-agents leave the preview.
     #expect(await events.subagents().last == [])
-    #expect(try String(contentsOf: home.appendingPathComponent("launches"), encoding: .utf8).split(separator: "\n").count == 2)
+    #expect(try String(contentsOf: home.appendingPathComponent("launches"), encoding: .utf8).split(separator: "\n").count == 1)
     #expect(await events.diagnostics().isEmpty)
     await adapter.disconnect()
 }
@@ -839,7 +894,8 @@ private func completedClaudeSession(_ adapter: ClaudeIntegration, binary: URL, h
     _ = try await adapter.prepare(interactiveRequest(context: descriptor.context, root: root, session: session)).value()
     _ = try await adapter.submit(interactiveRequest(context: descriptor.context, root: root, session: session)).value()
     try await waitFor { await events.completionCount() == (prompt == "background-hang" ? 3 : 2) }
-    #expect(try launches() == 2)
+    // A settled CLI stays warm for the next message; one stopped at the wait limit is replaced.
+    #expect(try launches() == (prompt == "background-hang" ? 2 : 1))
     #expect(await events.startedCount() == events.completionCount())
     await adapter.disconnect()
 }

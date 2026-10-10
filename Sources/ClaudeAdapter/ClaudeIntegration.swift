@@ -28,6 +28,13 @@ public actor ClaudeIntegration: AgentIntegration {
     private var waiting: [String: UUID] = [:]
     /// Session -> launch arguments of its live CLI; a waiting CLI is reused only for an identical launch.
     private var wireArguments: [String: [String]] = [:]
+    /// Processes kept warm after a clean turn, like the native app's one live process per chat.
+    /// The next turn with an identical launch is written to the same process instead of `--resume`.
+    private var warm: [String: (token: UUID, since: Date, wire: ClaudeWire)] = [:]
+    /// Sessions with in-turn item writes waiting to be coalesced.
+    private var pendingSaves = Set<String>()
+    private let warmTimeout: Duration
+    static let warmLimit = 8
     private let backgroundWaitLimit: Duration
     private let backgroundSettleDelay: Duration
     private struct Session: Codable {
@@ -63,9 +70,10 @@ public actor ClaudeIntegration: AgentIntegration {
     private let browserRoot: URL
     private var wireGrants: [String: BrowserProfileGrant] = [:]
     public init(browserRoot: URL = BrowserEnvironmentStore.directory, backgroundWaitLimit: Duration = .seconds(3600),
-                backgroundSettleDelay: Duration = .seconds(30)) {
+                backgroundSettleDelay: Duration = .seconds(30), warmTimeout: Duration = .seconds(600)) {
         let stream = AsyncStream<AgentEvent>.makeStream(); events = stream.stream; sink = stream.continuation
         self.browserRoot = browserRoot; self.backgroundWaitLimit = backgroundWaitLimit; self.backgroundSettleDelay = backgroundSettleDelay
+        self.warmTimeout = warmTimeout
     }
     public func optimizerEnvironment(home: URL) -> AgentResult<[String: String]> { .rejected(.routeUnavailable) }
     public func connect(_ configuration: AgentConnectionConfiguration) async -> AgentResult<AgentDescriptor> {
@@ -106,7 +114,7 @@ public actor ClaudeIntegration: AgentIntegration {
         for id in Array(wires.keys) { finish(id, outcome: .uncertain) }
         wires.removeAll(); readers.removeAll(); interactions.removeAll(); seenRequests.removeAll()
         sessions.removeAll(); messageIDs.removeAll(); summaries.removeAll(); interrupted.removeAll(); meters.removeAll()
-        backgroundTasks.removeAll(); waiting.removeAll(); wireArguments.removeAll()
+        backgroundTasks.removeAll(); waiting.removeAll(); wireArguments.removeAll(); warm.removeAll(); pendingSaves.removeAll()
         for id in subagents.keys { sink.yield(.init(session: reference(id), payload: .subagents([]))) }
         subagents.removeAll()
         home = nil; executable = nil; signedIn = false; accountIdentity = nil; browserResources = nil; wireGrants.removeAll()
@@ -129,7 +137,7 @@ public actor ClaudeIntegration: AgentIntegration {
                 for runner in generations.values { await runner.stop() }
                 for wire in wires.values { await wire.close() }
                 for id in Array(wires.keys) { finish(id, outcome: .uncertain); abandonWait(id) }
-                wires.removeAll(); interactions.removeAll()
+                wires.removeAll(); interactions.removeAll(); warm.removeAll()
                 context = .init(connection: .appClaude, accountRevision: UUID())
                 sink.yield(.init(session: nil, payload: .accountChanged(error: nil)))
             }
@@ -142,6 +150,8 @@ public actor ClaudeIntegration: AgentIntegration {
         do {
             switch action {
             case .beginSignIn:
+                // Warm processes are idle here; the next turn starts cold and re-checks the account.
+                await closeWarm()
                 func quote(_ text: String) -> String { "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'" }
                 let path = home.appendingPathComponent("Sign in to Claude.command")
                 let env = ClaudeProfile.environment(home: home).sorted { $0.key < $1.key }.map { quote($0.key + "=" + $0.value) }.joined(separator: " ")
@@ -222,8 +232,6 @@ public actor ClaudeIntegration: AgentIntegration {
             guard record.active == nil, record.cwd == request.projectPath else { return .rejected(.invalidInput) }
             let expectedAccess: AccessMode = { if case .unrestricted = request.permissions { return .fullAccess }; return .standard }()
             sessions[id]?.access = expectedAccess
-            _ = try await account().value()
-            guard request.model.context == context, signedIn else { return .rejected(.staleContext) }
             let scheduled = request.kind == .scheduled
             let launch = try Self.arguments(id: id, resumed: true, access: expectedAccess, model: request.model.model, effort: request.model.effort,
                                             scheduled: scheduled, projectInstructions: ProjectInstructions.prompt(projectPath: record.cwd))
@@ -232,9 +240,13 @@ public actor ClaudeIntegration: AgentIntegration {
             if let current = wires[id], scheduledWires.contains(id) != scheduled || wireArguments[id] != launch {
                 wires.removeValue(forKey: id); abandonWait(id); await current.close()
             }
+            warm[id] = nil
             let wire: ClaudeWire
             if let current = wires[id] { wire = current; stopWaiting(id) }
             else {
+                // The account is verified whenever a process starts; a live process keeps its signed-in identity.
+                _ = try await account().value()
+                guard request.model.context == context, signedIn else { return .rejected(.staleContext) }
                 wire = ClaudeWire()
                 let profiles = BrowserProfileStore(root: browserRoot)
                 let grant = try browserResources.map { _ in try profiles.prepare(session: reference(id), project: record.cwd) }
@@ -258,8 +270,10 @@ public actor ClaudeIntegration: AgentIntegration {
             }
             guard request.model.context == context, signedIn, wires[id] === wire else { await wire.close(); return .rejected(.staleContext) }
             let turn = request.id.uuidString
-            sessions[id]?.active = turn; sessions[id]?.sent = true; sessions[id]?.current = []
-            try save(id) // Durable uncertain claim before a byte of the user turn is sent.
+            let prompt = Self.decorated(TranscriptItem(id: "user:" + turn, kind: "user", text: request.prompt), turn: turn)
+            sessions[id]?.active = turn; sessions[id]?.sent = true; sessions[id]?.current = [prompt]
+            pendingSaves.remove(id)
+            try save(id) // Durable uncertain claim, including the prompt, before a byte of the user turn is sent.
             delivered = true
             let meter = ClaudeUsageMeter(base: record.tokens, window: record.contextWindow, last: record.lastContext)
             meters[id] = meter
@@ -267,7 +281,7 @@ public actor ClaudeIntegration: AgentIntegration {
             sink.yield(.init(session: reference(id), payload: .usage(turn: nil, total: meter.total, snapshot: meter.snapshot())))
             sink.yield(.init(session: reference(id), payload: .started(turn: turn)))
             if subagents[id]?.clearFinished() == true { publishSubagents(id) }
-            emit(TranscriptItem(id: "user:" + turn, kind: "user", text: request.prompt), session: id)
+            sink.yield(.init(session: reference(id), payload: .item(prompt)))
             try await wire.send(.object(["type": .string("user"), "session_id": .string(id), "uuid": .string(UUID().uuidString),
                 "message": .object(["role": .string("user"), "content": .string(request.prompt)])]))
             return .success(.init(context: context, requestID: request.id, session: reference(id), turnID: turn))
@@ -391,7 +405,7 @@ public actor ClaudeIntegration: AgentIntegration {
         if subagents[id, default: .init()].observe(value) { publishSubagents(id) }
         switch value["type"].string {
         case "transport_closed":
-            wires.removeValue(forKey: id); finish(id, outcome: .uncertain); abandonWait(id); stopSubagents(id)
+            wires.removeValue(forKey: id); warm[id] = nil; finish(id, outcome: .uncertain); abandonWait(id); stopSubagents(id)
         case "control_request": await permission(value, session: id, wire: wire)
         case "stream_event":
             guard let turn = sessions[id]?.active else { return }
@@ -436,15 +450,19 @@ public actor ClaudeIntegration: AgentIntegration {
             }
         case "result":
             guard value["session_id"].string == id, value["is_error"].bool != nil else { await wire.close(); return }
+            let outcome: AgentExecutionOutcome = interrupted.contains(id) ? .cancelled : value["is_error"].bool == true ? .failed : .completed
             // Background tasks live in this CLI, which resumes the agent itself when they finish; a stopped turn ends them.
             let keep = !interrupted.contains(id) && !(backgroundTasks[id] ?? []).isEmpty
-            if !keep { wires.removeValue(forKey: id) }
+            // A clean turn keeps its process warm; errors and interrupts restart from native history.
+            let park = !keep && outcome == .completed && sessions[id]?.active != nil
+            if !keep && !park { wires.removeValue(forKey: id) }
             if let turn = sessions[id]?.active, var meter = meters[id] {
                 meter.complete(result: value); meters[id] = meter
                 sink.yield(.init(session: reference(id), payload: .usage(turn: turn, total: meter.total, snapshot: meter.snapshot())))
             }
-            finish(id, outcome: interrupted.contains(id) ? .cancelled : value["is_error"].bool == true ? .failed : .completed)
-            if keep { beginWaiting(id, wire: wire) } else { stopSubagents(id); await wire.close() }
+            finish(id, outcome: outcome)
+            if keep { beginWaiting(id, wire: wire) } else if park { stopSubagents(id); await parkWarm(id, wire: wire) }
+            else { stopSubagents(id); await wire.close() }
         case "tool_use_summary":
             guard let turn = sessions[id]?.active, let text = Self.progressSummary(value["summary"].string) else { return }
             summaries[id] = (turn, text)
@@ -560,15 +578,59 @@ public actor ClaudeIntegration: AgentIntegration {
     private func status(_ text: String?, session id: String, turn: String) {
         sink.yield(.init(session: reference(id), payload: .status(turn: turn, text: text)))
     }
+    private static func decorated(_ value: TranscriptItem, turn: String) -> TranscriptItem {
+        var item = value; item.turnID = turn; item.agentName = "Claude"; return item
+    }
     private func emit(_ value: TranscriptItem, session id: String) {
         guard let turn = sessions[id]?.active else { return }
-        var item = value; item.turnID = turn; item.agentName = "Claude"
+        let item = Self.decorated(value, turn: turn)
         TranscriptItem.merge(item, into: &sessions[id]!.current)
+        scheduleSave(id)
+        sink.yield(.init(session: reference(id), payload: .item(item)))
+    }
+    /// Coalesces in-turn item writes: the record holds the whole chat history, so one write per
+    /// tool call would stall the stream. Turn start and finish still save synchronously.
+    private func scheduleSave(_ id: String) {
+        guard pendingSaves.insert(id).inserted else { return }
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            await self?.flushSave(id)
+        }
+    }
+    private func flushSave(_ id: String) {
+        guard pendingSaves.remove(id) != nil else { return }
         do { try save(id) } catch {
             sink.yield(.init(session: reference(id), payload: .diagnostic(error.localizedDescription)))
             if let wire = wires[id] { Task { await wire.close() } }
         }
-        sink.yield(.init(session: reference(id), payload: .item(item)))
+    }
+    private func parkWarm(_ id: String, wire: ClaudeWire) async {
+        guard wires[id] === wire, sessions[id]?.active == nil else { return }
+        let token = UUID(), timeout = warmTimeout
+        warm[id] = (token, Date(), wire)
+        Task { [weak self] in
+            try? await Task.sleep(for: timeout)
+            await self?.expireWarm(id, token: token)
+        }
+        // Only live, idle entries count toward the limit; the oldest beyond it are closed.
+        warm = warm.filter { wires[$0.key] === $0.value.wire && sessions[$0.key]?.active == nil }
+        let surplus = warm.count - Self.warmLimit
+        guard surplus > 0 else { return }
+        for (oldest, entry) in warm.sorted(by: { $0.value.since < $1.value.since }).prefix(surplus) {
+            await expireWarm(oldest, token: entry.token)
+        }
+    }
+    private func expireWarm(_ id: String, token: UUID) async {
+        guard let entry = warm[id], entry.token == token else { return }
+        warm[id] = nil
+        guard sessions[id]?.active == nil, waiting[id] == nil, wires[id] === entry.wire else { return }
+        wires.removeValue(forKey: id); await entry.wire.close()
+    }
+    private func closeWarm() async {
+        for (id, entry) in warm where wires[id] === entry.wire && sessions[id]?.active == nil && waiting[id] == nil {
+            wires.removeValue(forKey: id); await entry.wire.close()
+        }
+        warm.removeAll()
     }
     private func beginWaiting(_ id: String, wire: ClaudeWire) {
         let token = UUID(), limit = backgroundWaitLimit
@@ -580,8 +642,11 @@ public actor ClaudeIntegration: AgentIntegration {
     }
     private func releaseIdle(_ id: String, token: UUID, wire: ClaudeWire, settled: Bool) async {
         guard waiting[id] == token, wires[id] === wire, sessions[id]?.active == nil else { return }
-        if settled { guard backgroundTasks[id]?.isEmpty == true else { return }; stopWaiting(id) }
-        else {
+        if settled {
+            guard backgroundTasks[id]?.isEmpty == true else { return }
+            // Its tasks are done and it is idle: keep it warm like a clean turn.
+            stopWaiting(id); stopSubagents(id); await parkWarm(id, wire: wire); return
+        } else {
             stopWaiting(id)
             sink.yield(.init(session: reference(id), payload: .diagnostic(L10n.text(
                 "Фоновые задачи Claude не завершились за отведённое время; процесс остановлен, их результат не получен. Ничего не повторялось.",
@@ -626,7 +691,7 @@ public actor ClaudeIntegration: AgentIntegration {
         guard let turn = sessions[id]?.active else { return }
         let history = AgentHistoryTurn(id: turn, items: sessions[id]?.current ?? [], startedAt: nil, completedAt: Date(), duration: nil, isComplete: false)
         sessions[id]?.turns.append(history); sessions[id]?.active = nil; sessions[id]?.current = []
-        summaries.removeValue(forKey: id)
+        summaries.removeValue(forKey: id); pendingSaves.remove(id)
         if var meter = meters.removeValue(forKey: id) {
             meter.abandon() // No-op after a terminal result; otherwise observed calls still count.
             sessions[id]?.tokens = meter.base; sessions[id]?.contextWindow = meter.window; sessions[id]?.lastContext = meter.last
@@ -670,6 +735,7 @@ public actor ClaudeIntegration: AgentIntegration {
     public func setArchived(_ archived: Bool, session: AgentSessionReference, context: AgentContext) -> AgentResult<Void> { checked(session, context: context) ? .success(()) : .rejected(.wrongConnection) }
     public func delete(_ session: AgentSessionReference, context: AgentContext) async -> AgentResult<Void> {
         guard checked(session, context: context), sessions[session.nativeID]?.active == nil else { return .rejected(.wrongConnection) }
+        warm[session.nativeID] = nil
         if let wire = wires.removeValue(forKey: session.nativeID) { waiting.removeValue(forKey: session.nativeID); await wire.close() }
         subagents.removeValue(forKey: session.nativeID)
         // Native execution files stay in the isolated engine home; app deletion only hides the chat.
@@ -679,7 +745,8 @@ public actor ClaudeIntegration: AgentIntegration {
         guard checked(session, context: context) else { return .rejected(.wrongConnection) }
         do {
             let value = try load(session.nativeID)
-            guard value.active == nil, wires[session.nativeID] == nil else {
+            // A warm process is idle after a clean turn; one waiting for background tasks may still add to history.
+            guard value.active == nil, wires[session.nativeID] == nil || waiting[session.nativeID] == nil && warm[session.nativeID] != nil else {
                 throw ClientFailure(L10n.text("История содержит незавершённый или неполный запрос", "History contains an active or incomplete turn"))
             }
             return .success(try ClaudeGenerationRunner.summarySource(turns: value.turns))
