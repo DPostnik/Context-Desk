@@ -47,7 +47,7 @@ public struct MessageComposer: NSViewRepresentable {
         guard let editor = scroll.documentView as? ComposerTextView else { return }
         editor.onSubmit = onSubmit
         editor.onContentHeight = onContentHeight
-        if editor.string != text { editor.string = text }
+        if editor.string != text { editor.string = text; editor.reportContentHeight() }
         if focusRequest != context.coordinator.focusRequest {
             context.coordinator.focusRequest = focusRequest
             // A freshly made editor is not in a window yet; focus after SwiftUI attaches it.
@@ -85,14 +85,27 @@ public struct MessageComposer: NSViewRepresentable {
 
 public final class ComposerTextView: NSTextView {
     public var onSubmit: (() -> Void)?
-    var onContentHeight: ((CGFloat) -> Void)?
+    public var onContentHeight: ((CGFloat) -> Void)?
     private var reportedHeight: CGFloat = 0
     public override func setFrameSize(_ newSize: NSSize) {
+        let widthChanged = abs(newSize.width - frame.width) > 0.5
         super.setFrameSize(newSize)
-        guard abs(newSize.height - reportedHeight) > 0.5, let onContentHeight else { return }
-        reportedHeight = newSize.height
+        if widthChanged { reportContentHeight() }
+    }
+    public override func didChangeText() {
+        super.didChangeText()
+        reportContentHeight()
+    }
+    /// The text's own height. The frame cannot be used: inside a scroll view it never
+    /// shrinks below the viewport, so a cleared draft would keep the composer tall.
+    public func reportContentHeight() {
+        guard let onContentHeight, let manager = layoutManager, let container = textContainer else { return }
+        manager.ensureLayout(for: container)
+        let height = (manager.usedRect(for: container).height + textContainerInset.height * 2).rounded(.up)
+        guard abs(height - reportedHeight) > 0.5 else { return }
+        reportedHeight = height
         // Never publish SwiftUI state during AppKit layout.
-        DispatchQueue.main.async { onContentHeight(newSize.height) }
+        DispatchQueue.main.async { onContentHeight(height) }
     }
     public override func keyDown(with event: NSEvent) {
         // Let the input method confirm marked text before interpreting Return.

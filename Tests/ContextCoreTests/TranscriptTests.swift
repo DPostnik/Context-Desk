@@ -463,3 +463,31 @@ import ContextTranscript
     #expect(TranscriptScrollView.activityHeadline("Вторая команда\nвывод") == "Вторая команда вывод")
     #expect(TranscriptScrollView.activityHeadline(String(repeating: "x", count: 200)).count == 120)
 }
+
+@Test @MainActor func agentMessagesInOneTurnAreSeparatedByOneBlankLine() {
+    let view = TranscriptScrollView()
+    view.update(items: [
+        TranscriptItem(id: "u", kind: "user", text: "Сделай"),
+        TranscriptItem(id: "c1", kind: "assistant", text: "Первая заметка.", phase: "commentary"),
+        TranscriptItem(id: "c2", kind: "assistant", text: "Вторая заметка.\n", phase: "commentary"),
+        TranscriptItem(id: "f", kind: "assistant", text: "Итог.", phase: "final_answer")
+    ], conversationID: "gap", followOutput: false)
+    #expect(view.transcript.string.contains("Первая заметка.\n\nВторая заметка.\n\nИтог."))
+}
+
+@Test @MainActor func composerHeightFollowsTextAndShrinksWhenCleared() async throws {
+    let editor = ComposerTextView(frame: NSRect(x: 0, y: 0, width: 300, height: 22))
+    editor.isRichText = false; editor.font = .systemFont(ofSize: 14)
+    editor.isVerticallyResizable = true; editor.textContainer?.widthTracksTextView = true
+    var heights: [CGFloat] = []
+    editor.onContentHeight = { heights.append($0) }
+    // Reports are delivered on the main queue, after AppKit layout.
+    func settle() async throws { try await Task.sleep(for: .milliseconds(50)) }
+    editor.string = Array(repeating: "Строка", count: 6).joined(separator: "\n"); editor.reportContentHeight(); try await settle()
+    let tall = heights.last ?? 0
+    // The frame of a scrolled editor keeps its viewport height; the report must not.
+    editor.setFrameSize(NSSize(width: 300, height: 200))
+    editor.string = ""; editor.reportContentHeight(); try await settle()
+    #expect(tall > 80)
+    #expect((heights.last ?? .infinity) < 30)
+}

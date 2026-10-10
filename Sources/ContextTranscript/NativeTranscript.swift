@@ -568,6 +568,8 @@ public struct NativeTranscript: NSViewRepresentable {
                                       hoverItemID: item.id,
                                       attributes: [.link: "contextdesk-copy:" + item.id, .messageCopy: true]))
         }
+        // Exactly one blank line between messages: rendered Markdown already ends its last paragraph.
+        while result.string.hasSuffix("\n") { result.deleteCharacters(in: NSRange(location: result.length - 1, length: 1)) }
         result.append(NSAttributedString(string: "\n\n", attributes: [.font: NSFont.systemFont(ofSize: 14)]))
         applyMessageStyle(item, to: result, range: NSRange(location: 0, length: result.length))
         return result
