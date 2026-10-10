@@ -24,6 +24,9 @@ struct DeskView: View {
     @State private var limitsPlacement = PopoverPlacement.fallback
     @State private var limitsAnchor = ScreenFrameProbe()
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    @State private var sidebarViewportHeight: CGFloat = 0
+    @State private var sidebarContentHeight: CGFloat = 0
+    @State private var scrollerStyle = NSScroller.preferredScrollerStyle
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
@@ -130,6 +133,13 @@ struct DeskView: View {
                                 .padding(.horizontal, 8).padding(.vertical, 10).contentShape(Rectangle())
                         }.buttonStyle(PointerButtonStyle(base: .plain))
                     }.padding(.horizontal, 12).padding(.bottom, 8)
+                        // Legacy scrollers take layout width only while the list overflows; reserve it otherwise so rows keep their width.
+                        .padding(.trailing, sidebarScrollerReserve)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { sidebarContentHeight = $0 }
+                }
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { sidebarViewportHeight = $0 }
+                .onReceive(NotificationCenter.default.publisher(for: NSScroller.preferredScrollerStyleDidChangeNotification)) { _ in
+                    scrollerStyle = NSScroller.preferredScrollerStyle
                 }
                 DeskPalette.border.frame(height: 0.5)
                 if !selection.isEmpty { selectionBar }
@@ -148,6 +158,10 @@ struct DeskView: View {
                 }.padding(14)
             }.background(DeskPalette.sidebar)
                 .navigationSplitViewColumnWidth(min: 240, ideal: 285, max: 380)
+    }
+    private var sidebarScrollerReserve: CGFloat {
+        guard scrollerStyle == .legacy, sidebarContentHeight <= sidebarViewportHeight else { return 0 }
+        return NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy)
     }
     private var detail: some View {
             VStack(spacing: 0) {
