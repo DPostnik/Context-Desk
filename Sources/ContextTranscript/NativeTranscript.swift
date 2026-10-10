@@ -58,6 +58,10 @@ public struct NativeTranscript: NSViewRepresentable {
     private var workingStatus: String?
     private var workingSince: Date?
     private var workingTimer: Timer?
+    /// Message whose copy control is shown; controls of other messages stay hidden until hovered.
+    public private(set) var hoveredItemID: String?
+    /// Transcript text keeps a readable column; wider windows add margins instead of longer lines.
+    public static let readableWidth: CGFloat = 760
 
     public init(pasteboard: NSPasteboard = .general, positions: TranscriptReadingPositions = TranscriptReadingPositions()) {
         self.positions = positions
@@ -99,6 +103,7 @@ public struct NativeTranscript: NSViewRepresentable {
         workingIndicator.setAccessibilityLabel(L10n.text("Агент работает", "Agent is working"))
         transcript.addSubview(workingIndicator)
         (transcript as? TranscriptTextView)?.didDrawText = { [weak self] in self?.positionWorkingIndicator() }
+        (transcript as? TranscriptTextView)?.hoverChanged = { [weak self] point in self?.updateHover(at: point) }
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
@@ -106,6 +111,7 @@ public struct NativeTranscript: NSViewRepresentable {
                        workingSince: Date? = nil, unreadCompletionID: String? = nil, unreadResponseItemID: String? = nil) {
         self.unreadResponseItemID = unreadResponseItemID
         self.unreadCompletionID = unreadCompletionID
+        let workingStatus = isWorking ? Self.currentActivity(items).map { Self.activityHeadline($0.text) } ?? workingStatus : workingStatus
         var items = Self.groupActivities(items, isWorking: isWorking)
         if isWorking {
             items.append(Self.workingRow(status: workingStatus, since: workingSince))
@@ -174,6 +180,10 @@ public struct NativeTranscript: NSViewRepresentable {
     public override func layout() {
         changingLayout = true
         defer { changingLayout = false; rememberPosition() }
+        let margin = max(24, ((contentSize.width - Self.readableWidth) / 2).rounded(.down))
+        if abs(transcript.textContainerInset.width - margin) > 0.5 {
+            transcript.textContainerInset = NSSize(width: margin, height: 24)
+        }
         super.layout()
         let width = transcript.textContainer?.containerSize.width ?? 0
         if width > 0, abs(width - styledWidth) > 0.5 {
@@ -355,6 +365,33 @@ public struct NativeTranscript: NSViewRepresentable {
         }
     }
 
+    /// The tool call the agent is running now: the latest activity of the current request,
+    /// unless the agent has already moved on to writing text.
+    static func currentActivity(_ items: [TranscriptItem]) -> TranscriptItem? {
+        guard let last = items.last(where: { $0.kind != "loading" }), last.kind == "activity" else { return nil }
+        return last
+    }
+
+    private func updateHover(at point: NSPoint?) {
+        var id: String?
+        if let point, let manager = transcript.layoutManager, let container = transcript.textContainer,
+           let storage = transcript.textStorage, storage.length > 0 {
+            let local = NSPoint(x: point.x - transcript.textContainerOrigin.x, y: point.y - transcript.textContainerOrigin.y)
+            var fraction: CGFloat = 0
+            let glyph = manager.glyphIndex(for: local, in: container, fractionOfDistanceThroughGlyph: &fraction)
+            let line = manager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+            if line.minY - 8 <= local.y, local.y <= line.maxY + 8 {
+                let character = manager.characterIndexForGlyph(at: glyph)
+                if let index = ranges.firstIndex(where: { NSLocationInRange(character, $0) }), previous[index].showsCopyControl {
+                    id = previous[index].id
+                }
+            }
+        }
+        guard id != hoveredItemID else { return }
+        hoveredItemID = id
+        transcript.setNeedsDisplay(transcript.visibleRect)
+    }
+
     // Each user message starts a new activity group. Assistant commentary stays
     // visible; all tool entries for that request share one disclosure row.
     /// One readable line for the running action. A Claude tool call arrives as its name
@@ -398,11 +435,9 @@ public struct NativeTranscript: NSViewRepresentable {
                     showedAuthor = true
                 }
                 guard item.kind == "activity" else { result.append(item); continue }
-                guard !inserted, let first = actions.first, let last = actions.last else { continue }
+                guard !inserted, let first = actions.first else { continue }
                 inserted = true
-                let summary = active
-                    ? L10n.text("Сейчас: ", "Now: ") + Self.activityHeadline(last.text)
-                    : L10n.text("Действия \(first.agentName ?? "Codex") · \(actions.count)", "\(first.agentName ?? "Codex") actions · \(actions.count)")
+                let summary = L10n.text("Действия \(first.agentName ?? "Codex") · \(actions.count)", "\(first.agentName ?? "Codex") actions · \(actions.count)")
                 result.append(TranscriptItem(id: first.id, kind: "activity", text: actions.enumerated().map {
                     "\($0.offset + 1). \($0.element.text)"
                 }.joined(separator: "\n"), phase: summary))
@@ -474,8 +509,8 @@ public struct NativeTranscript: NSViewRepresentable {
             ]))
             if !expanded { return result }
         } else {
-            if item.kind == "user" || item.showsAuthor {
-                let title = item.kind == "user" ? L10n.text("Ты", "You") + (item.phase.map { " · " + $0 } ?? "") : (item.agentName ?? "Codex")
+            if (item.kind == "user" && item.phase != nil) || (item.kind != "user" && item.showsAuthor) {
+                let title = item.kind == "user" ? item.phase ?? "" : (item.agentName ?? "Codex")
                 result.append(NSAttributedString(string: title + "\n", attributes: [
                     .font: NSFont.systemFont(ofSize: 12, weight: .semibold), .foregroundColor: NSColor.secondaryLabelColor,
                     .responseHeader: true
@@ -516,6 +551,7 @@ public struct NativeTranscript: NSViewRepresentable {
             let feedback = copyFeedback.flatMap { $0.id == item.id && $0.block == nil ? $0.succeeded : nil }
             result.append(copyControl(feedback: feedback,
                                       description: L10n.text("Скопировать полный текст сообщения", "Copy the full message text"),
+                                      hoverItemID: item.id,
                                       attributes: [.link: "contextdesk-copy:" + item.id, .messageCopy: true]))
         }
         result.append(NSAttributedString(string: "\n\n", attributes: [.font: NSFont.systemFont(ofSize: 14)]))
@@ -523,17 +559,25 @@ public struct NativeTranscript: NSViewRepresentable {
         return result
     }
 
-    private func copyControl(feedback: Bool?, description: String,
+    private func copyControl(feedback: Bool?, description: String, hoverItemID: String? = nil,
                              attributes: [NSAttributedString.Key: Any]) -> NSAttributedString {
         let feedbackText = feedback.map { $0 ? L10n.text("Скопировано", "Copied") : L10n.text("Не удалось скопировать", "Could not copy") }
         let description = feedbackText ?? description
         let color: NSColor = feedback.map { $0 ? .systemGreen : .systemRed } ?? .secondaryLabelColor
         let symbol = feedback.map { $0 ? "checkmark" : "exclamationmark.circle" } ?? "doc.on.doc"
         let attachment = NSTextAttachment()
-        attachment.image = NSImage(systemSymbolName: symbol, accessibilityDescription: description)?
-            .withSymbolConfiguration(.init(pointSize: 14, weight: .regular)
+        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: description)?
+            .withSymbolConfiguration(.init(pointSize: 13, weight: .regular)
                 .applying(.init(paletteColors: [color])))
-        attachment.bounds = NSRect(x: 0, y: -3, width: 18, height: 18)
+        if let itemID = hoverItemID, feedback == nil {
+            // Message copy controls appear while the pointer is over their message.
+            let cell = HoverAttachmentCell(imageCell: image ?? NSImage())
+            cell.isVisible = { [weak self] in self?.hoveredItemID == itemID }
+            attachment.attachmentCell = cell
+        } else {
+            attachment.image = image
+            attachment.bounds = NSRect(x: 0, y: -3, width: 18, height: 18)
+        }
         let result = NSMutableAttributedString(attachment: attachment)
         if let feedbackText {
             result.append(NSAttributedString(string: " " + feedbackText, attributes: [
@@ -597,7 +641,7 @@ public struct NativeTranscript: NSViewRepresentable {
         guard item.kind == "user" || item.kind == "assistant", range.length > 2 else { return }
         let width = max(1, transcript.textContainer?.containerSize.width ?? 600)
         let outgoing = item.kind == "user"
-        let inset = width * 0.22
+        let inset = outgoing ? Self.outgoingInset(item, width: width) : 0
         let paragraph = NSMutableParagraphStyle()
         paragraph.firstLineHeadIndent = outgoing ? inset + 16 : 0
         paragraph.headIndent = paragraph.firstLineHeadIndent
@@ -619,7 +663,9 @@ public struct NativeTranscript: NSViewRepresentable {
             guard value != nil else { return }
             let footer = paragraph.mutableCopy() as! NSMutableParagraphStyle
             footer.lineSpacing = 0
-            footer.paragraphSpacingBefore = 4
+            footer.paragraphSpacingBefore = outgoing ? 12 : 4
+            // A user's copy control sits under the bubble's trailing edge.
+            if outgoing { footer.alignment = .right; footer.tailIndent = -6 }
             text.addAttribute(.paragraphStyle, value: footer, range: copyRange)
         }
         text.enumerateAttribute(.quoteCard, in: range) { value, cardRange, _ in
@@ -637,9 +683,31 @@ public struct NativeTranscript: NSViewRepresentable {
             text.addAttribute(.paragraphStyle, value: control, range: controlRange)
         }
         TranscriptTables.restoreStyles(in: text, range: range)
-        // Leave the final empty paragraph outside the bubble as inter-message spacing.
-        text.addAttribute(.messageBubble, value: item.id, range: NSRange(location: range.location, length: range.length - 1))
-        text.addAttribute(.outgoingBubble, value: outgoing, range: NSRange(location: range.location, length: range.length - 1))
+        // Leave the final empty paragraph, and a user's copy control, outside the bubble.
+        var bubble = NSRange(location: range.location, length: range.length - 1)
+        if outgoing {
+            text.enumerateAttribute(.messageCopy, in: range) { value, copyRange, stop in
+                guard value != nil else { return }
+                bubble.length = max(0, copyRange.location - 1 - range.location); stop.pointee = true
+            }
+        }
+        text.addAttribute(.messageBubble, value: item.id, range: bubble)
+        if outgoing { text.addAttribute(.outgoingBubble, value: inset, range: bubble) }
+    }
+
+    /// Left edge of a user bubble that hugs its text, up to 78% of the column.
+    static func outgoingInset(_ item: TranscriptItem, width: CGFloat) -> CGFloat {
+        let maxText = max(80, width * 0.78 - 32)
+        let body = NSAttributedString(string: item.text.isEmpty ? " " : item.text, attributes: [.font: NSFont.systemFont(ofSize: 14)])
+        var textWidth = body.boundingRect(with: NSSize(width: maxText, height: .greatestFiniteMagnitude),
+                                          options: [.usesLineFragmentOrigin, .usesFontLeading]).width
+        if let phase = item.phase {
+            let header = NSAttributedString(string: phase, attributes: [.font: NSFont.systemFont(ofSize: 12, weight: .semibold)])
+            textWidth = max(textWidth, header.size().width)
+        }
+        // Line fragment padding and rounding must not wrap the last word of a hugging bubble.
+        textWidth = min(maxText, max(40, textWidth.rounded(.up) + 12))
+        return max(0, width - textWidth - 32)
     }
 
     private func rerenderItem(id: String) {
@@ -728,9 +796,42 @@ public struct NativeTranscript: NSViewRepresentable {
 
 private final class TranscriptTextView: NSTextView {
     var didDrawText: (() -> Void)?
+    var hoverChanged: ((NSPoint?) -> Void)?
+    private var hoverArea: NSTrackingArea?
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         didDrawText?()
+    }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverArea { removeTrackingArea(hoverArea) }
+        let area = NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+                                  owner: self, userInfo: nil)
+        addTrackingArea(area); hoverArea = area
+    }
+    override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        hoverChanged?(convert(event.locationInWindow, from: nil))
+    }
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        hoverChanged?(nil)
+    }
+}
+
+/// Keeps its place in the layout and stays clickable, but draws only while `isVisible`.
+private final class HoverAttachmentCell: NSTextAttachmentCell {
+    var isVisible: () -> Bool = { true }
+    override func cellSize() -> NSSize { NSSize(width: 18, height: 18) }
+    override func cellBaselineOffset() -> NSPoint { NSPoint(x: 0, y: -4) }
+    override func draw(withFrame cellFrame: NSRect, in controlView: NSView?) {
+        guard isVisible(), let image else { return }
+        let size = image.size
+        let rect = NSRect(x: cellFrame.midX - size.width / 2, y: cellFrame.midY - size.height / 2, width: size.width, height: size.height)
+        image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+    }
+    override func draw(withFrame cellFrame: NSRect, in controlView: NSView?, characterIndex charIndex: Int, layoutManager: NSLayoutManager) {
+        draw(withFrame: cellFrame, in: controlView)
     }
 }
 
@@ -784,17 +885,15 @@ private final class BubbleLayoutManager: NSLayoutManager {
         }
         storage.enumerateAttribute(.messageBubble, in: characters) { value, range, _ in
             guard value != nil else { return }
-            let outgoing = storage.attribute(.outgoingBubble, at: range.location, effectiveRange: nil) as? Bool ?? false
-            guard outgoing else { return }
+            guard let inset = storage.attribute(.outgoingBubble, at: range.location, effectiveRange: nil) as? CGFloat else { return }
             let glyphs = glyphRange(forCharacterRange: range, actualCharacterRange: nil)
             let bounds = boundingRect(forGlyphRange: glyphs, in: container)
             let width = container.containerSize.width
-            let top = max(0, bounds.minY - 7)
-            let rect = NSRect(x: origin.x + (outgoing ? width * 0.22 : 0) + 2,
-                              y: origin.y + top,
-                              width: max(1, width * 0.78 - 4), height: bounds.maxY + 7 - top)
+            let top = bounds.minY - 10
+            let rect = NSRect(x: origin.x + inset + 2, y: origin.y + top,
+                              width: max(1, width - inset - 4), height: bounds.maxY + 10 - top)
             DeskPalette.outgoingBubble.setFill()
-            NSBezierPath(roundedRect: rect, xRadius: 14, yRadius: 14).fill()
+            NSBezierPath(roundedRect: rect, xRadius: 18, yRadius: 18).fill()
         }
         storage.enumerateAttribute(.quoteCard, in: characters) { value, range, _ in
             guard value != nil else { return }

@@ -168,6 +168,7 @@ struct DeskView: View {
                     Button(L10n.text("Добавить проект…", "Add project…")) { model.openProject() }.buttonStyle(DeskButtonStyle()).padding(.bottom, 60)
                 } else { ChatView(model: model) }
             }.navigationTitle(model.showingArchive ? L10n.text("Архив", "Archive") : model.showingJobs ? L10n.text("Расписание", "Schedule") : (model.selectedChat?.title ?? L10n.text("Новый чат", "New chat")))
+                .navigationSubtitle(model.showingArchive || model.showingJobs ? "" : model.selectedProject?.name ?? "")
     }
     private var notificationsPanel: some View {
             VStack(alignment: .leading, spacing: 16) {
@@ -483,11 +484,14 @@ struct DeskView: View {
 
     private func chatLabel(_ chat: Chat, favorite: Bool) -> some View {
             HStack(spacing: 8) {
-                if !favorite && selection.contains(chat.id) {
-                    Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.accentColor)
-                        .accessibilityLabel(L10n.text("Выбран", "Selected"))
-                } else {
-                    Image(systemName: chat.isArchived ? "archivebox" : "bubble.left").foregroundStyle(.secondary)
+                // Titles line up with their project's name; the slot only carries selection or archive marks.
+                Color.clear.frame(width: favorite ? 0 : 29, height: 1).overlay(alignment: .trailing) {
+                    if !favorite && selection.contains(chat.id) {
+                        Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.accentColor)
+                            .accessibilityLabel(L10n.text("Выбран", "Selected"))
+                    } else if chat.isArchived {
+                        Image(systemName: "archivebox").foregroundStyle(.secondary)
+                    }
                 }
                 VStack(alignment: .leading, spacing: 3) {
                     Text(chat.title)
@@ -588,40 +592,10 @@ struct ChatView: View {
     @State private var followOutput = true
     @State private var showingUsage = false
     @State private var composerFocused = false
+    @State private var composerHeight: CGFloat = 22
     @State private var handoff: ContextHandoff?
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                Label(model.selectedProject?.name ?? "", systemImage: "folder")
-                    .font(.callout.weight(.semibold)).lineLimit(1)
-                    .help(model.selectedProject?.path ?? "")
-                Spacer()
-                if let chat = model.selectedChat {
-                    if model.state.browserEnabled == true, let session = chat.nativeSession,
-                       [.originalCodex, .appClaude].contains(session.connection) {
-                        ChatBrowserControls(session: session, project: model.selectedProject?.path ?? "",
-                                            busy: model.isBusy(threadID: chat.id) || model.isChangingChat(chat.id),
-                                            ownerNames: model.browserProfileOwnerNames) { action in
-                            try await model.changeBrowserProfile(chatID: chat.id, action: action)
-                        }
-                            .id(session.nativeID)
-                    }
-                    if model.preparingHandoff {
-                        ProgressView().controlSize(.small)
-                        Text(model.handoffProgress).font(.caption).lineLimit(1)
-                        Button(L10n.text("Отмена", "Cancel")) { Task { await model.cancelHandoffPreparation() } }
-                    }
-                    Button { Task { handoff = await model.prepareHandoff(chat) } } label: {
-                        Label(L10n.text("Передать контекст…", "Hand off context…"), systemImage: "arrowshape.turn.up.right")
-                    }.buttonStyle(.borderless).pointingHandCursor().disabled(model.loadingChat || model.creatingHandoff || model.preparingHandoff || model.isBusy(threadID: chat.id))
-                } else if model.state.browserEnabled == true, [.originalCodex, .appClaude].contains(model.currentAgent), let project = model.selectedProject {
-                    NewChatBrowserProfilePicker(project: project.path, connection: model.currentAgent, ownerNames: model.browserProfileOwnerNames, selection: Binding(
-                        get: { model.newChatBrowserProfiles[project.id] },
-                        set: { model.newChatBrowserProfiles[project.id] = $0 }))
-                        .disabled(model.sending)
-                }
-            }.padding(.horizontal, 24).padding(.vertical, 10)
-                .overlay(alignment: .bottom) { DeskPalette.border.frame(height: 0.5) }
             if !model.currentAgentAuthenticated {
                 HStack {
                     Text(model.currentAgent == .appClaude ? L10n.text("Войди по подписке Claude в отдельный профиль приложения.", "Sign in with your Claude subscription in the app’s separate profile.") : L10n.text("Войди через ChatGPT, чтобы начать чат.", "Sign in with ChatGPT to start a chat.")).font(.callout)
@@ -707,73 +681,87 @@ struct ChatView: View {
                 }.padding(.horizontal, 24).padding(.top, 8)
             }
             if !model.selectedChatIsArchived {
-            VStack(spacing: 10) {
+            VStack(spacing: 4) {
                 ZStack(alignment: .topLeading) {
-                    if model.draft.isEmpty { Text(model.selectedChat?.isScheduledRecord == true ? L10n.text("Ответить в новом чате…", "Reply in a new chat…") : L10n.text("Напиши сообщение…", "Write a message…")).foregroundStyle(.secondary).padding(.horizontal, 21).padding(.top, 18).allowsHitTesting(false) }
-                    MessageComposer(text: $model.draft, focused: $composerFocused) { Task { await model.send() } }
-                        .frame(height: 84).padding(.horizontal, 16).padding(.vertical, 14).accessibilityLabel(L10n.text("Сообщение", "Message"))
+                    if model.draft.isEmpty { Text(model.selectedChat?.isScheduledRecord == true ? L10n.text("Ответить в новом чате…", "Reply in a new chat…") : L10n.text("Напиши сообщение…", "Write a message…")).foregroundStyle(.secondary).padding(.horizontal, 21).padding(.top, 16).allowsHitTesting(false) }
+                    MessageComposer(text: $model.draft, focused: $composerFocused,
+                                    onContentHeight: { composerHeight = $0 }) { Task { await model.send() } }
+                        .frame(height: min(max(composerHeight, 40), 220)).padding(.horizontal, 16).padding(.top, 14).accessibilityLabel(L10n.text("Сообщение", "Message"))
                 }
-                HStack(spacing: 10) {
-                    Picker(L10n.text("Разрешения", "Permissions"), selection: Binding(get: { model.accessSelection }, set: { model.selectAccessMode($0) })) {
-                        if model.selectedChat != nil { Text(model.projectAccessTitle).tag(Optional<AccessMode>.none) }
-                        ForEach(AccessMode.allCases, id: \.self) { mode in Text(mode.title).tag(Optional(mode)) }
-                    }.pointingHandCursor().labelsHidden().fixedSize().disabled(model.busy || model.sending)
+                HStack(spacing: 2) {
+                    ChipMenu(title: model.accessSelection?.title ?? model.projectAccessTitle,
+                             systemImage: model.accessMode == .fullAccess ? "lock.open" : "lock") {
+                        Picker(L10n.text("Разрешения", "Permissions"), selection: Binding(get: { model.accessSelection }, set: { model.selectAccessMode($0) })) {
+                            if model.selectedChat != nil { Text(model.projectAccessTitle).tag(Optional<AccessMode>.none) }
+                            ForEach(AccessMode.allCases, id: \.self) { mode in Text(mode.title).tag(Optional(mode)) }
+                        }.pickerStyle(.inline).labelsHidden()
+                    }.disabled(model.busy || model.sending)
                         .help(model.currentAgent == .appClaude
                             ? L10n.text("Claude: стандартный режим — только файлы проекта, без команд и сети. Полный доступ разрешает команды и сеть. В новом чате задаёт режим по умолчанию для проекта; в существующем — переопределение этого чата. Применяется со следующего сообщения.", "Claude: standard mode allows project files only, without commands or network. Full access allows commands and network. In a new chat, sets the project default; in an existing chat, overrides its permissions. Applies from the next message.")
                             : L10n.text("В новом чате задаёт режим по умолчанию для проекта; в существующем — переопределение этого чата. Полный доступ: команды, файлы и сеть без подтверждений агента. Применяется со следующего сообщения.", "In a new chat, sets the project default; in an existing chat, overrides its permissions. Full access allows commands, files, and network access without agent approvals. Applies from the next message."))
                     Spacer()
                     if model.chatID == nil {
-                        Picker(L10n.text("Провайдер", "Provider"), selection: Binding(get: { model.currentAgent }, set: { model.selectAgent($0) })) {
-                            Text("Codex").tag(AgentConnectionID.originalCodex)
-                            Text("Claude").tag(AgentConnectionID.appClaude)
-                        }.pointingHandCursor().labelsHidden().fixedSize().disabled(model.sending)
+                        ChipMenu(title: model.currentAgent == .appClaude ? "Claude" : "Codex", systemImage: "sparkle") {
+                            Picker(L10n.text("Провайдер", "Provider"), selection: Binding(get: { model.currentAgent }, set: { model.selectAgent($0) })) {
+                                Text("Codex").tag(AgentConnectionID.originalCodex)
+                                Text("Claude").tag(AgentConnectionID.appClaude)
+                            }.pickerStyle(.inline).labelsHidden()
+                        }.disabled(model.sending)
                             .help(L10n.text("Провайдер нового чата", "Provider for the new chat"))
                     } else {
-                        Label(model.currentAgentName, systemImage: "sparkle").font(.callout).foregroundStyle(.secondary)
+                        ChipLabel(title: model.currentAgentName, systemImage: "sparkle")
+                            .font(.callout).foregroundStyle(.secondary).padding(.horizontal, 9)
                             .help(L10n.text("Провайдер этого чата", "Provider for this chat"))
                     }
                     if model.currentAgent == .appClaude {
                         ClaudeModelSelector(model: model)
                         ClaudeEffortPicker(model: model)
                     } else if !model.models.isEmpty {
-                        Picker(L10n.text("Модель", "Model"), selection: Binding(get: { model.currentModel }, set: { model.selectModel($0) })) {
-                            Text(L10n.text("Авто", "Auto")).tag("")
-                            if !model.currentModel.isEmpty && !model.models.contains(where: { $0.id == model.currentModel }) {
-                                Text(model.currentModel).tag(model.currentModel)
-                            }
-                            ForEach(model.models, id: \.self) { entry in Text(entry.displayName).tag(entry.id) }
-                        }.pointingHandCursor().labelsHidden().fixedSize().disabled(model.busy)
-                        if !model.supportedEfforts.isEmpty {
-                            Picker(L10n.text("Рассуждение", "Reasoning"), selection: Binding(get: { model.effort }, set: { model.effort = $0 })) {
+                        ChipMenu(title: model.currentModel.isEmpty ? L10n.text("Авто", "Auto")
+                                 : model.models.first(where: { $0.id == model.currentModel })?.displayName ?? model.currentModel) {
+                            Picker(L10n.text("Модель", "Model"), selection: Binding(get: { model.currentModel }, set: { model.selectModel($0) })) {
                                 Text(L10n.text("Авто", "Auto")).tag("")
-                                if !model.effort.isEmpty && !model.supportedEfforts.contains(model.effort) {
-                                    Text(model.effort).tag(model.effort)
+                                if !model.currentModel.isEmpty && !model.models.contains(where: { $0.id == model.currentModel }) {
+                                    Text(model.currentModel).tag(model.currentModel)
                                 }
-                                ForEach(model.supportedEfforts, id: \.self) { Text($0).tag($0) }
-                            }
-                                .pointingHandCursor().labelsHidden().frame(width: 100).disabled(model.busy)
+                                ForEach(model.models, id: \.self) { entry in Text(entry.displayName).tag(entry.id) }
+                            }.pickerStyle(.inline).labelsHidden()
+                        }.disabled(model.busy)
+                        if !model.supportedEfforts.isEmpty {
+                            ChipMenu(title: model.effort.isEmpty ? L10n.text("Авто", "Auto") : model.effort) {
+                                Picker(L10n.text("Рассуждение", "Reasoning"), selection: Binding(get: { model.effort }, set: { model.effort = $0 })) {
+                                    Text(L10n.text("Авто", "Auto")).tag("")
+                                    if !model.effort.isEmpty && !model.supportedEfforts.contains(model.effort) {
+                                        Text(model.effort).tag(model.effort)
+                                    }
+                                    ForEach(model.supportedEfforts, id: \.self) { Text($0).tag($0) }
+                                }.pickerStyle(.inline).labelsHidden()
+                            }.disabled(model.busy)
                         }
                     }
-                    if model.busy {
-                        Button { Task { await model.interrupt() } } label: { Image(systemName: "stop.fill").frame(width: 20, height: 20) }
-                            .buttonStyle(DeskButtonStyle()).help(L10n.text("Остановить ответ", "Stop response")).accessibilityLabel(L10n.text("Остановить ответ", "Stop response"))
-                    }
-                    Group {
+                    // One round control: stop while a response runs and nothing is typed, otherwise send or queue.
+                    if model.busy && model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Button { Task { await model.interrupt() } } label: {
+                            Image(systemName: "stop.fill").font(.system(size: 11)).frame(width: 32, height: 32)
+                                .foregroundStyle(.white).background(DeskPalette.ink, in: Circle())
+                        }.buttonStyle(PointerButtonStyle(base: .plain)).padding(.leading, 6)
+                            .help(L10n.text("Остановить ответ", "Stop response")).accessibilityLabel(L10n.text("Остановить ответ", "Stop response"))
+                    } else {
                         Button { Task { await model.send() } } label: {
-                            Image(systemName: "arrow.up").font(.headline).frame(width: 36, height: 36)
+                            Image(systemName: "arrow.up").font(.system(size: 14, weight: .semibold)).frame(width: 32, height: 32)
                                 .foregroundStyle(.white)
-                                .background(DeskPalette.ink.opacity(model.canSend ? 1 : 0.25), in: Circle())
-                        }.buttonStyle(PointerButtonStyle(base: .plain)).keyboardShortcut(.return, modifiers: .command).disabled(!model.canSend)
-                            .help(model.busy ? L10n.text("Добавить в очередь · Enter", "Add to queue · Enter") : L10n.text("Отправить · Enter", "Send · Enter")).accessibilityLabel(L10n.text("Отправить сообщение", "Send message"))
+                                .background(DeskPalette.ink.opacity(model.canSend ? 1 : 0.2), in: Circle())
+                        }.buttonStyle(PointerButtonStyle(base: .plain)).keyboardShortcut(.return, modifiers: .command).disabled(!model.canSend).padding(.leading, 6)
+                            .help(model.busy ? L10n.text("Добавить в очередь · Enter. Shift+Enter — новая строка", "Add to queue · Enter. Shift+Enter for a new line") : L10n.text("Отправить · Enter. Shift+Enter — новая строка", "Send · Enter. Shift+Enter for a new line")).accessibilityLabel(L10n.text("Отправить сообщение", "Send message"))
                     }
-                }.padding(.horizontal, 12).padding(.bottom, 10)
-            }.background(DeskPalette.canvas, in: RoundedRectangle(cornerRadius: 22))
-                .overlay(RoundedRectangle(cornerRadius: 22).stroke(composerFocused ? DeskPalette.focusBorder : DeskPalette.border, lineWidth: 1)
+                }.padding(.horizontal, 8).padding(.bottom, 8)
+            }.background(DeskPalette.canvas, in: RoundedRectangle(cornerRadius: 20))
+                .overlay(RoundedRectangle(cornerRadius: 20).stroke(composerFocused ? DeskPalette.focusBorder : DeskPalette.border, lineWidth: 1)
                 )
-                .shadow(color: .black.opacity(0.045), radius: 10, y: 2)
-                .frame(maxWidth: .infinity).padding(.horizontal, 24).padding(.top, 10)
+                .shadow(color: .black.opacity(0.05), radius: 12, y: 3)
+                .frame(maxWidth: TranscriptScrollView.readableWidth + 48).padding(.horizontal, 24).padding(.top, 10)
             }
-            HStack {
+            HStack(spacing: 12) {
                 if model.currentRoute != .direct {
                     Text(model.routeTitle(model.currentRoute)).help(model.routeMessage(model.currentRoute))
                 }
@@ -785,10 +773,39 @@ struct ChatView: View {
                 }.buttonStyle(PointerButtonStyle(base: .plain)).popover(isPresented: $showingUsage) { UsageDetail(usage: model.currentUsage, claude: model.currentAgent == .appClaude).padding(20).frame(width: 330) }
                 Spacer()
                 Toggle(L10n.text("Следить за ответом", "Follow response"), isOn: $followOutput).toggleStyle(.checkbox).pointingHandCursor()
-                Text(L10n.text("Enter — отправить · Shift+Enter — новая строка", "Enter to send · Shift+Enter for a new line"))
-            }.font(.caption2).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.horizontal, 24).padding(.vertical, 12)
+            }.font(.caption2).foregroundStyle(.secondary).padding(.horizontal, 12)
+                .frame(maxWidth: TranscriptScrollView.readableWidth + 48).padding(.horizontal, 24).padding(.top, 8).padding(.bottom, 12)
         }
         .background(DeskPalette.canvas)
+        .toolbar {
+            ToolbarItemGroup(placement: .primaryAction) {
+                if let chat = model.selectedChat {
+                    if model.state.browserEnabled == true, let session = chat.nativeSession,
+                       [.originalCodex, .appClaude].contains(session.connection) {
+                        ChatBrowserControls(session: session, project: model.selectedProject?.path ?? "",
+                                            busy: model.isBusy(threadID: chat.id) || model.isChangingChat(chat.id),
+                                            ownerNames: model.browserProfileOwnerNames) { action in
+                            try await model.changeBrowserProfile(chatID: chat.id, action: action)
+                        }
+                            .id(session.nativeID)
+                    }
+                    if model.preparingHandoff {
+                        ProgressView().controlSize(.small)
+                        Text(model.handoffProgress).font(.caption).lineLimit(1)
+                        Button(L10n.text("Отмена", "Cancel")) { Task { await model.cancelHandoffPreparation() } }
+                    }
+                    Button { Task { handoff = await model.prepareHandoff(chat) } } label: {
+                        Label(L10n.text("Передать контекст…", "Hand off context…"), systemImage: "arrowshape.turn.up.right")
+                    }.pointingHandCursor().help(L10n.text("Передать контекст в новый чат", "Hand off context to a new chat"))
+                        .disabled(model.loadingChat || model.creatingHandoff || model.preparingHandoff || model.isBusy(threadID: chat.id))
+                } else if model.state.browserEnabled == true, [.originalCodex, .appClaude].contains(model.currentAgent), let project = model.selectedProject {
+                    NewChatBrowserProfilePicker(project: project.path, connection: model.currentAgent, ownerNames: model.browserProfileOwnerNames, selection: Binding(
+                        get: { model.newChatBrowserProfiles[project.id] },
+                        set: { model.newChatBrowserProfiles[project.id] = $0 }))
+                        .disabled(model.sending)
+                }
+            }
+        }
         .sheet(item: $handoff) { value in
             HandoffEditor(model: model, handoff: value,
                 projectID: model.state.chats.first(where: { $0.id == value.origin.conversation.value })?.projectID,

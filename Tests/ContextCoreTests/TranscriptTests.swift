@@ -106,7 +106,7 @@ import ContextTranscript
                  TranscriptItem(id: "action", kind: "activity", text: "Проверка файлов")]
     view.update(items: items, conversationID: "t", followOutput: true, isWorking: true)
     view.layoutSubtreeIfNeeded()
-    #expect(view.transcript.string.contains("Ты · Отправляется…"))
+    #expect(view.transcript.string.contains("Отправляется…"))
     #expect(!view.workingIndicator.isHidden)
     #expect(view.workingIndicator.superview === view.transcript)
     let edits = view.editCount
@@ -151,7 +151,7 @@ import ContextTranscript
     }
     #expect(view.transcript.string.contains(String(repeating: "x", count: 40_000)))
     view.update(items: [TranscriptItem(id: "new", kind: "user", text: "Другой чат")], conversationID: "second", followOutput: true)
-    #expect(view.transcript.string == "Ты\nДругой чат\n\u{FFFC}\n\n")
+    #expect(view.transcript.string == "Другой чат\n\u{FFFC}\n\n")
 }
 
 @Test @MainActor func expandingActionsDoesNotLoseFollowingMessages() {
@@ -180,7 +180,9 @@ import ContextTranscript
         TranscriptItem(id: "b", kind: "activity", text: "Вторая команда")
     ]
     view.update(items: items, conversationID: "t", followOutput: false, isWorking: true)
-    #expect(view.transcript.string.contains("Сейчас: Вторая команда"))
+    // One status line: the running tool call with the turn timer; the group shows the count.
+    #expect(view.transcript.string.contains("Действия Codex · 2"))
+    #expect(view.transcript.string.contains("Вторая команда"))
     #expect(!view.transcript.string.contains("Первая команда"))
     #expect(view.transcript.string.contains("Проверяю файлы"))
     _ = view.textView(view.transcript, clickedOnLink: "contextdesk-action:a", at: 0)
@@ -194,7 +196,8 @@ import ContextTranscript
     let next = items + [TranscriptItem(id: "user2", kind: "user", text: "Ещё запрос"), TranscriptItem(id: "c", kind: "activity", text: "Третья команда")]
     view.update(items: next, conversationID: "t", followOutput: false, isWorking: true)
     #expect(view.transcript.string.contains("Действия Codex · 2"))
-    #expect(view.transcript.string.contains("Сейчас: Третья команда"))
+    #expect(view.transcript.string.contains("Действия Codex · 1"))
+    #expect(view.transcript.string.contains("Третья команда"))
     view.update(items: items, conversationID: "other", followOutput: false)
     #expect(!view.transcript.string.contains("Первая команда"))
 }
@@ -287,7 +290,8 @@ import ContextTranscript
     var icons = 0
     storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
         guard let attachment = value as? NSTextAttachment else { return }
-        #expect(attachment.image != nil)
+        // Message copy icons are drawn by a hover cell; they stay in place and clickable.
+        #expect(attachment.image != nil || (attachment.attachmentCell as? NSCell)?.image != nil)
         #expect(storage.attribute(.toolTip, at: range.location, effectiveRange: nil) as? String ==
             L10n.text("Скопировать полный текст сообщения", "Copy the full message text"))
         icons += 1

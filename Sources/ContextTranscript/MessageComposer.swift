@@ -6,8 +6,12 @@ public struct MessageComposer: NSViewRepresentable {
     @Binding var text: String
     @Binding var focused: Bool
     let onSubmit: () -> Void
-    public init(text: Binding<String>, focused: Binding<Bool>, onSubmit: @escaping () -> Void) {
+    /// Reports the text's height so the composer can grow with what is typed.
+    let onContentHeight: ((CGFloat) -> Void)?
+    public init(text: Binding<String>, focused: Binding<Bool>,
+                onContentHeight: ((CGFloat) -> Void)? = nil, onSubmit: @escaping () -> Void) {
         _text = text; _focused = focused; self.onSubmit = onSubmit
+        self.onContentHeight = onContentHeight
     }
     public func makeCoordinator() -> Coordinator { Coordinator(self) }
     public func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSScrollView, context: Context) -> CGSize? {
@@ -16,8 +20,8 @@ public struct MessageComposer: NSViewRepresentable {
     }
     public func makeNSView(context: Context) -> NSScrollView {
         let scroll = WidthBoundTextScrollView()
-        let editor = ComposerTextView(frame: NSRect(x: 0, y: 0, width: 600, height: 84))
-        editor.minSize = NSSize(width: 0, height: 84)
+        let editor = ComposerTextView(frame: NSRect(x: 0, y: 0, width: 600, height: 22))
+        editor.minSize = NSSize(width: 0, height: 22)
         editor.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         editor.isRichText = false; editor.drawsBackground = false
         editor.font = .systemFont(ofSize: 14)
@@ -40,6 +44,7 @@ public struct MessageComposer: NSViewRepresentable {
         context.coordinator.parent = self
         guard let editor = scroll.documentView as? ComposerTextView else { return }
         editor.onSubmit = onSubmit
+        editor.onContentHeight = onContentHeight
         if editor.string != text { editor.string = text }
     }
     public final class Coordinator: NSObject, NSTextViewDelegate {
@@ -72,6 +77,15 @@ public struct MessageComposer: NSViewRepresentable {
 
 public final class ComposerTextView: NSTextView {
     public var onSubmit: (() -> Void)?
+    var onContentHeight: ((CGFloat) -> Void)?
+    private var reportedHeight: CGFloat = 0
+    public override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        guard abs(newSize.height - reportedHeight) > 0.5, let onContentHeight else { return }
+        reportedHeight = newSize.height
+        // Never publish SwiftUI state during AppKit layout.
+        DispatchQueue.main.async { onContentHeight(newSize.height) }
+    }
     public override func keyDown(with event: NSEvent) {
         // Let the input method confirm marked text before interpreting Return.
         if (event.keyCode == 36 || event.keyCode == 76) && !hasMarkedText() {

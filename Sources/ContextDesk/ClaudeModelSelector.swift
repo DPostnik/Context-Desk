@@ -45,7 +45,7 @@ struct ClaudeModelSelector: View {
                     .onExitCommand { entering = false }
                     .accessibilityLabel(L10n.text("Модель Claude", "Claude model"))
             } else {
-                Menu {
+                ChipMenu(title: ClaudeModel.title(for: model.currentModel)) {
                     ForEach(ClaudeModel.current) { entry($0) }
                     Menu(L10n.text("Предыдущие поколения", "Previous generations")) {
                         ForEach(ClaudeModel.previous) { entry($0) }
@@ -55,14 +55,11 @@ struct ClaudeModelSelector: View {
                         draft = model.currentModel
                         entering = true
                     }
-                } label: {
-                    Text(ClaudeModel.title(for: model.currentModel)).lineLimit(1)
                 }
-                .pointingHandCursor()
                 .accessibilityLabel(L10n.text("Модель Claude", "Claude model"))
             }
         }
-        .frame(width: 190)
+        .frame(maxWidth: entering ? 190 : nil)
         .disabled(model.busy)
         .help(help)
     }
@@ -79,13 +76,15 @@ struct ClaudeEffortPicker: View {
     @ObservedObject var model: DeskModel
 
     var body: some View {
-        Picker(L10n.text("Рассуждение", "Reasoning"),
-               selection: Binding(get: { model.claudeEffort }, set: { model.selectClaudeEffort($0) })) {
-            ForEach(ClaudeEffort.allCases, id: \.rawValue) { level in
-                Text(level.title).tag(level.rawValue)
-            }
+        ChipMenu(title: ClaudeEffort(rawValue: model.claudeEffort)?.title ?? model.claudeEffort) {
+            Picker(L10n.text("Рассуждение", "Reasoning"),
+                   selection: Binding(get: { model.claudeEffort }, set: { model.selectClaudeEffort($0) })) {
+                ForEach(ClaudeEffort.allCases, id: \.rawValue) { level in
+                    Text(level.title).tag(level.rawValue)
+                }
+            }.pickerStyle(.inline).labelsHidden()
         }
-        .pointingHandCursor().labelsHidden().frame(width: 120).disabled(model.busy)
+        .disabled(model.busy)
         .help(L10n.text("Усилие рассуждения Claude для новых сообщений. По умолчанию — \(ClaudeEffort.defaultLevel.title.lowercased()). Низкое усилие экономит токены на простых задачах и подагентах.",
                         "Claude reasoning effort for new messages. Default is \(ClaudeEffort.defaultLevel.title.lowercased()). Low effort saves tokens on simple tasks and sub-agents."))
     }
