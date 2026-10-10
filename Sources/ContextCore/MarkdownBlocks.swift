@@ -15,6 +15,14 @@ public enum MarkdownBlock: Equatable, Sendable {
     case image(alt: String, source: String)
     case details(summary: String, body: String)
     case footnote(label: String, text: String)
+    /// YAML front matter at the very start of a document, as ordered key/value pairs.
+    case properties([MarkdownProperty])
+}
+
+public struct MarkdownProperty: Equatable, Sendable {
+    public var name: String
+    public var values: [String]
+    public init(name: String, values: [String]) { self.name = name; self.values = values }
 }
 
 public struct MarkdownListItem: Equatable, Sendable {
@@ -77,6 +85,10 @@ public enum MarkdownBlocks {
         var result: [MarkdownNode] = []
         var index = 0
         var listIndents: [Int] = []
+        if let (properties, end) = frontMatter(lines) {
+            result.append(MarkdownNode(block: .properties(properties), lines: 0..<end))
+            index = end
+        }
         while index < lines.count {
             let line = lines[index]
             let start = index
@@ -85,6 +97,12 @@ public enum MarkdownBlocks {
                 index += 1
                 // A blank line ends a list unless the next line continues it.
                 if index < lines.count, listMarker(lines[index]) == nil, indentation(lines[index]) < 2 { listIndents = [] }
+                continue
+            }
+            // HTML comments are notes for editors, not content.
+            if trimLeading(line).hasPrefix("<!--") {
+                while index < lines.count, !lines[index].contains("-->") { index += 1 }
+                index = min(lines.count, index + 1)
                 continue
             }
             if let fence = fenceOpening(line) {
@@ -205,14 +223,67 @@ public enum MarkdownBlocks {
 
     /// Markdown source of the section a heading opens: up to the next heading of the same or higher level.
     public static func section(of nodes: [MarkdownNode], at index: Int, source: String) -> String {
+        section(of: nodes, at: index, lines: lines(source))
+    }
+
+    public static func lines(_ source: String) -> [String] {
+        source.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
+    }
+
+    /// Same as `section(of:at:source:)` with the source already split, for documents with many headings.
+    public static func section(of nodes: [MarkdownNode], at index: Int, lines: [String]) -> String {
         guard nodes.indices.contains(index), case .heading(let level, _) = nodes[index].block else { return "" }
         var end = nodes.count
         for next in nodes.indices where next > index {
             if case .heading(let other, _) = nodes[next].block, other <= level { end = next; break }
         }
-        let lines = source.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
         let range = nodes[index].lines.lowerBound..<(end < nodes.count ? nodes[end].lines.lowerBound : lines.count)
         return lines[range].joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// `---` front matter with `key: value` lines; lists (`- item` or `[a, b]`) become several values.
+    private static func frontMatter(_ lines: [String]) -> ([MarkdownProperty], Int)? {
+        guard lines.first?.trimmingCharacters(in: .whitespaces) == "---", lines.count > 2 else { return nil }
+        guard let close = lines.indices.dropFirst().prefix(300).first(where: {
+            let trimmed = lines[$0].trimmingCharacters(in: .whitespaces)
+            return trimmed == "---" || trimmed == "..."
+        }), close > 1 else { return nil }
+        var properties: [MarkdownProperty] = []
+        for line in lines[1..<close] {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty || trimmed.hasPrefix("#") { continue }
+            if trimmed.hasPrefix("- "), !properties.isEmpty, line.first == " " || line.first == "-" {
+                properties[properties.count - 1].values.append(unquote(String(trimmed.dropFirst(2))))
+                continue
+            }
+            guard let colon = trimmed.firstIndex(of: ":"), indentation(line) == 0 else {
+                // Continuation of a folded value.
+                if !properties.isEmpty, indentation(line) > 0 {
+                    let last = properties.count - 1
+                    if properties[last].values.isEmpty { properties[last].values = [trimmed] }
+                    else { properties[last].values[properties[last].values.count - 1] += " " + trimmed }
+                    continue
+                }
+                return nil // Not YAML: leave the dashes to the normal parser.
+            }
+            let name = String(trimmed[..<colon]).trimmingCharacters(in: .whitespaces)
+            var value = String(trimmed[trimmed.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
+            guard !name.isEmpty, !name.contains(" ") || name.count < 40 else { return nil }
+            var values: [String] = []
+            if value.hasPrefix("["), value.hasSuffix("]") {
+                value = String(value.dropFirst().dropLast())
+                values = value.split(separator: ",").map { unquote($0.trimmingCharacters(in: .whitespaces)) }.filter { !$0.isEmpty }
+            } else if !value.isEmpty, value != "|", value != ">", value != "|-", value != ">-" {
+                values = [unquote(value)]
+            }
+            properties.append(MarkdownProperty(name: name, values: values))
+        }
+        return properties.isEmpty ? nil : (properties, close + 1)
+    }
+
+    private static func unquote(_ value: String) -> String {
+        guard value.count >= 2, let first = value.first, first == value.last, first == "\"" || first == "'" else { return value }
+        return String(value.dropFirst().dropLast())
     }
 
     // MARK: Line classification

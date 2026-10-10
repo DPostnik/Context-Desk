@@ -591,6 +591,8 @@ struct ChatView: View {
     @State private var composerFocused = false
     @State private var composerHeight: CGFloat = 22
     @State private var handoff: ContextHandoff?
+    /// Files opened from answers in the preview pane, with back/forward history.
+    @StateObject private var preview = DocumentPreviewSession()
     var body: some View {
         VStack(spacing: 0) {
             if !model.currentAgentAuthenticated {
@@ -615,7 +617,7 @@ struct ChatView: View {
                     Button(L10n.text("Вернуть исходный контекст в черновик", "Restore initial context to draft")) { Task { await model.restoreHandoffDraft() } }.disabled(!model.draft.isEmpty)
                 }.padding(.horizontal, 24)
             }
-            ChatHistoryView(model: model, transcript: model.transcript, followOutput: followOutput)
+            ChatHistoryView(model: model, transcript: model.transcript, followOutput: followOutput, onOpenFile: openPreview)
             if let action = model.currentAction {
                 ActionView(action: action, model: model).id(action.id)
                     .task(id: "\(action.id):\(model.loadingChat)") {
@@ -808,6 +810,17 @@ struct ChatView: View {
                 projectID: model.state.chats.first(where: { $0.id == value.origin.conversation.value })?.projectID,
                 route: model.state.chats.first(where: { $0.id == value.origin.conversation.value })?.route ?? model.defaultRoute)
         }
+        .inspector(isPresented: Binding(get: { preview.current != nil }, set: { if !$0 { preview.close() } })) {
+            if let current = preview.current {
+                DocumentPreviewView(session: preview, model: current)
+                    .id(current.id)
+                    .inspectorColumnWidth(min: 320, ideal: 520, max: 1100)
+            }
+        }
+    }
+
+    private func openPreview(_ url: URL, line: Int?) {
+        preview.open(url, line: line)
     }
 }
 
@@ -816,6 +829,7 @@ struct ChatHistoryView: View {
     @ObservedObject var model: DeskModel
     @ObservedObject var transcript: TranscriptPresentation
     let followOutput: Bool
+    var onOpenFile: ((URL, Int?) -> Void)? = nil
     var body: some View {
         if model.loadingChat {
             ChatLoadingIndicator()
@@ -835,7 +849,7 @@ struct ChatHistoryView: View {
             NativeTranscript(items: renderedItems, conversationID: model.chatID, followOutput: followOutput,
                              isWorking: model.busy, workingStatus: model.workingStatus, workingSince: model.workingSince, unreadCompletionID: model.selectedChat?.unreadCompletionID,
                              unreadResponseItemID: model.chatID.flatMap { model.unreadResponseItems[$0] },
-                             projectPath: model.selectedProject?.path) { threadID, completionID in
+                             projectPath: model.selectedProject?.path, onOpenFile: onOpenFile) { threadID, completionID in
                 guard transcript.items == renderedItems else { return }
                 model.markResponseRead(threadID: threadID, completionID: completionID)
             }

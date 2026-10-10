@@ -14,6 +14,8 @@ extension NSAttributedString.Key {
     static let sectionKey = NSAttributedString.Key("ContextDeskSection")
     static let blockCopy = NSAttributedString.Key("ContextDeskBlockCopy")
     static let tableData = NSAttributedString.Key("ContextDeskTableData")
+    /// Slug of a heading, the target of `#anchor` links.
+    static let headingSlug = NSAttributedString.Key("ContextDeskHeadingSlug")
 }
 
 final class TableBox: NSObject {
@@ -45,18 +47,22 @@ final class TableBox: NSObject {
 
     mutating func render(into result: NSMutableAttributedString) {
         let nodes = MarkdownBlocks.nodes(item.text)
+        let lines = MarkdownBlocks.lines(item.text)
         var section: String?
         for (index, node) in nodes.enumerated() {
             let start = result.length
-            if case .heading = node.block { section = "\(item.id)#s\(index)" }
+            var sectionCopy: (String, String)?
+            if case .heading = node.block {
+                section = "\(item.id)#s\(index)"
+                sectionCopy = (section!, MarkdownBlocks.section(of: nodes, at: index, lines: lines))
+            }
             let next = index + 1 < nodes.count ? nodes[index + 1].block : nil
-            renderBlock(node.block, next: next, into: result, indent: 0, tail: -4,
-                        sectionCopy: section.map { ($0, MarkdownBlocks.section(of: nodes, at: index, source: item.text)) })
+            renderBlock(node.block, next: next, into: result, indent: 0, tail: -4, sectionCopy: sectionCopy)
             if let section, result.length > start {
                 result.addAttribute(.sectionKey, value: section, range: NSRange(location: start, length: result.length - start))
             }
         }
-        appendSources(into: result)
+        if !view.isDocument { appendSources(into: result) }
     }
 
     // MARK: Blocks
@@ -108,6 +114,8 @@ final class TableBox: NSObject {
             if open {
                 renderBlocks(detailsBody, into: result, indent: indent + 16, tail: tail)
             }
+        case .properties(let properties):
+            renderProperties(properties, into: result, indent: indent, tail: tail)
         case .footnote(let label, let text):
             let line = NSMutableAttributedString(string: label, attributes: [
                 .font: NSFont.systemFont(ofSize: 10, weight: .semibold), .baselineOffset: 4, .foregroundColor: NSColor.controlAccentColor
@@ -140,7 +148,9 @@ final class TableBox: NSObject {
                                          attributes: [.link: "contextdesk-block-copy", .blockCopy: source, .quoteIndex: index]))
         }
         let before: CGFloat = first ? 2 : [18, 16, 12, 10, 10, 10][min(level, 6) - 1]
-        append(line, to: result, style: paragraph(indent, tail) { $0.lineSpacing = 2 }, after: level <= 2 ? 8 : 6, before: before)
+        let range = append(line, to: result, style: paragraph(indent, tail) { $0.lineSpacing = 2 }, after: level <= 2 ? 8 : 6, before: before)
+        result.addAttribute(.headingSlug, value: TranscriptLinks.slug(TranscriptLinks.render(text, attributes: [:]).string),
+                            range: NSRange(location: range.location, length: 1))
     }
 
     private mutating func renderListItem(_ listItem: MarkdownListItem, isLast: Bool, into result: NSMutableAttributedString,
@@ -192,7 +202,7 @@ final class TableBox: NSObject {
         let mono = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
         var lines = code.text.components(separatedBy: "\n")
         if lines.last == "", lines.count > 1, !code.closed { lines.removeLast() }
-        let collapsible = lines.count > Self.codeCollapseThreshold
+        let collapsible = !view.isDocument && lines.count > Self.codeCollapseThreshold
         let expanded = view.expandedBlocks.contains(key)
         let shown = collapsible && !expanded ? Array(lines.prefix(Self.codeCollapsedLines)) : lines
         let numbered = lines.count >= Self.lineNumberThreshold && !code.isDiff
@@ -344,7 +354,48 @@ final class TableBox: NSObject {
         appendSpacer(to: result, height: 20)
     }
 
+    /// Front matter as a quiet two-column card; tags read as `#tag`.
+    private mutating func renderProperties(_ properties: [MarkdownProperty], into result: NSMutableAttributedString,
+                                           indent: CGFloat, tail: CGFloat) {
+        let key = nextKey("p")
+        let start = result.length
+        let pad = Self.cardPadding
+        let nameWidth = min(160, max(70, properties.map { ($0.name as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 12)]).width }.max() ?? 0) + 16)
+        let spacer = paragraph(indent + pad, tail - pad) { $0.minimumLineHeight = 8; $0.maximumLineHeight = 8; $0.lineSpacing = 0 }
+        result.append(NSAttributedString(string: "\n", attributes: [.font: NSFont.systemFont(ofSize: 4), .paragraphStyle: spacer, .blockParagraphStyle: spacer]))
+        for (number, property) in properties.enumerated() {
+            let line = NSMutableAttributedString(string: property.name + "\t", attributes: [
+                .font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.secondaryLabelColor
+            ])
+            let isTags = ["tags", "tag", "aliases"].contains(property.name.lowercased())
+            if property.values.isEmpty {
+                line.append(NSAttributedString(string: "—", attributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.tertiaryLabelColor]))
+            }
+            for (offset, value) in property.values.enumerated() {
+                if offset > 0 { line.append(NSAttributedString(string: isTags ? "  " : ", ", attributes: [.font: NSFont.systemFont(ofSize: 13)])) }
+                if isTags {
+                    line.append(NSAttributedString(string: (property.name.lowercased() == "aliases" ? "" : "#") + value.trimmingCharacters(in: CharacterSet(charactersIn: "#")), attributes: [
+                        .font: NSFont.systemFont(ofSize: 12, weight: .medium), .foregroundColor: NSColor.controlAccentColor,
+                        .inlineChip: TranscriptLinks.Chip.file.rawValue
+                    ]))
+                } else {
+                    line.append(inline(value, font: NSFont.systemFont(ofSize: 13)))
+                }
+            }
+            append(line, to: result, style: paragraph(indent + pad, tail - pad) {
+                $0.headIndent = indent + pad + nameWidth
+                $0.tabStops = [NSTextTab(textAlignment: .left, location: indent + pad + nameWidth)]
+                $0.lineSpacing = 2
+            }, after: number == properties.count - 1 ? 0 : 3)
+        }
+        result.addAttribute(.codeCard, value: key, range: NSRange(location: start, length: result.length - start))
+        appendSpacer(to: result, height: 20)
+    }
+
+    static let tableRowLimit = 100
+
     private mutating func renderTable(_ table: MarkdownTable, into result: NSMutableAttributedString, indent: CGFloat, tail: CGFloat) {
+        let tableKey = nextKey("t")
         let index = copyIndex; copyIndex += 1
         let feedback = view.copyFeedback.flatMap { $0.id == item.id && $0.block == index ? $0.succeeded : nil }
         let small = NSFont.systemFont(ofSize: 11, weight: .medium)
@@ -374,7 +425,19 @@ final class TableBox: NSObject {
         }
         append(toolbar, to: result, style: paragraph(indent, tail) { $0.alignment = .right; $0.lineSpacing = 0 }, after: 4, before: 4)
         let start = result.length
-        result.append(TranscriptTables.render(table, attributes: body, options: options))
+        // Very long tables show their first rows until expanded; copy and the window keep every row.
+        let limited = table.rows.count > Self.tableRowLimit + 1 && !view.expandedBlocks.contains(tableKey)
+        let shown = limited ? MarkdownTable(rows: Array(table.rows.prefix(Self.tableRowLimit + 1)), alignments: table.alignments) : table
+        result.append(TranscriptTables.render(shown, attributes: body, options: options))
+        if table.rows.count > Self.tableRowLimit + 1 {
+            let total = table.rows.count - 1
+            let title = limited ? L10n.text("Показать все \(total) \(Self.russianLines(total))", "Show all \(total) rows")
+                                : L10n.text("Свернуть до \(Self.tableRowLimit) строк", "Collapse to \(Self.tableRowLimit) rows")
+            append(NSAttributedString(string: (limited ? "▾ " : "▴ ") + title, attributes: [
+                .font: NSFont.systemFont(ofSize: 12, weight: .medium), .foregroundColor: NSColor.controlAccentColor,
+                .link: "contextdesk-toggle:" + tableKey
+            ]), to: result, style: paragraph(indent, tail) { $0.lineSpacing = 0 }, after: 0, before: 6)
+        }
         // Table paragraphs keep their own styles; keep a gap after the table.
         if result.length > start { appendSpacer(to: result, height: 8) }
     }
