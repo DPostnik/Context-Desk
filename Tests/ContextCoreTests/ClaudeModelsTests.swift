@@ -137,6 +137,8 @@ import Testing
                                               scheduled: true, userChrome: true)).contains("--chrome"))
     for language in [AppLanguage.russian, .english] {
         #expect(ClaudeIntegration.userChromeInstructions(language: language).contains("tabs_context_mcp"))
+        #expect(ClaudeIntegration.userChromeInstructions(language: language).contains("context_desk_browser"))
     }
-    #expect(ClaudeIntegration.userChromeInstructions(language: .russian) != ClaudeIntegration.userChromeInstructions(language: .english))
+    #expect(ClaudeIntegration.userChromeInstructions(language: .russian).contains("в моём браузере"))
+    #expect(ClaudeIntegration.userChromeInstructions(language: .english).contains("in my browser"))
 }
