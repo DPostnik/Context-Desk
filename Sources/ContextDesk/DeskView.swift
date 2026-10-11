@@ -607,6 +607,8 @@ struct ChatView: View {
     @State private var handoff: ContextHandoff?
     /// Files opened from answers in the preview pane, with back/forward history.
     @StateObject private var preview = DocumentPreviewSession()
+    /// Composer column: the transcript's readable text width (magnified with the interface zoom) plus the composer's side insets.
+    private var columnWidth: CGFloat { InterfaceZoom.shared.scaled(TranscriptScrollView.readableWidth) + 48 }
     var body: some View {
         VStack(spacing: 0) {
             if !model.currentAgentAuthenticated {
@@ -652,7 +654,7 @@ struct ChatView: View {
             if let chat = model.selectedChat, let notice = model.backgroundWaitNotice(chat.id) {
                 Label(notice, systemImage: "hourglass")
                     .font(.callout).foregroundStyle(.secondary)
-                    .frame(maxWidth: TranscriptScrollView.readableWidth + 48, alignment: .leading).padding(.horizontal, 24).padding(.vertical, 8)
+                    .frame(maxWidth: columnWidth, alignment: .leading).padding(.horizontal, 24).padding(.vertical, 8)
             }
             if model.selectedChatIsArchived, let chat = model.selectedChat {
                 HStack {
@@ -660,7 +662,7 @@ struct ChatView: View {
                     Spacer()
                     Button(L10n.text("Восстановить", "Restore")) { Task { await model.setChatArchived(chat.id, archived: false) } }
                         .disabled(!model.canDeleteChat(chat.id))
-                }.frame(maxWidth: TranscriptScrollView.readableWidth + 48).padding(.horizontal, 24).padding(.vertical, 12)
+                }.frame(maxWidth: columnWidth).padding(.horizontal, 24).padding(.vertical, 12)
             }
             if !model.visibleQueue.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
@@ -691,7 +693,7 @@ struct ChatView: View {
                             }
                         }
                     }.frame(maxHeight: min(CGFloat(model.visibleQueue.count) * 78, 180))
-                }.frame(maxWidth: TranscriptScrollView.readableWidth + 48).padding(.horizontal, 24).padding(.top, 8)
+                }.frame(maxWidth: columnWidth).padding(.horizontal, 24).padding(.top, 8)
             }
             if !model.selectedChatIsArchived {
             VStack(spacing: 4) {
@@ -772,7 +774,7 @@ struct ChatView: View {
                 .overlay(RoundedRectangle(cornerRadius: 20).stroke(composerFocused ? DeskPalette.focusBorder : DeskPalette.border, lineWidth: 1)
                 )
                 .shadow(color: .black.opacity(0.05), radius: 12, y: 3)
-                .frame(maxWidth: TranscriptScrollView.readableWidth + 48).padding(.horizontal, 24).padding(.top, 10)
+                .frame(maxWidth: columnWidth).padding(.horizontal, 24).padding(.top, 10)
             }
             HStack(spacing: 12) {
                 if model.currentRoute != .direct {
@@ -787,7 +789,7 @@ struct ChatView: View {
                 Spacer()
                 Toggle(L10n.text("Следить за ответом", "Follow response"), isOn: $followOutput).toggleStyle(.checkbox).pointingHandCursor()
             }.font(.caption2).foregroundStyle(.secondary).padding(.horizontal, 12)
-                .frame(maxWidth: TranscriptScrollView.readableWidth + 48).padding(.horizontal, 24).padding(.top, 8).padding(.bottom, 12)
+                .frame(maxWidth: columnWidth).padding(.horizontal, 24).padding(.top, 8).padding(.bottom, 12)
         }
         .background(DeskPalette.canvas)
         .toolbar {
