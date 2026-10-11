@@ -652,7 +652,7 @@ struct ChatView: View {
             if let chat = model.selectedChat, let notice = model.backgroundWaitNotice(chat.id) {
                 Label(notice, systemImage: "hourglass")
                     .font(.callout).foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 24).padding(.vertical, 8)
+                    .frame(maxWidth: TranscriptScrollView.readableWidth + 48, alignment: .leading).padding(.horizontal, 24).padding(.vertical, 8)
             }
             if model.selectedChatIsArchived, let chat = model.selectedChat {
                 HStack {
@@ -660,7 +660,7 @@ struct ChatView: View {
                     Spacer()
                     Button(L10n.text("Восстановить", "Restore")) { Task { await model.setChatArchived(chat.id, archived: false) } }
                         .disabled(!model.canDeleteChat(chat.id))
-                }.padding(.horizontal, 24).padding(.vertical, 12)
+                }.frame(maxWidth: TranscriptScrollView.readableWidth + 48).padding(.horizontal, 24).padding(.vertical, 12)
             }
             if !model.visibleQueue.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
@@ -691,7 +691,7 @@ struct ChatView: View {
                             }
                         }
                     }.frame(maxHeight: min(CGFloat(model.visibleQueue.count) * 78, 180))
-                }.padding(.horizontal, 24).padding(.top, 8)
+                }.frame(maxWidth: TranscriptScrollView.readableWidth + 48).padding(.horizontal, 24).padding(.top, 8)
             }
             if !model.selectedChatIsArchived {
             VStack(spacing: 4) {
