@@ -65,6 +65,8 @@ def main():
     update = sub.add_parser('update', help=message('Изменить существующее задание по поручению пользователя', 'Edit an existing task at the user’s request'))
     update.add_argument('--job-id', required=True)
     update.add_argument('--prompt-file', type=Path)
+    update.add_argument('--rule', help=message('Новое повторяющееся правило RRULE, например FREQ=DAILY;BYHOUR=8,12;BYMINUTE=0', 'New recurring RRULE, e.g. FREQ=DAILY;BYHOUR=8,12;BYMINUTE=0'))
+    update.add_argument('--time-zone', help=message('Часовой пояс IANA; по умолчанию текущий у задания', 'IANA time zone; defaults to the task’s current one'))
     update.add_argument('--model', help=message('Модель вместе с --effort', 'Model together with --effort'))
     update.add_argument('--effort', choices=['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'], help=message('Уровень рассуждения вместе с --model', 'Reasoning effort together with --model'))
     mode = update.add_mutually_exclusive_group()
@@ -84,7 +86,7 @@ def main():
         print(json.dumps({'id': key, 'status': state})); return
     if args.command == 'update' and ((args.model is None) != (args.effort is None)):
         parser.error(message('Укажи --model и --effort вместе', 'Specify --model and --effort together'))
-    if args.command == 'update' and not (args.prompt_file or args.enable or args.pause or args.confirm_source_disabled or args.model
+    if args.command == 'update' and not (args.prompt_file or args.rule or args.time_zone or args.enable or args.pause or args.confirm_source_disabled or args.model
                                      or args.accept_external_policy or args.revoke_external_policy):
         parser.error(message('Не указано изменение', 'No change specified'))
     prompt = args.prompt_file.read_text() if args.command in ('update', 'import') and args.prompt_file else None
@@ -111,6 +113,12 @@ def main():
             request.update(model=args.model, effort=args.effort)
         if prompt is not None:
             request['prompt'] = prompt
+        if args.rule is not None or args.time_zone is not None:
+            current = job['schedule']
+            if current.get('once') is not None:
+                raise RuntimeError(message('Разовое задание меняется только в редакторе', 'A one-time task can only be changed in the editor'))
+            request['schedule'] = {'rule': args.rule if args.rule is not None else current['rule'],
+                                   'timeZone': args.time_zone if args.time_zone is not None else current['timeZone']}
         if args.enable or args.pause:
             request['enabled'] = args.enable
         if args.confirm_source_disabled:

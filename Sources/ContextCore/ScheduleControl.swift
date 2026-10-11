@@ -13,6 +13,8 @@ public struct ScheduleControlRequest: Codable, Sendable {
     public var model: String?
     public var effort: String?
     public var prompt: String?
+    /// A replacement recurring schedule; one-time runs stay in the editor.
+    public var schedule: JobSchedule?
     public var enabled: Bool?
     public var confirmSourceDisabled: Bool?
     /// Explicit user-authorized per-task consent for an external CLI engine (Claude only).
@@ -68,6 +70,11 @@ public enum ScheduleControl {
             guard request.operation == "update", job.engine == .claude else { throw invalid }
             job.acceptsExternalPolicy = accepted
         }
+        if let schedule = request.schedule {
+            guard request.operation == "update", schedule.once == nil, !schedule.rule.isEmpty,
+                  try schedule.next(after: Date()) != nil else { throw JobSchedule.invalid }
+            job.schedule = schedule
+        }
         if let prompt = request.prompt { job.prompt = prompt }
         if let enabled = request.enabled { job.enabled = enabled }
         if request.confirmSourceDisabled == true {
@@ -116,7 +123,7 @@ public enum ScheduleControl {
             do {
                 let data = try Data(contentsOf: claim)
                 guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      Set(object.keys).isSubset(of: ["version", "id", "expires", "operation", "browserSessionImport", "clearBrowserSessionImport", "expected", "prompt", "enabled", "confirmSourceDisabled", "acceptExternalPolicy", "importRequest", "model", "effort"]) else { throw invalid }
+                      Set(object.keys).isSubset(of: ["version", "id", "expires", "operation", "browserSessionImport", "clearBrowserSessionImport", "expected", "prompt", "schedule", "enabled", "confirmSourceDisabled", "acceptExternalPolicy", "importRequest", "model", "effort"]) else { throw invalid }
                 let request = try JSONDecoder().decode(ScheduleControlRequest.self, from: data)
                 guard request.version == 1, request.id == id, request.expires > now,
                       request.expires.timeIntervalSince(now) <= 600,
@@ -124,15 +131,19 @@ public enum ScheduleControl {
                 if request.operation == "browser-import", !Set(object.keys).isSubset(of: ["version", "id", "expires", "operation", "expected", "browserSessionImport", "clearBrowserSessionImport"]) { throw invalid }
                 if request.operation != "browser-import", request.browserSessionImport != nil || request.clearBrowserSessionImport != nil { throw invalid }
                 if let policy = object["browserSessionImport"] as? [String: Any], Set(policy.keys) != Set(["profile", "site"]) { throw invalid }
+                if object["schedule"] != nil {
+                    guard request.operation == "update", let schedule = object["schedule"] as? [String: Any],
+                          Set(schedule.keys) == Set(["rule", "timeZone"]) else { throw invalid }
+                }
                 if request.operation == "list" || request.operation == "catalog" {
-                    guard request.expected == nil, request.prompt == nil, request.enabled == nil,
+                    guard request.expected == nil, request.prompt == nil, request.schedule == nil, request.enabled == nil,
                           request.confirmSourceDisabled == nil, request.importRequest == nil,
                           request.acceptExternalPolicy == nil, request.model == nil, request.effort == nil else { throw invalid }
                 }
                 if request.operation == "import" {
                     guard let imported = object["importRequest"] as? [String: Any],
                           Set(imported.keys).isSubset(of: ["sourceID", "sourceDigest", "projectID", "timeZone", "model", "effort", "recurring", "prompt"]),
-                          request.importRequest != nil, request.expected == nil, request.prompt == nil,
+                          request.importRequest != nil, request.expected == nil, request.prompt == nil, request.schedule == nil,
                           request.enabled == nil, request.confirmSourceDisabled == nil,
                           request.acceptExternalPolicy == nil, request.model == nil, request.effort == nil else { throw invalid }
                 } else if request.importRequest != nil { throw invalid }

@@ -20,6 +20,23 @@ private func controlRequest(job: ManagedJob? = nil) throws -> ScheduleControlReq
     #expect(result.acceptsExternalPolicy == job.acceptsExternalPolicy)
 }
 
+@Test func scheduleControlReplacesOnlyRecurringSupportedSchedules() throws {
+    var job = ManagedJob(); job.name = "Test"; job.prompt = "keep"; job.projectID = UUID(); job.enabled = true
+    job.schedule = JobSchedule(rule: "FREQ=DAILY;BYHOUR=8,9,10;BYMINUTE=0", timeZone: "Europe/Warsaw")
+    var request = try controlRequest(job: job)
+    request.schedule = JobSchedule(rule: "FREQ=DAILY;BYHOUR=8,10,12;BYMINUTE=0;BYSECOND=0", timeZone: "Europe/Warsaw")
+    let result = try ScheduleControl.updated(request, originalPaused: false)
+    #expect(result.schedule == request.schedule && result.prompt == "keep" && result.enabled)
+    for invalid in [JobSchedule(rule: "FREQ=DAILY;BYHOUR=8;BYMINUTE=0;COUNT=3", timeZone: "Europe/Warsaw"),
+                    JobSchedule(rule: "FREQ=DAILY;BYHOUR=8;BYMINUTE=0", timeZone: "Mars/Base"),
+                    JobSchedule(rule: "", timeZone: "Europe/Warsaw", once: Date().addingTimeInterval(3600))] {
+        request.schedule = invalid
+        #expect(throws: (any Error).self) { try ScheduleControl.updated(request, originalPaused: false) }
+    }
+    request.schedule = job.schedule; request.operation = "browser-import"; request.clearBrowserSessionImport = true
+    #expect(throws: (any Error).self) { try ScheduleControl.updated(request, originalPaused: false) }
+}
+
 @Test func scheduleControlRejectsConcurrentChangesAndBusyJobs() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -81,6 +98,15 @@ private func controlRequest(job: ManagedJob? = nil) throws -> ScheduleControlReq
     #expect(updated.enabled && updated.sourceDisabled && updated.prompt == "no submissions")
     #expect(updated.nextRun != nil && model.jobLedger.runs.isEmpty)
     #expect(try await store.load().jobs.first == updated)
+    var reschedule = try controlRequest(job: updated)
+    reschedule.schedule = JobSchedule(rule: "FREQ=DAILY;BYHOUR=8,10;BYMINUTE=0", timeZone: "Europe/Warsaw")
+    let rescheduleFile = inbox.appendingPathComponent(reschedule.id.uuidString + ".request.json")
+    try JSONEncoder().encode(reschedule).write(to: rescheduleFile)
+    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: rescheduleFile.path)
+    await model.processScheduleControl(directory: inbox, originals: originals)
+    let rescheduled = try #require(model.jobLedger.jobs.first)
+    #expect(rescheduled.schedule == reschedule.schedule && rescheduled.prompt == "no submissions")
+    #expect(rescheduled.nextRun == (try reschedule.schedule?.next(after: Date())) && model.jobLedger.runs.isEmpty)
     await model.stopScheduler()
 }
 

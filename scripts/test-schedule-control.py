@@ -28,6 +28,20 @@ class ScheduleClientTests(unittest.TestCase):
             self.assertEqual(update['prompt'], prompt.read_text())
             self.assertTrue(update['enabled'] and update['confirmSourceDisabled'])
 
+    def test_schedule_edit_keeps_omitted_part(self):
+        job = {'id': 'B39B21BF-187C-4C45-8F94-F98F70F8643F', 'enabled': True,
+               'schedule': {'rule': 'FREQ=HOURLY;INTERVAL=1', 'timeZone': 'Europe/Warsaw'}}
+        args = ['client', 'update', '--job-id', job['id'], '--rule', 'FREQ=DAILY;BYHOUR=8,10;BYMINUTE=0']
+        with patch('sys.argv', args), patch.object(client, 'send', side_effect=[{'jobs': [job]}, {'jobs': []}]) as send, contextlib.redirect_stdout(io.StringIO()):
+            client.main()
+        self.assertEqual(send.call_args_list[1].args[0], {'operation': 'update', 'expected': job,
+                         'schedule': {'rule': 'FREQ=DAILY;BYHOUR=8,10;BYMINUTE=0', 'timeZone': 'Europe/Warsaw'}})
+        once = dict(job, schedule={'rule': '', 'timeZone': 'Europe/Warsaw', 'once': 1})
+        with patch('sys.argv', ['client', 'update', '--job-id', job['id'], '--time-zone', 'UTC']), \
+                patch.object(client, 'send', side_effect=[{'jobs': [once]}]) as send, self.assertRaises(RuntimeError):
+            client.main()
+        self.assertEqual(send.call_count, 1)
+
     def test_external_policy_consent_is_explicit(self):
         job = {'id': 'B39B21BF-187C-4C45-8F94-F98F70F8643F', 'engine': 'claude', 'enabled': True}
         args = ['client', 'update', '--job-id', job['id'], '--accept-external-policy']
