@@ -98,6 +98,7 @@ private struct ChatRunState {
     var handoffRunner: AgentGenerationRunner?
     var handoffCancelled = false
     private var historyBackfillTask: Task<Void, Never>?
+    private var claudeHistoryBackfillTask: Task<Void, Never>?
     private var historyRefreshTasks: [String: Task<Void, Never>] = [:]
     private var historyEventRevisions: [String: Int] = [:]
     @Published var pending: [PendingAction] = []
@@ -227,7 +228,13 @@ private struct ChatRunState {
     }
     func boot() async {
         guard !booted else { return }; booted = true
-        defer { isBootstrapping = false }
+        // Each step's duration is logged so a slow launch names the step that held it up.
+        let clock = ContinuousClock(); var mark = clock.now
+        func step(_ name: String) {
+            let elapsed = mark.duration(to: clock.now); mark = clock.now
+            AppLog.lifecycle.notice("Boot step: \(name, privacy: .public) took \(Int(elapsed / .milliseconds(1)), privacy: .public) ms")
+        }
+        defer { isBootstrapping = false; step("rest") }
         do { state = try await store.load(); usage = try await store.loadUsage(); projectID = state.visibleProjects.first?.id } catch { self.error = error.localizedDescription; return }
         photoCleanupTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -235,15 +242,15 @@ private struct ChatRunState {
                 do { try await Task.sleep(for: .seconds(300)) } catch { return }
             }
         }
-        startBrowserActivityMonitor()
-        await restoreSummaryQueue()
+        step("state"); startBrowserActivityMonitor()
+        await restoreSummaryQueue(); step("summary queue")
         for chat in state.chats where chat.hasUnreadResponse {
             let project = state.projects.first { $0.id == chat.projectID }
             notices.append(DeskNotice(threadID: chat.id, title: L10n.text("Непрочитанный ответ", "Unread response"),
                                       detail: [project?.name, chat.title].compactMap { $0 }.joined(separator: " · "),
                                       completionID: chat.unreadCompletionID))
         }
-        await refreshJobs()
+        await refreshJobs(); step("jobs")
         await connection.observeEvents(sessions: state.chats.compactMap(\.nativeSession))
         eventTask = Task { [weak self, connection] in
             for await event in connection.events { await self?.receive(event) }
@@ -251,11 +258,11 @@ private struct ChatRunState {
         claudeEventTask = Task { [weak self, claudeConnection] in
             for await event in claudeConnection.events { await self?.receiveClaude(event) }
         }
-        await connect()
+        await connect(); step("Codex")
         // Claude scheduled tasks run in the app's Claude profile, so enabled ones need it connected too.
         let claudeJobs = (try? await jobStore.load())?.jobs.contains { $0.engine == .claude && $0.enabled } == true
         if state.defaultConnection == .appClaude || claudeJobs || state.chats.contains(where: { $0.nativeSession?.connection == .appClaude }) { await connectClaude() }
-        await startScheduler()
+        step("Claude"); await startScheduler(); step("scheduler")
         Task { await mobileRemote.restoreOnLaunch(model: self) } // Network sign-in must not hold up boot.
         continueAfterRestart(RestartContinuation.take())
         let settings = await UNUserNotificationCenter.current().notificationSettings()
@@ -1544,7 +1551,7 @@ private struct ChatRunState {
         flushDeltas()
         photoCleanupTask?.cancel(); photoCleanupTask = nil
         step("mobile remote"); await mobileRemote.disable()
-        historyBackfillTask?.cancel()
+        historyBackfillTask?.cancel(); claudeHistoryBackfillTask?.cancel()
         for task in historyRefreshTasks.values { task.cancel() }
         step("chat titles (\(titleTasks.count))")
         for id in Array(titleTasks.keys) { await cancelChatTitle(id) }
@@ -1571,6 +1578,7 @@ private struct ChatRunState {
     func connectClaude() async {
         guard !claudeConnecting, !state.chats.contains(where: { $0.nativeSession?.connection == .appClaude && isBusy(threadID: $0.id) }) else { return }
         claudeConnecting = true; defer { claudeConnecting = false }
+        claudeHistoryBackfillTask?.cancel()
         resetAgentState(.appClaude); claudeConnected = false; claudeAuthenticated = false; clearClaudeLimits()
         do {
             claudeDescriptor = try await claudeConnection.start(.init(home: claudeHome, resources: Bundle.main.resourceURL,
@@ -1578,7 +1586,9 @@ private struct ChatRunState {
                                                                       userChromeEnabled: state.userChromeEnabled != false))
             claudeConnected = true
             await refreshClaudeAccount()
-            await backfillHistory(state.chats.filter { $0.nativeSession?.connection == .appClaude })
+            // Reading every Claude history takes seconds with many long chats; it must not hold up launch.
+            let chats = state.chats.filter { $0.nativeSession?.connection == .appClaude }
+            claudeHistoryBackfillTask = Task { [weak self] in await self?.backfillHistory(chats) }
         } catch { self.error = error.localizedDescription }
     }
     func refreshClaudeAccount() async {
@@ -1622,6 +1632,7 @@ private struct ChatRunState {
         case .interactionsReset: clearAgentInteractions(.appClaude)
         case .disconnected:
             flushDeltas()
+            claudeHistoryBackfillTask?.cancel()
             resetAgentState(.appClaude); claudeConnected = false; claudeAuthenticated = false; clearClaudeLimits()
             await interruptSummaries(.appClaude, issue: L10n.text("Claude отключился. Итог не повторён автоматически.", "Claude disconnected. The summary was not retried automatically."))
         case .limitsChanged: break
