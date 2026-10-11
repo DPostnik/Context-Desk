@@ -20,7 +20,7 @@ import UserNotifications
     }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         if restart.terminating { return .terminateLater }
-        if model?.anyBusy == true {
+        if let model, model.anyBusy || !model.backgroundWorkChatIDs.isEmpty {
             let alert = NSAlert(); alert.messageText = L10n.text("Задача ещё выполняется", "A task is still running")
             alert.informativeText = L10n.text("Выход остановит подключение к Codex и задания Claude Code. Скрыть окно можно без остановки.", "Quitting will close the Codex connection and stop Claude Code tasks. You can hide the window without stopping them.")
             alert.addButton(withTitle: L10n.text("Выйти", "Quit"))

@@ -177,6 +177,11 @@ struct RestartContinuation: Codable, Equatable {
 
 extension DeskModel {
     var readyForRestart: Bool {
-        !isBootstrapping && !anyBusy && !connecting && !claudeConnecting && pending.isEmpty && !hasDeliverableQueue
+        !isBootstrapping && !anyBusy && !connecting && !claudeConnecting && pending.isEmpty && !hasDeliverableQueue && backgroundWorkChatIDs.isEmpty
+    }
+    /// Idle chats whose agent still runs background tasks or sub-agents; a restart would end that work.
+    /// Running sub-agents also cover the gap between a turn's completion and its background-wait report.
+    var backgroundWorkChatIDs: Set<String> {
+        Set(backgroundWaits.keys).union(subagents.filter { $0.value.contains { $0.status == .running } }.keys)
     }
 }

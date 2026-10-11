@@ -582,6 +582,7 @@ private func interactiveRequest(context: AgentContext, root: URL, session: Agent
     await model.receive(.init(session: claude.nativeSession, payload: .background(tasks: 2)))
     #expect(model.backgroundWaitNotice(claude.id)?.contains("2") == true && model.backgroundWaitNotice(codex.id) == nil)
     #expect(model.restartBlockers.contains(L10n.text("Ждёт фоновые задачи: ", "Waiting for background tasks: ") + "Claude"))
+    #expect(!model.readyForRestart)
     await model.receive(.init(session: claude.nativeSession, payload: .started(turn: "claude-turn")))
     #expect(model.backgroundWaits.isEmpty && model.backgroundWaitNotice(claude.id) == nil)
     // Sub-agent previews belong to their own chat and disappear with an empty list.
@@ -589,8 +590,17 @@ private func interactiveRequest(context: AgentContext, root: URL, session: Agent
     await model.receive(.init(session: claude.nativeSession, payload: .subagents([subagent])))
     #expect(model.subagents[claude.id] == [subagent] && model.subagents[codex.id] == nil)
     #expect(SubagentsBar.summary([subagent]) == L10n.text("Подагенты: работают 1", "Sub-agents: 1 running"))
+    // A running sub-agent holds a restart even before the background wait is reported; a finished one does not.
+    await model.receive(.init(session: claude.nativeSession, payload: .completed(.init(id: "claude-turn", status: .completed, hasError: false, error: nil,
+        history: AgentHistoryTurn(id: "claude-turn", items: [], startedAt: nil, completedAt: nil, duration: nil, isComplete: true)))))
+    #expect(model.backgroundWorkChatIDs == [claude.id] && !model.readyForRestart)
+    #expect(model.restartBlockers.contains(L10n.text("Ждёт фоновые задачи: ", "Waiting for background tasks: ") + "Claude"))
+    var finished = subagent; finished.status = .completed
+    await model.receive(.init(session: claude.nativeSession, payload: .subagents([finished])))
+    #expect(model.backgroundWorkChatIDs.isEmpty)
     await model.receive(.init(session: claude.nativeSession, payload: .subagents([])))
     #expect(model.subagents.isEmpty)
+    await model.receive(.init(session: claude.nativeSession, payload: .started(turn: "claude-turn-2")))
     await model.receive(.init(session: codex.nativeSession, payload: .started(turn: "codex-turn")))
     await model.receive(.init(session: nil, payload: .disconnected))
     #expect(model.isBusy(threadID: claude.id))

@@ -986,7 +986,7 @@ private struct ChatRunState {
             reasons.insert(id.hasPrefix("job:") ? L10n.text("Запуск задания", "Scheduled run starting") : L10n.text("Выполняется: ", "Running: ") + title(id))
         }
         for action in pending { reasons.insert(L10n.text("Ждёт твоего действия: ", "Waiting for your action: ") + title(action.threadID)) }
-        for id in backgroundWaits.keys { reasons.insert(L10n.text("Ждёт фоновые задачи: ", "Waiting for background tasks: ") + title(id)) }
+        for id in backgroundWorkChatIDs { reasons.insert(L10n.text("Ждёт фоновые задачи: ", "Waiting for background tasks: ") + title(id)) }
         for message in queuedMessages where runs[message.threadID].map({ !$0.queuePaused }) ?? false {
             reasons.insert(L10n.text("Сообщение в очереди: ", "Queued message: ") + title(message.threadID))
         }
