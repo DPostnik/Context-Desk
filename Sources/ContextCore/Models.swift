@@ -84,6 +84,8 @@ public struct SavedState: Codable, Sendable {
     /// Empty or absent keeps the CLI default reasoning effort.
     public var claudeEffort: String?
     public var browserEnabled: Bool?
+    /// Absent means on: full-access Claude chats may use the user's Chrome via Claude in Chrome.
+    public var userChromeEnabled: Bool?
     public var defaultRoute: RequestRoute?
     public var queuedMessages: [QueuedMessage]?
     public var projects: [Project] = []

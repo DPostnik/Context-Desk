@@ -67,6 +67,8 @@ public actor ClaudeIntegration: AgentIntegration {
     private var cancelledGenerations = Set<UUID>()
     /// App bundle resources when the Context Desk browser is attached to chats; nil keeps chats browser-less.
     private var browserResources: URL?
+    /// Full-access interactive chats get the CLI's Claude in Chrome tools for the user's own Chrome.
+    private var userChrome = false
     private let browserRoot: URL
     private var wireGrants: [String: BrowserProfileGrant] = [:]
     public init(browserRoot: URL = BrowserEnvironmentStore.directory, backgroundWaitLimit: Duration = .seconds(3600),
@@ -95,6 +97,7 @@ public actor ClaudeIntegration: AgentIntegration {
             guard code == 0, String(decoding: version, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) == ClaudeJobRunner.version + " (Claude Code)" else { return .rejected(.incompatibleContract) }
             home = configuration.home; executable = binary
             browserResources = configuration.browserEnabled ? configuration.resources : nil
+            userChrome = configuration.userChromeEnabled
             context = .init(connection: .appClaude, accountRevision: UUID())
             _ = await account()
             return descriptor()
@@ -117,7 +120,7 @@ public actor ClaudeIntegration: AgentIntegration {
         backgroundTasks.removeAll(); waiting.removeAll(); wireArguments.removeAll(); warm.removeAll(); pendingSaves.removeAll()
         for id in subagents.keys { sink.yield(.init(session: reference(id), payload: .subagents([]))) }
         subagents.removeAll()
-        home = nil; executable = nil; signedIn = false; accountIdentity = nil; browserResources = nil; wireGrants.removeAll()
+        home = nil; executable = nil; signedIn = false; accountIdentity = nil; browserResources = nil; userChrome = false; wireGrants.removeAll()
         context = .init(connection: .appClaude, accountRevision: UUID())
     }
     public func account() async -> AgentResult<AgentAccountInfo> {
@@ -234,7 +237,7 @@ public actor ClaudeIntegration: AgentIntegration {
             sessions[id]?.access = expectedAccess
             let scheduled = request.kind == .scheduled
             let launch = try Self.arguments(id: id, resumed: true, access: expectedAccess, model: request.model.model, effort: request.model.effort,
-                                            scheduled: scheduled, projectInstructions: ProjectInstructions.prompt(projectPath: record.cwd))
+                                            scheduled: scheduled, projectInstructions: ProjectInstructions.prompt(projectPath: record.cwd), userChrome: userChrome)
             // A CLI kept for background tasks was started with its own model, permissions and approval rules
             // (scheduled turns have none); a different launch stops it and resumes in a fresh one.
             if let current = wires[id], scheduledWires.contains(id) != scheduled || wireArguments[id] != launch {
@@ -255,7 +258,8 @@ public actor ClaudeIntegration: AgentIntegration {
                 } }
                 let arguments = try Self.arguments(id: id, resumed: record.sent, access: expectedAccess,
                                                    model: request.model.model, effort: request.model.effort, scheduled: scheduled,
-                                                   projectInstructions: ProjectInstructions.prompt(projectPath: record.cwd), browserServer: server)
+                                                   projectInstructions: ProjectInstructions.prompt(projectPath: record.cwd), browserServer: server,
+                                                   userChrome: userChrome)
                 var environment = ClaudeProfile.environment(home: home).merging(Self.sessionEnvironment) { _, new in new }
                 // Same startup/tool limits as the Codex MCP entry (30 s / 90 s).
                 if server != nil || expectedAccess == .fullAccess { environment.merge(Self.browserEnvironment) { _, new in new } }
@@ -310,9 +314,11 @@ public actor ClaudeIntegration: AgentIntegration {
     }()
     /// A scheduled turn runs unattended, so full-access connector actions are not held for approval (as print runs were not).
     static func arguments(id: String, resumed: Bool, access: AccessMode, model: String, effort: String?, scheduled: Bool = false,
-                          projectInstructions: String? = nil, browserServer: [String]? = nil) throws -> [String] {
+                          projectInstructions: String? = nil, browserServer: [String]? = nil, userChrome: Bool = false) throws -> [String] {
         // Only full-access chats (network allowed) load the account's claude.ai connectors such as Gmail.
         let connectors = access == .fullAccess
+        // The user's real Chrome only for attended full-access turns; `--restricted` would skip it anyway.
+        let chrome = userChrome && connectors && !scheduled
         var args = ["--print", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
                     "--permission-prompt-tool", "stdio", "--setting-sources", ""]
         if !connectors { args.append("--strict-mcp-config") }
@@ -328,6 +334,8 @@ public actor ClaudeIntegration: AgentIntegration {
             let encoder = JSONEncoder(); encoder.outputFormatting = [.withoutEscapingSlashes, .sortedKeys]
             args += ["--settings", String(decoding: try encoder.encode(settings), as: UTF8.self)]
         }
+        // `--setting-sources ""` skips `claudeInChromeDefaultEnabled`, so the flag is explicit.
+        if chrome { args.append("--chrome") }
         args += [resumed ? "--resume" : "--session-id", id]
         if access == .standard {
             args += ["--restricted", "--tools", "Read,Glob,Grep,Write,Edit,AskUserQuestion", "--permission-mode", "default"]
@@ -338,8 +346,27 @@ public actor ClaudeIntegration: AgentIntegration {
         // `--setting-sources ""` also skips the project's CLAUDE.md, so project rules come in here.
         // Only full access has the Agent tool; the guidance would be noise in restricted chats.
         let delegation = access == .fullAccess ? delegationInstructions() : nil
-        args += ["--append-system-prompt", ([AgentAutonomy.instructions(), delegation, projectInstructions].compactMap { $0 }).joined(separator: "\n\n")]
+        args += ["--append-system-prompt", ([AgentAutonomy.instructions(), delegation, chrome ? userChromeInstructions() : nil,
+                                             projectInstructions].compactMap { $0 }).joined(separator: "\n\n")]
         return args
+    }
+    /// When to reach for the user's own Chrome rather than the app's isolated browser.
+    static func userChromeInstructions(language: AppLanguage = L10n.language) -> String {
+        L10n.text(
+            """
+            Chrome пользователя в Context Desk:
+            - Инструменты `mcp__claude-in-chrome__*` управляют настоящим Chrome пользователя через расширение Claude in Chrome: его входы на сайты, его вкладки. Используй их, когда задаче нужен вход пользователя, которого нет во встроенном браузере, или когда встроенный браузер не справляется (например, загрузка файла на сайт). Для остального предпочитай встроенный браузер `context_desk_browser`, если он подключён.
+            - Сначала вызови `tabs_context_mcp` и работай в своих вкладках (`tabs_create_mcp`). Не закрывай и не меняй вкладки пользователя без его просьбы.
+            - Если расширение не подключено или не вошло в аккаунт, сообщи об этом пользователю одной фразой и продолжи независимую работу; не повторяй вызов в цикле.
+            - Вход на сайт не разрешает новых внешних действий: отправка сообщений, заявок, покупки и публикации требуют прежних подтверждений.
+            """,
+            """
+            The user's Chrome in Context Desk:
+            - The `mcp__claude-in-chrome__*` tools drive the user's real Chrome through the Claude in Chrome extension, with the user's site sign-ins and tabs. Use them when a task needs a sign-in the built-in browser lacks, or when the built-in browser cannot do the job (for example, uploading a file to a site). Otherwise prefer the built-in `context_desk_browser` when it is attached.
+            - Call `tabs_context_mcp` first and work in your own tabs (`tabs_create_mcp`). Do not close or change the user's tabs unless asked.
+            - If the extension is not connected or not signed in, tell the user in one sentence and continue independent work; do not retry in a loop.
+            - Being signed in does not authorize new external actions: sending messages or applications, purchases and posts keep their usual approval rules.
+            """, language: language)
     }
     /// The CLI resumes the agent after each background sub-agent, so results can be used as they arrive.
     static func delegationInstructions(language: AppLanguage = L10n.language) -> String {

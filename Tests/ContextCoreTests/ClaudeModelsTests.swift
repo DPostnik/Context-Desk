@@ -125,3 +125,18 @@ import Testing
     #expect(ClaudeEffort.resolved("ultra") == "medium")
     #expect(ClaudeEffort.resolved("low") == "low")
 }
+
+@Test func claudeUserChromeOnlyForAttendedFullAccessChats() throws {
+    let id = UUID().uuidString
+    let full = try ClaudeIntegration.arguments(id: id, resumed: false, access: .fullAccess, model: "", effort: nil, userChrome: true)
+    #expect(full.contains("--chrome"))
+    #expect(full[full.firstIndex(of: "--append-system-prompt")! + 1].contains("mcp__claude-in-chrome__"))
+    #expect(!(try ClaudeIntegration.arguments(id: id, resumed: false, access: .fullAccess, model: "", effort: nil)).contains("--chrome"))
+    #expect(!(try ClaudeIntegration.arguments(id: id, resumed: false, access: .standard, model: "", effort: nil, userChrome: true)).contains("--chrome"))
+    #expect(!(try ClaudeIntegration.arguments(id: id, resumed: false, access: .fullAccess, model: "", effort: nil,
+                                              scheduled: true, userChrome: true)).contains("--chrome"))
+    for language in [AppLanguage.russian, .english] {
+        #expect(ClaudeIntegration.userChromeInstructions(language: language).contains("tabs_context_mcp"))
+    }
+    #expect(ClaudeIntegration.userChromeInstructions(language: .russian) != ClaudeIntegration.userChromeInstructions(language: .english))
+}

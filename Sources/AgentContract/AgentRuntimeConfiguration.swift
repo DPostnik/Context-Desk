@@ -12,11 +12,13 @@ public struct AgentConnectionConfiguration: Sendable {
     public let home: URL
     public let resources: URL?
     public let browserEnabled: Bool
+    /// Lets full-access Claude chats drive the user's own Chrome through the Claude in Chrome extension.
+    public let userChromeEnabled: Bool
     public let optimizers: [AgentOptimizerEndpoint]
     public init(executable: URL? = nil, home: URL, resources: URL? = nil, browserEnabled: Bool = false,
-                optimizers: [AgentOptimizerEndpoint] = []) {
+                userChromeEnabled: Bool = false, optimizers: [AgentOptimizerEndpoint] = []) {
         self.executable = executable; self.home = home; self.resources = resources
-        self.browserEnabled = browserEnabled; self.optimizers = optimizers
+        self.browserEnabled = browserEnabled; self.userChromeEnabled = userChromeEnabled; self.optimizers = optimizers
     }
 }
 

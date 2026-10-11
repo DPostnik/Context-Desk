@@ -308,6 +308,11 @@ private struct ChatRunState {
     }
     func selectDefaultRoute(_ route: RequestRoute) { state.defaultRoute = route; persist() }
     func selectBrowserEnabled(_ enabled: Bool) { state.browserEnabled = enabled; persist() }
+    /// Applied by reconnecting Claude; while a Claude chat is busy it waits for the next reconnect.
+    func selectUserChromeEnabled(_ enabled: Bool) {
+        state.userChromeEnabled = enabled; persist()
+        if claudeConnected { Task { await connectClaude() } }
+    }
     private func stopPlugins() async {
         pluginTask?.cancel(); pluginTask = nil
         for runtime in pluginRuntimes.values { await runtime.stop() }
@@ -1569,7 +1574,8 @@ private struct ChatRunState {
         resetAgentState(.appClaude); claudeConnected = false; claudeAuthenticated = false; clearClaudeLimits()
         do {
             claudeDescriptor = try await claudeConnection.start(.init(home: claudeHome, resources: Bundle.main.resourceURL,
-                                                                      browserEnabled: state.browserEnabled == true))
+                                                                      browserEnabled: state.browserEnabled == true,
+                                                                      userChromeEnabled: state.userChromeEnabled != false))
             claudeConnected = true
             await refreshClaudeAccount()
             await backfillHistory(state.chats.filter { $0.nativeSession?.connection == .appClaude })
