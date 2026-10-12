@@ -1071,6 +1071,7 @@ private struct ChatRunState {
         if visible { items.append(TranscriptItem(id: localID, kind: "user", text: text, phase: L10n.text("Отправляется…", "Sending…"))) }
         let initialKey = scheduledRun.map { "job:" + $0.uuidString } ?? threadID ?? currentRunKey
         var runKey = initialKey
+        let priorTurn = runs[runKey]?.turnID
         runs[runKey, default: ChatRunState()].running = true
         runs[runKey, default: ChatRunState()].sending = true
         defer {
@@ -1179,13 +1180,30 @@ private struct ChatRunState {
             }
             if let i = state.chats.firstIndex(where: { $0.id == id }) { state.chats[i].updated = Date(); persist() }
         } catch {
+            // The engine started a turn of its own while this send was in flight (Claude resuming after its background
+            // tasks): that turn keeps the chat running. A definite rejection delivered nothing, so the message waits
+            // in the queue for that turn to finish, exactly as if it had been sent while the chat was busy.
+            let engineTurn = runs[runKey]?.turnID.flatMap { $0 == priorTurn ? nil : $0 }
+            if let engineTurn, let threadID, scheduledRun == nil, !localID.hasPrefix("local-user:remote:"),
+               (error as? AgentOperationFailure)?.rejection != nil {
+                AppLog.delivery.notice("Engine turn \(engineTurn, privacy: .public) started in chat \(threadID, privacy: .public) during a send; message queued, nothing was delivered")
+                items.removeAll { $0.id == localID }
+                state.queuedMessages = [QueuedMessage(id: localID, threadID: threadID, projectID: project.id, text: text,
+                                                      model: selectedModel, effort: selectedEffort)] + queuedMessages
+                runs[threadID, default: ChatRunState()].queuePaused = false
+                persist()
+                return
+            }
             if let scheduledRun { await finishJob(scheduledRun, status: .uncertain, output: error.localizedDescription) }
             AppLog.delivery.error("Delivery unconfirmed for chat \(runKey, privacy: .public): \(error.localizedDescription, privacy: .public)")
             setDelivery(localID, phase: L10n.text("Доставка не подтверждена", "Delivery unconfirmed"))
             self.error = error.localizedDescription + L10n.text(" Сообщение не отправлено повторно.", " The message was not sent again.")
             runs[runKey, default: ChatRunState()].queuePaused = true
-            runs[runKey, default: ChatRunState()].running = false
-            runs[runKey, default: ChatRunState()].turnID = nil
+            // An engine-started turn still runs; only its own completion releases the chat.
+            if engineTurn == nil {
+                runs[runKey, default: ChatRunState()].running = false
+                runs[runKey, default: ChatRunState()].turnID = nil
+            }
             if visible && selectionGeneration == selection && draft.isEmpty { draft = text }
         }
     }
