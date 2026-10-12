@@ -21,6 +21,7 @@ import cdp
 import server
 
 TOP = '''<!doctype html><title>Checkout</title><h1>Checkout</h1><p id="receipt">none</p>
+<button onclick="const i=document.createElement('input');i.type='file';i.onchange=()=>document.querySelector('#resume').textContent='resume '+i.files[0].name;i.click()">Upload resume</button><p id="resume">no resume</p>
 <div style="height:1200px"></div>
 <iframe src="FRAME/pay" title="Payment widget" style="width:420px;height:260px;border:4px solid #333;padding:6px"></iframe>
 <script>addEventListener('message',e=>{document.querySelector('#receipt').textContent=e.data});
@@ -103,6 +104,11 @@ def main():
             assert 'project directory' in refused('browser_input', session=session, action='upload', expectedURL=url,
                                                   ref=ref(r'button "Document"'), files=[str(outside)])
             call('browser_input', session=session, action='upload', expectedURL=url, ref=ref(r'button "Document"'), files=['passport.pdf'])
+            # A button that creates its file field on click: the chooser is intercepted, no native dialog.
+            call('browser_input', session=session, action='upload', expectedURL=url, ref=ref(r'button "Upload resume"'), files=['passport.pdf'])
+            assert 'resume passport.pdf' in call('browser_read', session=session, mode='text')['text']
+            time.sleep(3)  # macOS may unhide Chrome late after a chooser.
+            assert host.visibility(host.owner) is True, 'browser became visible after chooser upload'
             # Natural-language lookup finds the frame's pay button.
             found = call('browser_find', session=session, query='pay button')
             assert found['matches'][0]['ref'] == ref(r'button "Pay now"'), found
@@ -149,7 +155,7 @@ def main():
             assert host.visibility(host.owner) is True, 'browser became visible'
             call('browser_close', session=session)
             print(json.dumps({'result': 'passed', 'frameTreeNested': True, 'frameRefsUnique': True, 'typeSelectInFrame': True,
-                              'uploadFromProjectOnly': True, 'submitInFrame': True, 'evalAwaitJournaled': True,
+                              'uploadFromProjectOnly': True, 'uploadThroughChooser': True, 'submitInFrame': True, 'evalAwaitJournaled': True,
                               'evalException': True, 'findInFrame': True, 'frameDialog': True, 'frameCoordinateRisk': True, 'consoleProblems': True, 'networkLog': True, 'browserStayedHidden': True}))
         finally:
             if rpc:

@@ -546,6 +546,46 @@ class StageFourTests(unittest.TestCase):
         sent = [p for m, p in self.page.sent if m == 'DOM.setFileInputFiles']
         self.assertEqual(sent, [{'files': [str(Path(self.project.name).resolve() / 'doc.pdf')], 'objectId': 'input-1'}])
 
+    def test_upload_without_a_file_field_intercepts_the_chooser(self):
+        self.page.model['element'] = 'not_a_file_input'
+        self.page.model['resolve'] = {'x': 30, 'y': 40}
+        self.page.queued = [{'method': 'Page.fileChooserOpened', 'params': {'frameId': 'MAIN', 'mode': 'selectSingle', 'backendNodeId': 91}}]
+        original = self.page.send
+
+        def send(method, params=None, seconds=None, interrupt=None, session=None):
+            if method == 'Runtime.evaluate' and '"op": "element"' in params['expression']:
+                self.page.sent.append((method, params))
+                return {'result': {'type': 'string', 'value': 'not_a_file_input'}}
+            return original(method, params, seconds, interrupt, session)
+        self.page.send = send
+        result = self.browser.input('owner', 'upload', 'upload-0002', self.url, ref='ref_2', files=['doc.pdf'])
+        self.assertEqual(result['risk'], 'upload')
+        methods = [m for m, _ in self.page.sent if m in ('Page.setInterceptFileChooserDialog', 'Input.dispatchMouseEvent', 'DOM.setFileInputFiles')]
+        self.assertEqual(methods[0], 'Page.setInterceptFileChooserDialog')
+        self.assertEqual(methods[-2:], ['DOM.setFileInputFiles', 'Page.setInterceptFileChooserDialog'])
+        intercept = [p for m, p in self.page.sent if m == 'Page.setInterceptFileChooserDialog']
+        self.assertEqual(intercept, [{'enabled': True}, {'enabled': False}])
+        sent = [p for m, p in self.page.sent if m == 'DOM.setFileInputFiles']
+        self.assertEqual(sent, [{'files': [str(Path(self.project.name).resolve() / 'doc.pdf')], 'backendNodeId': 91}])
+
+    def test_upload_reports_a_click_that_opened_no_chooser(self):
+        self.page.model['resolve'] = {'x': 30, 'y': 40}
+        original = self.page.send
+
+        def send(method, params=None, seconds=None, interrupt=None, session=None):
+            if method == 'Runtime.evaluate' and '"op": "element"' in params['expression']:
+                return {'result': {'type': 'string', 'value': 'not_a_file_input'}}
+            return original(method, params, seconds, interrupt, session)
+        self.page.send = send
+        self.browser.file_chooser = lambda page, session, seconds=3: None
+        with self.assertRaises(Rejected) as raised:
+            self.browser.input('owner', 'upload', 'upload-0003', self.url, ref='ref_2', files=['doc.pdf'])
+        self.assertIn('no file chooser', str(raised.exception))
+        self.assertFalse([m for m, _ in self.page.sent if m == 'DOM.setFileInputFiles'])
+        self.assertEqual([p for m, p in self.page.sent if m == 'Page.setInterceptFileChooserDialog'][-1], {'enabled': False})
+        record = json.loads((Path(self.directory.name) / 'records/action-upload-0003.json').read_text())
+        self.assertEqual(record['state'], 'clicked_no_file_chooser')
+
     def test_eval_is_journaled_once_and_reports_errors(self):
         original = self.page.send
         replies = {'1+1': {'result': {'type': 'number', 'value': 2}},

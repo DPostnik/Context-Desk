@@ -68,7 +68,9 @@ dialog require it and are flagged with `risk`. JavaScript dialogs are reported a
 answered with `action=dialog`; tabs opened by an action are listed in `newTabs`.
 Cross-origin iframes are read and operated like the page itself: their trees nest
 under the iframe line and their refs work with `browser_input`. `action=upload`
-attaches files from the chat's project directory to a file field by ref.
+attaches files from the chat's project directory to a file field by ref; for a
+button that opens the picker from script, it clicks it with Chrome's file chooser
+intercepted, so no native dialog appears.
 `browser_eval` runs JavaScript once (journaled, expectedURL required) and returns the
 last expression's value; `browser_logs` lists the tab's console messages or network
 requests collected by Chrome DevTools.
@@ -150,7 +152,9 @@ DOM (`settle`, по умолчанию 3 с) и возвращает `changes`: 
 перечислены в `newTabs`.
 iframe с других сайтов читаются и управляются как сама страница: их дерево вложено
 под строку iframe, а их ref работают в `browser_input`. `action=upload` прикрепляет
-к полю файла по ref файлы из папки проекта чата. `browser_eval` один раз выполняет
+к полю файла по ref файлы из папки проекта чата; кнопку, которая открывает выбор
+файла скриптом, оно нажимает с перехватом выбора файла в Chrome, и системное окно не
+появляется. `browser_eval` один раз выполняет
 JavaScript (с записью в журнал и обязательным expectedURL) и возвращает значение
 последнего выражения; `browser_logs` показывает сообщения консоли или сетевые запросы
 вкладки, собранные Chrome DevTools.
