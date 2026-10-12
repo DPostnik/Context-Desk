@@ -237,7 +237,8 @@ public actor ClaudeIntegration: AgentIntegration {
             sessions[id]?.access = expectedAccess
             let scheduled = request.kind == .scheduled
             let launch = try Self.arguments(id: id, resumed: true, access: expectedAccess, model: request.model.model, effort: request.model.effort,
-                                            scheduled: scheduled, projectInstructions: ProjectInstructions.prompt(projectPath: record.cwd), userChrome: userChrome)
+                                            scheduled: scheduled, projectInstructions: ProjectInstructions.prompt(projectPath: record.cwd),
+                                            projectAgents: ProjectAgents.argument(projectPath: record.cwd), userChrome: userChrome)
             // A CLI kept for background tasks was started with its own model, permissions and approval rules
             // (scheduled turns have none); a different launch stops it and resumes in a fresh one.
             if let current = wires[id], scheduledWires.contains(id) != scheduled || wireArguments[id] != launch {
@@ -258,7 +259,8 @@ public actor ClaudeIntegration: AgentIntegration {
                 } }
                 let arguments = try Self.arguments(id: id, resumed: record.sent, access: expectedAccess,
                                                    model: request.model.model, effort: request.model.effort, scheduled: scheduled,
-                                                   projectInstructions: ProjectInstructions.prompt(projectPath: record.cwd), browserServer: server,
+                                                   projectInstructions: ProjectInstructions.prompt(projectPath: record.cwd),
+                                                   projectAgents: ProjectAgents.argument(projectPath: record.cwd), browserServer: server,
                                                    userChrome: userChrome)
                 var environment = ClaudeProfile.environment(home: home).merging(Self.sessionEnvironment) { _, new in new }
                 // Same startup/tool limits as the Codex MCP entry (30 s / 90 s).
@@ -314,7 +316,8 @@ public actor ClaudeIntegration: AgentIntegration {
     }()
     /// A scheduled turn runs unattended, so full-access connector actions are not held for approval (as print runs were not).
     static func arguments(id: String, resumed: Bool, access: AccessMode, model: String, effort: String?, scheduled: Bool = false,
-                          projectInstructions: String? = nil, browserServer: [String]? = nil, userChrome: Bool = false) throws -> [String] {
+                          projectInstructions: String? = nil, projectAgents: String? = nil, browserServer: [String]? = nil,
+                          userChrome: Bool = false) throws -> [String] {
         // Only full-access chats (network allowed) load the account's claude.ai connectors such as Gmail.
         let connectors = access == .fullAccess
         // The user's real Chrome only for attended full-access turns; `--restricted` would skip it anyway.
@@ -343,6 +346,8 @@ public actor ClaudeIntegration: AgentIntegration {
         if !model.isEmpty { args += ["--model", model] }
         // Only a documented level is forwarded; an unset value leaves the CLI default in place.
         if let level = ClaudeEffort.accepted(effort) { args += ["--effort", level.rawValue] }
+        // `--setting-sources ""` also skips the project's `.claude/agents`; only full access has the Agent tool to use them.
+        if access == .fullAccess, let projectAgents { args += ["--agents", projectAgents] }
         // `--setting-sources ""` also skips the project's CLAUDE.md, so project rules come in here.
         // Only full access has the Agent tool; the guidance would be noise in restricted chats.
         let delegation = access == .fullAccess ? delegationInstructions() : nil
