@@ -126,6 +126,19 @@ class ChromeHostTests(unittest.TestCase):
             self.host.ensure(cancelled=event)
         launch.assert_not_called()
 
+    def test_browser_limit_is_reported_with_stable_code_before_launch(self):
+        environments = Path(self.temp.name) / 'environments'
+        other = environments / 'other'
+        other.mkdir(parents=True)
+        (other / 'testing-chrome-owner.json').write_text(json.dumps(self.owner))
+        host = ChromeHost(environments / 'run', max_browsers=1)
+        host.root.mkdir()
+        with patch.object(host, 'process_gone', return_value=False), patch('chrome_host.subprocess.Popen') as launch:
+            with self.assertRaises(ChromeLaunchError) as raised:
+                host.prepare_cookie_import()
+        self.assertEqual(raised.exception.code, 'browser_limit')
+        launch.assert_not_called()
+
     def test_cookie_import_never_adopts_live_browser_or_retires_unknown_fence(self):
         self.host.persist(self.owner)
         fence = self.host.root / 'executor-in-flight.json'

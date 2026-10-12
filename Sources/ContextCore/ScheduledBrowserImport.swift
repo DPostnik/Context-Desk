@@ -59,7 +59,8 @@ public enum ScheduledBrowserPreflight: Equatable, Sendable {
     case blocked(ChromeCookieError)
     /// The write may have happened. Never retried in this run.
     case uncertain
-    /// Wildcard policy: the site is known only once the agent opens a page, so the agent keeps the import step.
+    /// The agent keeps the import step: a wildcard policy (the site is known only once the agent opens a page),
+    /// or no browser slot freed up before dispatch (nothing was started or written).
     case skipped
 }
 
@@ -69,7 +70,9 @@ extension ScheduledBrowserImport {
     public static func preflight(_ policy: ChromeSessionImportPolicy, session: AgentSessionReference, runtime: URL, maxBrowsers: Int,
                                  root: URL = BrowserEnvironmentStore.directory, sourceIsRunning: @escaping @Sendable () -> Bool,
                                  read: (@Sendable (String, String) throws -> ChromeCookieRead)? = nil,
-                                 transfer: (@Sendable (ChromeCookieRead, URL, BrowserProfileGrant) async throws -> ChromeCookieImportResult)? = nil) async -> ScheduledBrowserPreflight {
+                                 transfer: (@Sendable (ChromeCookieRead, URL, BrowserProfileGrant) async throws -> ChromeCookieImportResult)? = nil,
+                                 slotWaits: Int = 18,
+                                 wait: @Sendable () async throws -> Void = { try await Task.sleep(for: .seconds(10)) }) async -> ScheduledBrowserPreflight {
         guard !policy.coversAnySite else { return .skipped }
         do {
             let store = BrowserProfileStore(root: root)
@@ -78,11 +81,23 @@ extension ScheduledBrowserImport {
             let grant = try store.ownedGrant(session: session, allowHuman: false)
             let cookies = try (read ?? { try ChromeCookieSource.read(profile: $0, site: $1, sourceIsRunning: sourceIsRunning) })(policy.profile, policy.site)
             guard !cookies.cookies.isEmpty else { return .blocked(.empty) }
-            let result = try await (transfer ?? { read, environment, grant in
+            let send = transfer ?? { read, environment, grant in
                 try await ChromeCookieImporter.transfer(read, environment: environment, runtime: runtime, maxBrowsers: maxBrowsers,
                                                         grant: grant, browserRoot: root)
-            })(cookies, environment, grant)
-            return result.verified > 0 ? .imported(verified: result.verified) : .blocked(.empty)
+            }
+            // The browser limit refuses before launch, so waiting for a free slot never repeats a write.
+            // If none frees up, the agent imports later through its own browser, which also needs that slot.
+            var waits = 0
+            while true {
+                do {
+                    let result = try await send(cookies, environment, grant)
+                    return result.verified > 0 ? .imported(verified: result.verified) : .blocked(.empty)
+                } catch ChromeCookieError.browserLimit {
+                    guard waits < slotWaits else { return .skipped }
+                    waits += 1
+                    try await wait()
+                }
+            }
         } catch let error as ChromeCookieError {
             return error == .uncertain ? .uncertain : .blocked(error)
         } catch {

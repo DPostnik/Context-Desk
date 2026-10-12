@@ -148,6 +148,23 @@ import Testing
     #expect(await ScheduledBrowserImport.preflight(policy, session: session, runtime: runtime, maxBrowsers: 2, root: root,
         sourceIsRunning: { true }, read: read, transfer: { _, _, _ in calls.transfers += 1; throw ChromeCookieError.uncertain }) == .uncertain)
     #expect(calls.transfers == before + 1)
+    // A full browser limit is refused before launch: cookies are read once, admission waits for a slot,
+    // and without one the agent keeps its own import step.
+    final class Attempts: @unchecked Sendable { var reads = 0; var sends = 0; var waits = 0 }
+    let full = Attempts()
+    #expect(await ScheduledBrowserImport.preflight(policy, session: session, runtime: runtime, maxBrowsers: 2, root: root,
+        sourceIsRunning: { true }, read: { _, _ in full.reads += 1; return ChromeCookieRead(cookies: [cookie]) },
+        transfer: { _, _, _ in
+            full.sends += 1
+            if full.sends < 3 { throw ChromeCookieError.browserLimit }
+            return ChromeCookieImportResult(verified: 1, skipped: 0, unverified: 0)
+        }, wait: { full.waits += 1 }) == .imported(verified: 1))
+    #expect(full.reads == 1 && full.sends == 3 && full.waits == 2)
+    let never = Attempts()
+    #expect(await ScheduledBrowserImport.preflight(policy, session: session, runtime: runtime, maxBrowsers: 2, root: root,
+        sourceIsRunning: { true }, read: read, transfer: { _, _, _ in never.sends += 1; throw ChromeCookieError.browserLimit },
+        slotWaits: 3, wait: { never.waits += 1 }) == .skipped)
+    #expect(never.sends == 4 && never.waits == 3)
     let stranger = AgentSessionReference(connection: .appClaude, nativeID: "no-environment")
     #expect(await ScheduledBrowserImport.preflight(policy, session: stranger, runtime: runtime, maxBrowsers: 2, root: root,
         sourceIsRunning: { true }, read: read, transfer: { _, _, _ in throw ChromeCookieError.connection }) == .blocked(.missingEnvironment))

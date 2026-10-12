@@ -24,7 +24,8 @@ from install import chrome_app, verify_chrome
 
 
 class ChromeLaunchError(RuntimeError):
-    pass
+    # Stable machine-readable reason for native callers; the message stays localized.
+    code = None
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -182,8 +183,10 @@ class ChromeHost:
                     if not self.process_gone(owner):
                         active += 1
                 if active >= self.max_browsers:
-                    raise self.error('Достигнут лимит браузеров. Заверши неиспользуемый Chrome этого приложения через Cmd+Q или увеличь лимит в настройках. Действие не отправлено.',
-                                     'Browser limit reached. Quit an unused Chrome owned by this app with Cmd+Q or increase the limit in settings. No action was sent.')
+                    error = self.error('Достигнут лимит браузеров. Заверши неиспользуемый Chrome этого приложения через Cmd+Q или увеличь лимит в настройках. Действие не отправлено.',
+                                       'Browser limit reached. Quit an unused Chrome owned by this app with Cmd+Q or increase the limit in settings. No action was sent.')
+                    error.code = 'browser_limit'
+                    raise error
             return self.ensure_owned(cancelled, seconds)
 
     def ensure_owned(self, cancelled=None, seconds=15):
@@ -434,5 +437,8 @@ if __name__ == '__main__':
                 validate(host.root, args.profile_lease, allow_human=True, language=args.language)
                 print(json.dumps(host.control_owned(args.close) if host.record.exists() else {'running': False}))
     except Exception as error:
-        print(json.dumps({'error': str(error)}))
+        result = {'error': str(error)}
+        if getattr(error, 'code', None):
+            result['code'] = error.code
+        print(json.dumps(result))
         raise SystemExit(1)

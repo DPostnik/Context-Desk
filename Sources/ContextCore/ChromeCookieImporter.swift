@@ -102,6 +102,8 @@ public enum ChromeCookieImporter {
         guard data.count <= 32768, let result = try? JSONDecoder().decode(JSONValue.self, from: data) else { throw ChromeCookieError.connection }
         if result["code"].string == "destination_running" { throw ChromeCookieError.destinationRunning }
         if result["code"].string == "uncertain" { throw ChromeCookieError.uncertain }
+        // Definite refusal before launch: nothing was started or written.
+        if result["code"].string == "browser_limit" { throw ChromeCookieError.browserLimit }
         guard process.terminationStatus == 0, let address = result["webSocketURL"].string, let url = URL(string: address),
               url.scheme == "ws", url.host == "127.0.0.1", let port = url.port, (1024...65535).contains(port),
               url.user == nil, url.password == nil, url.query == nil, url.fragment == nil,
