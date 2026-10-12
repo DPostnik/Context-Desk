@@ -35,8 +35,7 @@ struct ClaudeSubagentTracker {
             guard let index = index(call: value["parent_tool_use_id"].string) else { return false }
             var changed = false
             for part in value["message"]["content"].array where part["type"].string == "tool_result" {
-                let content = part["content"]
-                let text = content.string ?? content.array.compactMap { $0["type"].string == "text" ? $0["text"].string : nil }.joined(separator: "\n")
+                let text = ClaudeIntegration.toolResultText(part["content"])
                 append(.init(id: (part["tool_use_id"].string ?? UUID().uuidString) + ":result", kind: .result,
                              text: Self.clip(text, Self.resultLimit), isError: part["is_error"].bool == true), to: index)
                 changed = true

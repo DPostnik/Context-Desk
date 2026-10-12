@@ -295,6 +295,15 @@ private func interactiveRequest(context: AgentContext, root: URL, session: Agent
     #expect(account.authenticated)
 }
 
+@Test func claudeToolResultShowsTextInsteadOfBlockJSON() throws {
+    let blocks = try JSONDecoder().decode(JSONValue.self, from: Data(#"[{"type":"text","text":"Clicked on element ref_644"},{"type":"image","source":{"data":"AAAA"}},{"type":"text","text":"\n\nTab Context:\n- Executed on tabId: 1"}]"#.utf8))
+    let text = ClaudeIntegration.toolResultText(blocks)
+    #expect(text.hasPrefix("Clicked on element ref_644\n"))
+    #expect(text.hasSuffix("Tab Context:\n- Executed on tabId: 1"))
+    #expect(!text.contains("\"type\"") && !text.contains("AAAA"))
+    #expect(ClaudeIntegration.toolResultText(.string("done")) == "done")
+}
+
 @Test func claudeProgressSummaryIsOneBoundedLine() {
     #expect(ClaudeIntegration.progressSummary(" \n ") == nil)
     #expect(ClaudeIntegration.progressSummary(nil) == nil)

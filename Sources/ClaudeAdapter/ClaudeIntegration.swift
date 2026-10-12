@@ -482,7 +482,7 @@ public actor ClaudeIntegration: AgentIntegration {
         case "user":
             guard value["parent_tool_use_id"].string == nil else { return }
             for part in value["message"]["content"].array where part["type"].string == "tool_result" {
-                if let key = part["tool_use_id"].string { emit(.init(id: key + ":result", kind: "activity", text: part["content"].display), session: id) }
+                if let key = part["tool_use_id"].string { emit(.init(id: key + ":result", kind: "activity", text: Self.toolResultText(part["content"])), session: id) }
             }
         case "result":
             guard value["session_id"].string == id, value["is_error"].bool != nil else { await wire.close(); return }
@@ -596,6 +596,18 @@ public actor ClaudeIntegration: AgentIntegration {
         guard var meter = meters[id], meter.observe(message: message, usage: usage) else { return }
         meters[id] = meter
         sink.yield(.init(session: reference(id), payload: .usage(turn: turn, total: meter.total, snapshot: meter.snapshot())))
+    }
+    /// Tool results arrive as a string or as content blocks; show their text, never the raw block JSON.
+    static func toolResultText(_ content: JSONValue) -> String {
+        if let text = content.string { return text }
+        guard case .array(let blocks) = content else { return content.display }
+        return blocks.compactMap { block -> String? in
+            switch block["type"].string {
+            case "text": block["text"].string
+            case "image": L10n.text("[изображение]", "[image]")
+            default: nil
+            }
+        }.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
     /// CLI summary text is data: one plain line, bounded for the status row.
     static func progressSummary(_ raw: String?) -> String? {
