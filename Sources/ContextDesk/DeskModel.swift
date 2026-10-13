@@ -155,6 +155,11 @@ private struct ChatRunState {
     var priorityMessageID: String? { runs[currentRunKey]?.priorityMessageID }
     var anyBusy: Bool { preparingHandoff || creatingHandoff || jobLedger.runs.contains { $0.status.active } || summaryTask != nil || !deletingChatIDs.isEmpty || !archivingChatIDs.isEmpty || runs.values.contains { $0.running || $0.sending } }
     func isBusy(threadID: String) -> Bool { runs[threadID]?.running == true }
+    /// Live activity label and start of a chat's running turn, for the notch island.
+    func runActivity(threadID: String) -> (status: String?, since: Date?) {
+        guard let run = runs[threadID], run.running else { return (nil, nil) }
+        return (run.status, run.turnID.flatMap { turnStarts[threadID + ":" + $0] })
+    }
     /// An idle chat whose agent will continue on its own once its background tasks finish.
     func backgroundWaitNotice(_ threadID: String) -> String? {
         guard !isBusy(threadID: threadID), let count = backgroundWaits[threadID] else { return nil }

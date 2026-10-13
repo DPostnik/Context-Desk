@@ -111,7 +111,14 @@ struct ContextDeskApp: App {
                 .preferredColorScheme(.light)
                 .environment(\.locale, L10n.locale)
                 .frame(minWidth: 900, minHeight: 620)
-                .task { delegate.model = model; await model.boot() }
+                .task {
+                    delegate.model = model
+                    NotchIslandController.start(model: model, showMainWindow: {
+                        NSApplication.shared.activate(ignoringOtherApps: true)
+                        NSApplication.shared.windows.first { $0.canBecomeMain }?.makeKeyAndOrderFront(nil)
+                    })
+                    await model.boot()
+                }
         }
         .defaultSize(width: 1120, height: 760)
         .commands {
