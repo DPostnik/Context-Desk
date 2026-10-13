@@ -1,3 +1,4 @@
+import QuartzCore
 import SwiftUI
 import ContextCore
 
@@ -33,7 +34,6 @@ struct NotchIslandView: View {
                 .onChange(of: proxy.size.height) { _, height in onHeight(height) }
         })
         .background(Color.black, in: UnevenRoundedRectangle(bottomLeadingRadius: radius, bottomTrailingRadius: radius, style: .continuous))
-        .shadow(color: .black.opacity(expanded ? 0.35 : 0), radius: 14, y: 6)
         .opacity(state.mode == .hidden ? 0 : 1)
         .animation(.spring(response: 0.38, dampingFraction: 0.78), value: state.mode)
     }
@@ -78,26 +78,12 @@ struct NotchIslandView: View {
 /// A chat row's status mark: a spinner while it works, a pulsing dot while it waits, a check when done.
 private struct NotchStatusIndicator: View {
     let summary: NotchSummary
-    @State private var spin = false
-    @State private var breathe = false
 
     var body: some View {
         ZStack {
             switch summary {
-            case .working:
-                Circle().trim(from: 0, to: 0.72)
-                    .stroke(AngularGradient(colors: [.cyan.opacity(0.1), .cyan], center: .center), style: StrokeStyle(lineWidth: 2.2, lineCap: .round))
-                    .rotationEffect(.degrees(spin ? 360 : 0))
-                    .animation(.linear(duration: 0.9).repeatForever(autoreverses: false), value: spin)
-                    .onAppear { spin = true }
-                    .onDisappear { spin = false }
-            case .waiting:
-                Circle().fill(.orange)
-                    .frame(width: 8, height: 8)
-                    .background(Circle().fill(.orange.opacity(0.45)).scaleEffect(breathe ? 2.3 : 1).opacity(breathe ? 0 : 1))
-                    .animation(.easeOut(duration: 1.1).repeatForever(autoreverses: false), value: breathe)
-                    .onAppear { breathe = true }
-                    .onDisappear { breathe = false }
+            case .working: NotchLoopMark(kind: .spinner)
+            case .waiting: NotchLoopMark(kind: .pulse)
             case .finished:
                 Image(systemName: "checkmark.circle.fill").font(.system(size: 13, weight: .bold)).foregroundStyle(.green)
             case .idle:
@@ -106,6 +92,59 @@ private struct NotchStatusIndicator: View {
         }
         .frame(width: 14, height: 14)
     }
+}
+
+/// Looping row marks on Core Animation, so they stay smooth while the main thread is busy.
+private struct NotchLoopMark: NSViewRepresentable {
+    enum Kind { case spinner, pulse }
+    let kind: Kind
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 14, height: 14))
+        let root = CALayer()
+        view.layer = root
+        view.wantsLayer = true
+        let box = CGRect(x: 0, y: 0, width: 14, height: 14)
+        switch kind {
+        case .spinner:
+            let ring = CAShapeLayer()
+            ring.frame = box
+            ring.path = CGPath(ellipseIn: box.insetBy(dx: 1.6, dy: 1.6), transform: nil)
+            ring.fillColor = nil
+            ring.strokeColor = NSColor.systemCyan.cgColor
+            ring.lineWidth = 2.2
+            ring.lineCap = .round
+            ring.strokeEnd = 0.72
+            let spin = CABasicAnimation(keyPath: "transform.rotation.z")
+            spin.fromValue = 0; spin.toValue = -2 * Double.pi
+            spin.duration = 0.9; spin.repeatCount = .infinity; spin.isRemovedOnCompletion = false
+            ring.add(spin, forKey: "spin")
+            root.addSublayer(ring)
+        case .pulse:
+            let dotBox = box.insetBy(dx: 3, dy: 3)
+            let halo = CAShapeLayer()
+            halo.frame = box
+            halo.path = CGPath(ellipseIn: dotBox, transform: nil)
+            halo.fillColor = NSColor.systemOrange.withAlphaComponent(0.45).cgColor
+            let grow = CABasicAnimation(keyPath: "transform.scale")
+            grow.fromValue = 1; grow.toValue = 2.3
+            let fade = CABasicAnimation(keyPath: "opacity")
+            fade.fromValue = 1; fade.toValue = 0
+            let group = CAAnimationGroup()
+            group.animations = [grow, fade]; group.duration = 1.1; group.repeatCount = .infinity
+            group.timingFunction = CAMediaTimingFunction(name: .easeOut); group.isRemovedOnCompletion = false
+            halo.add(group, forKey: "pulse")
+            let dot = CAShapeLayer()
+            dot.frame = box
+            dot.path = CGPath(ellipseIn: dotBox, transform: nil)
+            dot.fillColor = NSColor.systemOrange.cgColor
+            root.addSublayer(halo)
+            root.addSublayer(dot)
+        }
+        return view
+    }
+    func updateNSView(_ view: NSView, context: Context) {}
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSView, context: Context) -> CGSize? { CGSize(width: 14, height: 14) }
 }
 
 private struct NotchCountLabel: View {
