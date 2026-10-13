@@ -21,6 +21,7 @@ import ContextCore
     var onOpenChat: (String) -> Void = { _ in }
     var onAnswer: (PendingAction, AgentInteractionResponse) async -> String? = { _, _ in nil }
     var onPreferencesChanged: () -> Void = {}
+    var onDisable: () -> Void = {}
 }
 
 /// A transparent panel over the MacBook notch. Only the built-in display with a cut-out gets it;
@@ -46,11 +47,21 @@ import ContextCore
     private var screen: NSScreen?
 
     private static var running: NotchIslandController?
-    /// Starts once per process; reopening the main window keeps the same island.
+    private static var launch: (model: DeskModel, showMainWindow: () -> Void)?
+    /// Starts once per process when enabled; reopening the main window keeps the same island.
     static func start(model: DeskModel, showMainWindow: @escaping () -> Void) {
-        guard running == nil else { return }
+        launch = (model, showMainWindow)
+        guard running == nil, NotchPreferences.load().enabled else { return }
         running = NotchIslandController(model: model, showMainWindow: showMainWindow)
         running?.start()
+    }
+    /// Turning the island off tears down the window, its views and every observer, so it costs nothing.
+    static func setEnabled(_ enabled: Bool) {
+        var preferences = NotchPreferences.load()
+        preferences.enabled = enabled
+        preferences.save()
+        if enabled, let launch { start(model: launch.model, showMainWindow: launch.showMainWindow) }
+        if !enabled { running?.stop(); running = nil }
     }
 
     private init(model: DeskModel, showMainWindow: @escaping () -> Void) {
@@ -65,6 +76,7 @@ import ContextCore
         panel.becomesKeyOnlyIfNeeded = true
         panel.ignoresMouseEvents = true
         panel.acceptsMouseMovedEvents = true
+        panel.isReleasedWhenClosed = false
         let root = NotchIslandView(state: state, onHeight: { [weak self] in self?.expandedHeight = $0 })
             .environment(\.colorScheme, .dark)
             .environment(\.locale, L10n.locale)
@@ -80,6 +92,17 @@ import ContextCore
         }
         state.onAnswer = { action, response in await model.answer(action, result: response) }
         state.onPreferencesChanged = { [weak self] in self?.applyMode() }
+        // Deferred: the island's own button must not destroy the view that is handling its click.
+        state.onDisable = { DispatchQueue.main.async { NotchIslandController.setEnabled(false) } }
+    }
+
+    private func stop() {
+        observers.removeAll()
+        monitors.forEach(NSEvent.removeMonitor)
+        monitors.removeAll()
+        [hoverTask, pinTask, peekTask].forEach { $0?.cancel() }
+        panel.orderOut(nil)
+        panel.contentView = nil
     }
 
     private func start() {

@@ -175,6 +175,13 @@ private struct NotchSettings: View {
         VStack(alignment: .leading, spacing: 10) {
             Toggle(L10n.text("Прятать, когда агенты не работают", "Hide when no agent is working"), isOn: binding(\.autoHide))
             Toggle(L10n.text("Звук, когда агент закончил или ждёт ответа", "Sound when an agent finishes or needs you"), isOn: binding(\.sound))
+            HStack(alignment: .firstTextBaseline) {
+                Text(L10n.text("Включить снова: Настройки → Основные", "Turn back on in Settings → General"))
+                    .font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
+                Spacer(minLength: 8)
+                Button(L10n.text("Выключить остров", "Turn off island")) { state.onDisable() }
+                    .buttonStyle(NotchButtonStyle(prominent: false))
+            }
         }
         .toggleStyle(.switch).controlSize(.small)
         .font(.system(size: 12)).foregroundStyle(.white.opacity(0.9))
@@ -315,5 +322,21 @@ private struct NotchButtonStyle: ButtonStyle {
             .opacity(configuration.isPressed ? 0.7 : 1)
             .scaleEffect(configuration.isPressed ? 0.96 : 1)
             .contentShape(Capsule())
+    }
+}
+
+/// Settings → General: the island can be switched off entirely.
+struct NotchIslandSettings: View {
+    @State private var enabled = NotchPreferences.load().enabled
+    var body: some View {
+        Section(L10n.text("Остров в нотче", "Notch island")) {
+            Toggle(L10n.text("Показывать остров над нотчем", "Show the island over the notch"), isOn: $enabled)
+                .onChange(of: enabled) { _, value in NotchIslandController.setEnabled(value) }
+            Text(L10n.text("Только на встроенном экране MacBook. Выключенный остров не тратит память и процессор.",
+                           "Built-in MacBook display only. When off, the island uses no memory or CPU."))
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        // The island's own button may have turned it off while Settings was open in the background.
+        .onAppear { enabled = NotchPreferences.load().enabled }
     }
 }

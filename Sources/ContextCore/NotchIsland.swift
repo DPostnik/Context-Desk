@@ -18,10 +18,22 @@ public struct NotchGeometry: Equatable, Sendable {
 
 /// User choices made inside the island itself.
 public struct NotchPreferences: Codable, Equatable, Sendable {
+    /// Off removes the island window and its animation entirely.
+    public var enabled = true
     /// Hide the island while no agent works, waits for the user or has an unseen result.
     public var autoHide = true
     public var sound = true
-    public init(autoHide: Bool = true, sound: Bool = true) { self.autoHide = autoHide; self.sound = sound }
+    public init(enabled: Bool = true, autoHide: Bool = true, sound: Bool = true) {
+        self.enabled = enabled; self.autoHide = autoHide; self.sound = sound
+    }
+    private enum CodingKeys: String, CodingKey { case enabled, autoHide, sound }
+    /// Values saved before a key existed keep their defaults.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+        autoHide = try container.decodeIfPresent(Bool.self, forKey: .autoHide) ?? true
+        sound = try container.decodeIfPresent(Bool.self, forKey: .sound) ?? true
+    }
 
     public static let defaultsKey = "notchIslandPreferences"
     public static func load(from defaults: UserDefaults = .standard) -> Self {

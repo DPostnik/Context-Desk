@@ -58,6 +58,11 @@ import Testing
     #expect(NotchPreferences.load(from: defaults) == NotchPreferences(autoHide: true, sound: true))
     NotchPreferences(autoHide: false, sound: false).save(to: defaults)
     #expect(NotchPreferences.load(from: defaults) == NotchPreferences(autoHide: false, sound: false))
+    // Preferences saved before the on/off switch existed keep the island on.
+    defaults.set(Data(#"{"autoHide":false,"sound":true}"#.utf8), forKey: NotchPreferences.defaultsKey)
+    #expect(NotchPreferences.load(from: defaults) == NotchPreferences(enabled: true, autoHide: false, sound: true))
+    NotchPreferences(enabled: false).save(to: defaults)
+    #expect(NotchPreferences.load(from: defaults).enabled == false)
     let start = Date(timeIntervalSince1970: 0)
     #expect(NotchPolicy.duration(since: start, now: start.addingTimeInterval(42), language: .russian) == "42 с")
     #expect(NotchPolicy.duration(since: start, now: start.addingTimeInterval(42), language: .english) == "42s")
