@@ -1,3 +1,4 @@
+import ContextTranscript
 import SwiftUI
 import ContextCore
 
@@ -21,7 +22,7 @@ struct AccountLimitsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack {
-                Label(L10n.text("Доступный usage", "Available usage"), systemImage: "chart.bar").font(.title2.bold())
+                Label(L10n.text("Доступный usage", "Available usage"), systemImage: "chart.bar").font(.ui(.title2).bold())
                 Spacer()
                 Button { dismiss() } label: { Image(systemName: "xmark") }
                     .buttonStyle(PointerButtonStyle(base: .plain)).help(L10n.text("Закрыть", "Close")).keyboardShortcut(.cancelAction)
@@ -33,15 +34,15 @@ struct AccountLimitsView: View {
             Text(claude
                  ? L10n.text("Лимиты подписки Claude общие для аккаунта: Claude Code, claude.ai и другие приложения. Контекст отдельного чата показан рядом с полем сообщения.", "Claude subscription limits are shared across your account: Claude Code, claude.ai and other apps. Each chat’s context usage is shown next to the message field.")
                  : L10n.text("Лимиты Codex общие для аккаунта во всех приложениях. Контекст отдельного чата показан рядом с полем сообщения.", "Codex limits are shared across all apps on your account. Each chat’s context usage is shown next to the message field."))
-                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .font(.ui(.callout)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             // A fixed height from the first frame: AppKit places the popover only when it is shown,
             // so late data, a provider switch or a loading state must not resize it afterwards.
             VStack(alignment: .leading, spacing: 18) { status }
                 .frame(height: maxListHeight + Self.checkedLineHeight, alignment: .top)
             HStack {
-                Text(L10n.text("Время: \(TimeZone.current.identifier)", "Time zone: \(TimeZone.current.identifier)")).font(.caption).foregroundStyle(.secondary)
+                Text(L10n.text("Время: \(TimeZone.current.identifier)", "Time zone: \(TimeZone.current.identifier)")).font(.ui(.caption)).foregroundStyle(.secondary)
                 Spacer()
-                if refreshing && limits != nil { ProgressView().controlSize(.small) }
+                if refreshing && limits != nil { ProgressView().uiSmallSpinner() }
                 Button(L10n.text("Обновить", "Refresh")) { Task { await refresh() } }
                     .disabled(refreshing || !connected || !authenticated)
             }
@@ -60,18 +61,18 @@ struct AccountLimitsView: View {
         } else {
             if !connected { Label(L10n.text("Нет подключения. Данные могут быть устаревшими.", "Disconnected. Data may be out of date."), systemImage: "wifi.slash") }
             if let issue {
-                Label(issue, systemImage: "exclamationmark.circle").font(.callout).foregroundStyle(.secondary)
+                Label(issue, systemImage: "exclamationmark.circle").font(.ui(.callout)).foregroundStyle(.secondary)
             }
             if let snapshot = limits {
                 if snapshot.ordinaryUsageAllowed == false {
-                    Text(L10n.text("Сервис сообщает, что обычное использование сейчас недоступно.", "The service reports that ordinary usage is currently unavailable.")).font(.callout)
+                    Text(L10n.text("Сервис сообщает, что обычное использование сейчас недоступно.", "The service reports that ordinary usage is currently unavailable.")).font(.ui(.callout))
                 }
                 if snapshot.buckets.isEmpty { Text(L10n.text("Сервис пока не передал данные о лимитах.", "The service has not provided limit data yet.")).foregroundStyle(.secondary) }
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
                         ForEach(snapshot.buckets) { bucket in
                             VStack(alignment: .leading, spacing: 14) {
-                                Text(bucket.name).font(.headline)
+                                Text(bucket.name).font(.ui(.headline))
                                 if bucket.windows.isEmpty { Text(L10n.text("Данные о периодах лимита не переданы.", "No limit window data provided.")).foregroundStyle(.secondary) }
                                 ForEach(bucket.windows) { window in windowRow(window) }
                             }.padding(16).background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 14))
@@ -79,7 +80,7 @@ struct AccountLimitsView: View {
                     }
                 }.frame(maxHeight: .infinity, alignment: .top)
                 Text(L10n.text("Проверено: \(localDate(snapshot.fetchedAt))", "Checked: \(localDate(snapshot.fetchedAt))"))
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.ui(.caption)).foregroundStyle(.secondary)
             } else if refreshing {
                 ProgressView(L10n.text("Проверяю лимиты…", "Checking limits…")).padding(.vertical)
             } else if issue == nil {
@@ -108,9 +109,9 @@ struct AccountLimitsView: View {
             }
             if let reset = window.resetsAt {
                 Text(L10n.text("Обновление: \(localDate(reset))", "Resets: \(localDate(reset))"))
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.ui(.caption)).foregroundStyle(.secondary)
             } else {
-                Text(L10n.text("Время обновления неизвестно", "Reset time unknown")).font(.caption).foregroundStyle(.secondary)
+                Text(L10n.text("Время обновления неизвестно", "Reset time unknown")).font(.ui(.caption)).foregroundStyle(.secondary)
             }
         }
     }

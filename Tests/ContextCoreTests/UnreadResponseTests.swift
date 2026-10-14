@@ -66,6 +66,24 @@ import ContextTranscript
     Issue.record("Read state was not persisted")
 }
 
+@Test @MainActor func turnWithoutAnswerCanBeReadFromIncompleteHistory() async throws {
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let model = DeskModel(store: AppStore(file: folder.appendingPathComponent("state.sqlite")))
+    model.state.chats = [Chat(id: "thread", projectID: UUID(), title: "Chat", model: "")]
+    model.chatID = "thread"
+    model.localHistoryNotice = "partial"
+    model.recordUnreadCompletion(threadID: "thread", completionID: "turn:thread:failed")
+    model.markResponseRead(threadID: "thread", completionID: "turn:thread:failed")
+    #expect(model.state.chats[0].hasUnreadResponse)
+    var prompt = TranscriptItem(id: "user:failed", kind: "user", text: "Вопрос")
+    prompt.turnID = "failed"
+    model.items = [prompt]
+    model.markResponseRead(threadID: "thread", completionID: "turn:thread:failed")
+    #expect(!model.state.chats[0].hasUnreadResponse)
+    try await Task.sleep(for: .milliseconds(50)) // Let persistence finish before removing the folder.
+}
+
 @Test @MainActor func unreadLongTranscriptOpensAtEndAndTracksTheActualEnd() {
     let view = TranscriptScrollView()
     view.frame = NSRect(x: 0, y: 0, width: 700, height: 400)

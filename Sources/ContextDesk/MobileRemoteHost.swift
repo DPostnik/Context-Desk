@@ -288,26 +288,26 @@ struct MobileRemoteSettings: View {
             SecureField(L10n.text("Пароль Supabase", "Supabase password"), text: $host.password)
             }.disabled(host.enabled || host.transitioning)
             Text(L10n.text("Если Связка ключей на Mac запрашивает доступ для Context Desk, выберите «Разрешать всегда», чтобы сохранить разрешение. После обновления приложения macOS может запросить его снова.", "If Keychain on your Mac asks to allow Context Desk access, choose Always Allow to save permission. macOS may ask again after an app update."))
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.ui(.caption)).foregroundStyle(.secondary)
             Text(L10n.text("Выбранные проекты: названия, последние сообщения и запросы подтверждения передаются в Supabase. Фото с телефона удаляются из облака примерно через час после обработки команды, а с Mac — через час после окончания работы чата. Очистка на Mac выполняется, пока приложение открыто. Вложения из истории Mac и учётные данные агентов не передаются. Облачная копия хранится до удаления ниже.", "Selected projects: names, recent messages and approval requests are sent to Supabase. Phone photos are removed from the cloud about an hour after the command is processed, and from your Mac an hour after the chat becomes idle. Mac cleanup runs while the app is open. Attachments from Mac history and agent credentials are excluded. The cloud copy remains until deleted below."))
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.ui(.caption)).foregroundStyle(.secondary)
             ForEach(model.state.projects) { project in
                 Toggle(project.name, isOn: Binding(get: { host.projects.contains(project.id.uuidString) }, set: {
                     if $0 { host.projects.insert(project.id.uuidString) } else { host.projects.remove(project.id.uuidString) }
                 })).disabled(host.enabled)
             }
             Text(L10n.text("На питании от сети Mac не засыпает автоматически. Закрытая крышка, принудительный сон и Cmd+Q могут прервать доступ.", "On external power, the Mac stays awake during idle time. Closing the lid, forced sleep and Cmd+Q can interrupt access."))
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.ui(.caption)).foregroundStyle(.secondary)
             Toggle(L10n.text("Включать доступ при запуске приложения", "Enable access when the app launches"), isOn: $host.autoEnable)
             Text(L10n.text("Если доступ был включён, он восстановится после запуска или перезапуска приложения, и сохранённые команды будут обработаны. Кнопка «Выключить доступ» отменяет это до следующего ручного включения.", "If access was on, it comes back after the app launches or restarts, and saved commands are processed. Disable access keeps it off until you enable it again."))
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.ui(.caption)).foregroundStyle(.secondary)
             if host.enabled {
                 Button(L10n.text("Выключить доступ", "Disable access")) { Task { await host.turnOff() } }
             } else {
                 Button(L10n.text("Включить и обработать очередь", "Enable and process queue")) { Task { await host.enable(model: model) } }.disabled(host.projects.isEmpty || host.transitioning)
             }
             Button(L10n.text("Удалить облачную копию и очередь", "Delete cloud copy and queue"), role: .destructive) { Task { await host.forgetCloudCopy() } }
-            if !host.status.isEmpty { Text(host.status).font(.caption).textSelection(.enabled) }
+            if !host.status.isEmpty { Text(host.status).font(.ui(.caption)).textSelection(.enabled) }
         }
         .task { host.prepareConnection() }
     }

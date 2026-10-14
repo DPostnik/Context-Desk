@@ -1,3 +1,4 @@
+import ContextTranscript
 import SwiftUI
 import ContextCore
 
@@ -26,7 +27,7 @@ struct ArchiveView: View {
                     Label(model.archiveViewingChat ? L10n.text("К архиву", "Back to archive") : L10n.text("Вернуться", "Back"), systemImage: "chevron.left")
                 }.buttonStyle(DeskButtonStyle())
                 Spacer()
-                Label(L10n.text("Архив чатов", "Chat archive"), systemImage: "archivebox").font(.headline)
+                Label(L10n.text("Архив чатов", "Chat archive"), systemImage: "archivebox").font(.ui(.headline))
             }.padding()
             Divider()
             if model.archiveViewingChat && model.selectedChatIsArchived {
@@ -54,10 +55,10 @@ struct ArchiveView: View {
                                 HStack(spacing: 16) {
                                     Button { Task { await model.openChat(chat) } } label: {
                                         VStack(alignment: .leading, spacing: 5) {
-                                            Text(chat.title).font(.headline).lineLimit(2)
+                                            Text(chat.title).font(.ui(.headline)).lineLimit(2)
                                             if let project = model.state.projects.first(where: { $0.id == chat.projectID }) {
-                                                Text(project.name).font(.caption).foregroundStyle(.secondary)
-                                                Text(project.path).font(.caption2).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                                                Text(project.name).font(.ui(.caption)).foregroundStyle(.secondary)
+                                                Text(project.path).font(.ui(.caption2)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                                             }
                                         }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                                     }.buttonStyle(PointerButtonStyle(base: .plain))
@@ -67,7 +68,7 @@ struct ArchiveView: View {
                                             if record.status == .ready {
                                                 Button(record.status.label()) { summary = record }.buttonStyle(DeskButtonStyle())
                                             } else {
-                                                Text(record.status.label()).font(.caption).foregroundStyle(.secondary)
+                                                Text(record.status.label()).font(.ui(.caption)).foregroundStyle(.secondary)
                                             }
                                             if [.failed, .uncertain, .stale].contains(record.status) {
                                                 Button(L10n.text("Создать итог заново", "Generate summary again")) {
@@ -75,7 +76,7 @@ struct ArchiveView: View {
                                                 }.buttonStyle(DeskButtonStyle()).disabled(!model.canGenerateSummary(chat.id) || model.isChangingChat(chat.id))
                                                 if record.status == .uncertain {
                                                     Text(L10n.text("Прошлый запрос мог выполниться. Новый использует лимиты повторно.", "The previous request may have completed. A new one uses allowance again."))
-                                                        .font(.caption2).foregroundStyle(.secondary).frame(maxWidth: 220)
+                                                        .font(.ui(.caption2)).foregroundStyle(.secondary).frame(maxWidth: 220)
                                                 }
                                             }
                                         }.help(record.issue ?? record.status.label())
@@ -109,7 +110,7 @@ private struct ArchiveSummaryDetail: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text(L10n.text("Краткий итог чата", "Conversation summary")).font(.title2)
+                Text(L10n.text("Краткий итог чата", "Conversation summary")).font(.ui(.title2))
                 Spacer()
                 Button(L10n.text("Готово", "Done")) { dismiss() }.buttonStyle(DeskButtonStyle())
             }
@@ -117,20 +118,20 @@ private struct ArchiveSummaryDetail: View {
                 VStack(alignment: .leading, spacing: 16) {
                     if record.omittedDetails {
                         Text(L10n.text("Длинные результаты инструментов сокращены; вложения не анализировались.", "Long tool results were shortened; attachments were not analyzed."))
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(.ui(.caption)).foregroundStyle(.secondary)
                     }
                     ForEach(Array(record.parts.enumerated()), id: \.offset) { _, part in
                         Text(part.content.overview)
                         ForEach(Array(part.content.activities.enumerated()), id: \.offset) { _, activity in
                             VStack(alignment: .leading, spacing: 6) {
-                                Text(activity.goal).font(.headline)
+                                Text(activity.goal).font(.ui(.headline))
                                 lines(L10n.text("Действия", "Actions"), activity.actions)
                                 if !activity.outcome.isEmpty { Text(activity.outcome) }
                                 lines(L10n.text("Осталось", "Unfinished"), activity.unfinished)
                                 lines(L10n.text("Повторяемые шаги", "Reusable steps"), activity.reusableSteps)
                                 lines(L10n.text("Переменные данные", "Variable inputs"), activity.variableInputs)
                                 Text(L10n.text("Ссылок на исходные сообщения: \(activity.evidence.count)", "Source references: \(activity.evidence.count)"))
-                                    .font(.caption).foregroundStyle(.secondary)
+                                    .font(.ui(.caption)).foregroundStyle(.secondary)
                             }
                         }
                         Divider()

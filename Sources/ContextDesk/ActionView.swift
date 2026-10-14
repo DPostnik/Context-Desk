@@ -1,3 +1,4 @@
+import ContextTranscript
 import SwiftUI
 import ContextCore
 
@@ -9,7 +10,7 @@ struct ActionView: View {
     @State private var submitting = false
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label(action.title, systemImage: "exclamationmark.bubble.fill").font(.headline).foregroundStyle(.blue)
+            Label(action.title, systemImage: "exclamationmark.bubble.fill").font(.ui(.headline)).foregroundStyle(.blue)
             switch action.interaction.kind {
             case .questions(let fields):
                 questionFields(fields, onSubmit: { submitAnswers(fields) })
@@ -31,7 +32,7 @@ struct ActionView: View {
             case .approval(let canAllow):
                 if let reason = action.interaction.reason { Text(reason).textSelection(.enabled) }
                 DisclosureGroup(L10n.text("Детали запроса", "Request details")) {
-                    ScrollView { Text(action.interaction.details).font(.system(.caption, design: .monospaced)).textSelection(.enabled) }.frame(maxHeight: 160)
+                    ScrollView { Text(action.interaction.details).font(.ui(.caption, design: .monospaced)).textSelection(.enabled) }.frame(maxHeight: 160)
                 }.disclosureGroupStyle(PointerDisclosureStyle())
                 if !canAllow { unsupportedMessage }
                 HStack {
@@ -42,11 +43,11 @@ struct ActionView: View {
                     }
                 }
             }
-            if let validation { Text(validation).font(.caption).foregroundStyle(.red) }
+            if let validation { Text(validation).font(.ui(.caption)).foregroundStyle(.red) }
         }.textFieldStyle(.roundedBorder).controlSize(.large).padding(16).background(.blue.opacity(0.06), in: RoundedRectangle(cornerRadius: 12)).disabled(submitting)
     }
     private var unsupportedMessage: some View {
-        Text(L10n.text("Этот запрос нельзя подтвердить в приложении. Его можно отклонить и продолжить разговор.", "This request cannot be approved in the app. You can decline it and continue the conversation.")).font(.caption)
+        Text(L10n.text("Этот запрос нельзя подтвердить в приложении. Его можно отклонить и продолжить разговор.", "This request cannot be approved in the app. You can decline it and continue the conversation.")).font(.ui(.caption))
     }
     private var declineButton: some View { Button(L10n.text("Отклонить", "Decline")) { submit(.deny) } }
     private func questionFields(_ fields: [AgentInteraction.Field], onSubmit: @escaping () -> Void) -> some View {

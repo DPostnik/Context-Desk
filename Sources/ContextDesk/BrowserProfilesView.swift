@@ -1,3 +1,4 @@
+import ContextTranscript
 import SwiftUI
 import ContextCore
 
@@ -21,13 +22,13 @@ struct BrowserProfilesView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(L10n.text("Профили браузера", "Browser profiles")).font(.title2.bold())
+            Text(L10n.text("Профили браузера", "Browser profiles")).font(.ui(.title2).bold())
             Text(L10n.text("Сохранённый профиль сохраняет cookies и другие данные сайтов. Его можно использовать в следующих чатах этого проекта. Одновременно им управляет один чат.",
                            "A saved profile retains cookies and other site data. Reuse it in later chats in this project. One chat controls it at a time."))
             if let current {
-                Text(L10n.text("Текущий профиль: ", "Current profile: ") + (current.name ?? String(current.id.uuidString.prefix(8)))).font(.headline)
+                Text(L10n.text("Текущий профиль: ", "Current profile: ") + (current.name ?? String(current.id.uuidString.prefix(8)))).font(.ui(.headline))
                 Text(owned ? status(current.state) : L10n.text("Управление передано другому чату или освобождено.", "Control was transferred to another chat or released."))
-                    .font(.callout).foregroundStyle(.secondary)
+                    .font(.ui(.callout)).foregroundStyle(.secondary)
                 if owned {
                     HStack {
                         TextField(L10n.text("Название профиля", "Profile name"), text: $name)
@@ -53,7 +54,7 @@ struct BrowserProfilesView: View {
             Divider()
             Text(L10n.text("Перед освобождением или сменой профиля закрой его Chrome через меню «Браузер». Данные сайтов останутся, но вход, зависящий от закрытой вкладки, может потребовать повторения.",
                            "Before releasing or switching profiles, close its Chrome from the Browser menu. Site data stays, but a sign-in tied to a closed tab may need to be repeated."))
-                .font(.callout)
+                .font(.ui(.callout))
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(profiles) { profile in
@@ -61,9 +62,9 @@ struct BrowserProfilesView: View {
                             VStack(alignment: .leading) {
                                 Text((profile.name ?? "") + " · " + String(profile.id.uuidString.prefix(8)))
                                 Text(profile.owner == nil && profile.state == .available ? L10n.text("Доступен", "Available") : status(profile.state))
-                                    .font(.caption).foregroundStyle(.secondary)
+                                    .font(.ui(.caption)).foregroundStyle(.secondary)
                                 if let owner = profile.owner, let title = ownerNames[owner] {
-                                    Text(L10n.text("Чат: ", "Chat: ") + title).font(.caption).lineLimit(2)
+                                    Text(L10n.text("Чат: ", "Chat: ") + title).font(.ui(.caption)).lineLimit(2)
                                 }
                             }
                             Spacer()
@@ -78,7 +79,7 @@ struct BrowserProfilesView: View {
             HStack {
                 Button(L10n.text("Обновить", "Refresh")) { reload() }
                 Spacer()
-                if operating { ProgressView().controlSize(.small) }
+                if operating { ProgressView().uiSmallSpinner() }
                 Button(L10n.text("Закрыть", "Close")) { dismiss() }.keyboardShortcut(.cancelAction)
             }
         }

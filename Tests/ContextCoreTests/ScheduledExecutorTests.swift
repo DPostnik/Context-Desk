@@ -355,3 +355,39 @@ private func makeRequest(_ runner: any AgentScheduledExecutor, root: URL) async 
     #expect(model.error == nil)
     await model.stopScheduler()
 }
+
+@Test @MainActor func scheduledRunBlockersBecomeImportantMessages() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let executable = try claudeFixture(root, body: """
+    prompt = pathlib.Path('sent').read_text()
+    assert 'BLOCKER:' in prompt and prompt.startswith('collect')
+    print(json.dumps({'type':'result','is_error':False,'result':'Report\\n- BLOCKER: Answer Q-1 to unlock applications.'}))
+    """)
+    let store = JobStore(file: root.appendingPathComponent("jobs.json"))
+    let model = DeskModel(store: AppStore(file: root.appendingPathComponent("state.sqlite")), jobStore: store)
+    model.jobExecutorFactories[.claude] = { _, _, _, _ in ClaudeJobRunner(executable: executable) }
+    var project = Project(path: root.path); project.accessMode = .fullAccess
+    model.state.projects = [project]; model.schedulerReady = true
+    var job = ManagedJob(); job.name = "Morning"; job.prompt = "collect"; job.engine = .claude; job.projectID = project.id
+    job.acceptsExternalPolicy = true
+    #expect(await model.saveJob(job))
+    for _ in 0..<2 {
+        await model.launchJob(job.id)
+        for task in Array(model.jobTasks.values) { await task.value }
+    }
+    #expect(model.jobLedger.runs.map(\.status) == [.completed, .completed])
+    let item = try #require(model.attention.open.first)
+    #expect(model.attention.open.count == 1 && item.kind == .blocker && item.occurrences == 2)
+    #expect(item.text == "Answer Q-1 to unlock applications." && item.jobName == "Morning" && item.runID == model.jobLedger.runs.first?.id)
+    #expect(model.state.chats.contains { $0.id == item.threadID })
+    // Stored next to the job ledger, so the user's own file is never touched by tests.
+    #expect(try await AttentionStore(file: root.appendingPathComponent("attention.json")).load().open.map(\.id) == [item.id])
+
+    model.openAttention()
+    #expect(model.showingAttention && !model.showingJobs)
+    await model.resolveAttention(item.id)
+    #expect(model.openAttentionCount == 0 && model.attention.resolved.map(\.id) == [item.id])
+    model.newChat()
+    #expect(!model.showingAttention)
+}

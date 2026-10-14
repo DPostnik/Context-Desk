@@ -1,4 +1,5 @@
 import AppKit
+import ContextTranscript
 import SwiftUI
 
 extension View {
@@ -27,7 +28,7 @@ struct PointerDisclosureStyle: DisclosureGroupStyle {
             Button { configuration.isExpanded.toggle() } label: {
                 HStack {
                     Image(systemName: configuration.isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.caption)
+                        .font(.ui(.caption))
                     configuration.label
                 }.contentShape(Rectangle())
             }.buttonStyle(PointerButtonStyle(base: .plain))

@@ -9,6 +9,9 @@ import UserNotifications
     let keepAwake = KeepAwake()
     let restart = AppRestartController()
     private var shutdownDeadline: DispatchWorkItem?
+    /// SwiftUI's openWindow, captured from a scene view: after Cmd+W the main window is gone
+    /// and only the scene can recreate it, so AppKit lookups through `windows` find nothing.
+    var openMainWindow: (() -> Void)?
     func applicationDidFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
         NSApplication.shared.setActivationPolicy(.regular)
@@ -16,7 +19,13 @@ import UserNotifications
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag { sender.windows.first { $0.canBecomeMain }?.makeKeyAndOrderFront(nil) }; return true
+        if !flag { showMainWindow(); return false }
+        return true
+    }
+    func showMainWindow() {
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        if let openMainWindow { openMainWindow() }
+        else { NSApplication.shared.windows.first { $0.canBecomeMain }?.makeKeyAndOrderFront(nil) }
     }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         if restart.terminating { return .terminateLater }
@@ -78,10 +87,9 @@ import UserNotifications
     func applicationWillTerminate(_ notification: Notification) { keepAwake.stop() }
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         let threadID = response.notification.request.content.userInfo["threadID"] as? String ?? ""
-        await MainActor.run {
-            NSApplication.shared.activate(ignoringOtherApps: true)
-            NSApplication.shared.windows.first { $0.canBecomeMain }?.makeKeyAndOrderFront(nil)
-        }
+        let attention = response.notification.request.content.userInfo["attentionID"] != nil
+        await MainActor.run { showMainWindow() }
+        if attention { await model?.openAttention(); return }
         await model?.focusAction(threadID: threadID)
     }
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
@@ -108,15 +116,14 @@ struct ContextDeskApp: App {
                 }
             }
                 .buttonStyle(PointerButtonStyle(base: .automatic))
+                .modifier(InterfaceZoomed())
                 .preferredColorScheme(.light)
                 .environment(\.locale, L10n.locale)
                 .frame(minWidth: 900, minHeight: 620)
+                .modifier(MainWindowOpener(delegate: delegate))
                 .task {
                     delegate.model = model
-                    NotchIslandController.start(model: model, showMainWindow: {
-                        NSApplication.shared.activate(ignoringOtherApps: true)
-                        NSApplication.shared.windows.first { $0.canBecomeMain }?.makeKeyAndOrderFront(nil)
-                    })
+                    NotchIslandController.start(model: model, showMainWindow: { [weak delegate] in delegate?.showMainWindow() })
                     await model.boot()
                 }
         }
@@ -124,6 +131,14 @@ struct ContextDeskApp: App {
         .commands {
             CommandGroup(before: .appTermination) {
                 RestartMenu(restart: delegate.restart)
+                Divider()
+            }
+            CommandGroup(before: .windowList) {
+                MainWindowMenuItem()
+                Divider()
+            }
+            CommandGroup(after: .toolbar) {
+                InterfaceZoomMenu()
                 Divider()
             }
             CommandMenu(L10n.text("Браузеры", "Browsers")) {
@@ -144,6 +159,7 @@ struct ContextDeskApp: App {
                 if model.isBootstrapping { StartupLoadingView() }
                 else { SettingsView(model: model, keepAwake: delegate.keepAwake) }
             }.buttonStyle(PointerButtonStyle(base: .automatic))
+                .modifier(InterfaceZoomed())
                 .preferredColorScheme(.light)
                 .environment(\.locale, L10n.locale).frame(width: 720).padding(20)
         }
@@ -174,11 +190,28 @@ private struct RestartMenu: View {
     }
 }
 
+/// Hands the scene's openWindow to the app delegate for Dock and notification reopen.
+private struct MainWindowOpener: ViewModifier {
+    let delegate: AppDelegate
+    @Environment(\.openWindow) private var openWindow
+    func body(content: Content) -> some View {
+        content.onAppear { [openWindow] in delegate.openMainWindow = { openWindow(id: "main") } }
+    }
+}
+
+private struct MainWindowMenuItem: View {
+    @Environment(\.openWindow) private var openWindow
+    var body: some View {
+        Button(L10n.text("Главное окно", "Main Window")) { openWindow(id: "main") }
+            .keyboardShortcut("0", modifiers: [.command, .shift])
+    }
+}
+
 private struct StartupLoadingView: View {
     var body: some View {
         VStack(spacing: 16) {
             ProgressView().controlSize(.large)
-            Text(L10n.text("Загружаем Context Desk…", "Loading Context Desk…")).font(.headline)
+            Text(L10n.text("Загружаем Context Desk…", "Loading Context Desk…")).font(.ui(.headline))
             Text(L10n.text("Подключаемся и проверяем аккаунт", "Connecting and checking your account")).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

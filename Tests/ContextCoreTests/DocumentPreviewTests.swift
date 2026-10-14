@@ -280,3 +280,21 @@ private func temporaryDirectory() throws -> URL {
     session.close()
     #expect(session.current == nil && !session.canGoBack)
 }
+
+@Test @MainActor func expandedPreviewCollapsesWhenClosedAndKeepsItsDocument() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let file = directory.appendingPathComponent("PLAN.md")
+    try "# Plan\n\nText\n".write(to: file, atomically: true, encoding: .utf8)
+    let session = DocumentPreviewSession()
+    session.open(file)
+    let model = try #require(session.current)
+    session.expanded = true
+    // Moving between the inspector and the whole window keeps the same document model.
+    session.expanded = false
+    #expect(session.current === model)
+    session.expanded = true
+    session.close()
+    #expect(session.current == nil)
+    #expect(!session.expanded)
+}

@@ -68,6 +68,10 @@ private struct ChatRunState {
     @Published var jobLedger = JobLedger()
     @Published var schedulerReady = false
     let jobStore: JobStore
+    @Published var attention = AttentionLedger()
+    @Published var showingAttention = false
+    /// Lives next to the job ledger, so tests with a temporary job store never touch the user's file.
+    let attentionStore: AttentionStore
     var schedulerTask: Task<Void, Never>?
     var jobTasks: [UUID: Task<Void, Never>] = [:]
     var jobExecutorFactories = AgentIntegrationFactory.scheduled
@@ -202,6 +206,7 @@ private struct ChatRunState {
          summaryExecutable: URL? = nil, summaryHome: URL = Locations.codexHome, claudeHome: URL = Locations.claudeHome,
          jobStore: JobStore = JobStore(file: Locations.root.appendingPathComponent("scheduled-jobs.json"))) {
         self.jobStore = jobStore
+        self.attentionStore = AttentionStore(file: jobStore.file.deletingLastPathComponent().appendingPathComponent("attention.json"))
         self.connection = AgentClient(integration: connection)
         self.claudeConnection = AgentClient(integration: claudeIntegration)
         self.summaryRunner = AgentGenerationRunner(integration: connection)
@@ -256,6 +261,7 @@ private struct ChatRunState {
                                       completionID: chat.unreadCompletionID))
         }
         await refreshJobs(); step("jobs")
+        await loadAttention()
         await connection.observeEvents(sessions: state.chats.compactMap(\.nativeSession))
         eventTask = Task { [weak self, connection] in
             for await event in connection.events { await self?.receive(event) }
@@ -570,7 +576,7 @@ private struct ChatRunState {
         do { try await store.save(state) } catch { self.error = error.localizedDescription }
     }
     func openArchive() {
-        showingJobs = false
+        showingJobs = false; showingAttention = false
         archiveViewingChat = false
         showingArchive = true
     }
@@ -580,7 +586,7 @@ private struct ChatRunState {
         if selectedChatIsArchived { newChat() }
     }
     func selectProject(_ id: UUID) {
-        showingArchive = false
+        showingArchive = false; showingAttention = false
         guard projectID != id || chatID != nil else { showingJobs = false; return }
         projectID = id; showingJobs = false
         newChat()
@@ -589,7 +595,17 @@ private struct ChatRunState {
         showingArchive = false
         selectionGeneration = UUID(); chatID = nil; items = []; localHistoryNotice = nil
         draft = projectID.flatMap { newChatDrafts[$0] } ?? ""
-        showingJobs = false; loadingChat = false
+        showingJobs = false; showingAttention = false; loadingChat = false
+        composerFocusRequest = UUID()
+    }
+    /// A document preview fills the window; the sidebar hides until it collapses.
+    @Published var documentExpanded = false
+    /// Files dropped anywhere on the chat go into the draft as paths, then the editor takes focus.
+    /// Temporary files (a screenshot thumbnail's) are copied first, because their source deletes them after the drop.
+    func addDroppedFiles(_ urls: [URL]) {
+        let updated = DroppedFiles.appending(DroppedFiles.preserving(urls, in: DroppedFiles.directory), to: draft)
+        guard updated != draft else { return }
+        draft = updated
         composerFocusRequest = UUID()
     }
     func openChat(_ chat: Chat) async {
@@ -597,7 +613,7 @@ private struct ChatRunState {
         transcript.cancelPending()
         showingArchive = isArchived(chat.id)
         archiveViewingChat = showingArchive
-        showingJobs = false; projectID = chat.projectID; chatID = chat.id; composerFocusRequest = nil
+        showingJobs = false; showingAttention = false; projectID = chat.projectID; chatID = chat.id; composerFocusRequest = nil
         draft = chatDrafts[chat.id] ?? ""
         let generation = UUID(); selectionGeneration = generation
         defer { if selectionGeneration == generation { loadingChat = false } }
@@ -1217,7 +1233,7 @@ private struct ChatRunState {
     }
     func deliverScheduled(_ job: ManagedJob, run: JobRun, project: Project, agent: AgentConnectionID = .originalCodex) async {
         do {
-            let prompt = try job.browserExecutionPrompt()
+            let prompt = try job.browserExecutionPrompt() + "\n\n" + AttentionMarkers.instructions()
             await deliver(text: prompt, project: project, threadID: nil, localID: "local-user:" + run.id.uuidString,
                           selectedModel: job.model, selectedEffort: job.effort, scheduledRun: run.id, scheduledRoute: job.route,
                           scheduledBrowserImport: job.browserSessionImport, scheduledAgent: agent)
@@ -1296,10 +1312,11 @@ private struct ChatRunState {
     }
 
     func markResponseRead(threadID: String, completionID: String) {
+        // Incomplete history must contain the completed turn; a failed or stopped turn may have no assistant answer.
         if localHistoryNotice != nil && !items.contains(where: {
-            $0.kind == "assistant" && $0.turnID.map { "turn:" + threadID + ":" + $0 } == completionID
+            $0.turnID.map { "turn:" + threadID + ":" + $0 } == completionID
         }) { return }
-        guard chatID == threadID, !showingJobs, (!showingArchive || archiveViewingChat), !loadingChat,
+        guard chatID == threadID, !showingJobs, !showingAttention, (!showingArchive || archiveViewingChat), !loadingChat,
               let index = state.chats.firstIndex(where: { $0.id == threadID }),
               state.chats[index].unreadCompletionID == completionID else { return }
         state.chats[index].unreadCompletionID = nil
@@ -1315,11 +1332,11 @@ private struct ChatRunState {
 
     func notify(_ action: PendingAction) {
         postNotice(threadID: action.threadID, title: action.title, identifier: action.id, actionID: action.id)
-        NSApplication.shared.dockTile.badgeLabel = String(pending.count)
+        refreshDockBadge()
     }
     /// Acknowledging a notice never answers or approves the underlying request.
     func markActionRead(_ action: PendingAction) {
-        guard chatID == action.threadID, !showingJobs, (!showingArchive || archiveViewingChat), !loadingChat,
+        guard chatID == action.threadID, !showingJobs, !showingAttention, (!showingArchive || archiveViewingChat), !loadingChat,
               currentAction?.id == action.id else { return }
         removeActionNotices([action])
     }
@@ -1346,7 +1363,7 @@ private struct ChatRunState {
             try await clientForChat(action.threadID).answer(action.interaction.id, session: action.interaction.session, response: result)
             pending.removeAll { $0.id == action.id }
             removeActionNotices([action])
-            NSApplication.shared.dockTile.badgeLabel = pending.isEmpty ? nil : String(pending.count)
+            refreshDockBadge()
             return nil
         } catch {
             self.error = error.localizedDescription
@@ -1562,7 +1579,7 @@ private struct ChatRunState {
             try await clientForChat(chat.id).answer(action.interaction.id, session: action.interaction.session,
                                                    response: command.kind == "allow" ? .allowOnce : .deny)
             pending.removeAll { $0.id == action.id }; removeActionNotices([action])
-            NSApplication.shared.dockTile.badgeLabel = pending.isEmpty ? nil : String(pending.count)
+            refreshDockBadge()
             return "submitted"
         default: throw RemoteFailure.invalidCommand
         }
@@ -1642,7 +1659,7 @@ private struct ChatRunState {
     private func clearAgentInteractions(_ agent: AgentConnectionID) {
         let actions = pending.filter { $0.interaction.session.connection == agent }
         removeActionNotices(actions); pending.removeAll { $0.interaction.session.connection == agent }
-        NSApplication.shared.dockTile.badgeLabel = pending.isEmpty ? nil : String(pending.count)
+        refreshDockBadge()
     }
     func receiveClaude(_ event: AgentEvent) async {
         switch event.payload {
@@ -1708,7 +1725,7 @@ private struct ChatRunState {
             let resolved = pending.filter { $0.interaction.id == requestID && $0.threadID == thread }
             pending.removeAll { action in resolved.contains { $0.id == action.id } }
             removeActionNotices(resolved)
-            NSApplication.shared.dockTile.badgeLabel = pending.isEmpty ? nil : String(pending.count)
+            refreshDockBadge()
         case .usage(let turn, let total, let snapshot):
             if let id = thread {
                 if let turn, let total {
@@ -1767,7 +1784,7 @@ private struct ChatRunState {
             let resolved = pending.filter { $0.threadID == thread && $0.interaction.turn == turnID }
             pending.removeAll { action in resolved.contains { $0.id == action.id } }
             removeActionNotices(resolved)
-            NSApplication.shared.dockTile.badgeLabel = pending.isEmpty ? nil : String(pending.count)
+            refreshDockBadge()
             if completion.hasError { error = completion.error ?? L10n.text("Задача завершилась с ошибкой", "The task failed") }
         case .item(let item):
             if let thread { historyEventRevisions[thread, default: 0] += 1 }

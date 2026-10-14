@@ -86,6 +86,11 @@ public enum DocumentPreview {
     @Published public private(set) var focusToken = 0
     public nonisolated var id: String { url.path }
     weak var documentView: TranscriptScrollView?
+    /// Kept with the document, not the view: expanding the preview recreates the view in another place,
+    /// and the new one continues from the same reading position instead of the first lines or the link target.
+    let readingPositions = TranscriptReadingPositions()
+    var appliedFocusToken = -1
+    var hasBeenShown = false
     private var stamp: [String]?
     private var splitting: Task<Void, Never>?
 
@@ -163,6 +168,8 @@ public enum DocumentPreview {
     @Published public private(set) var current: DocumentPreviewModel?
     @Published public private(set) var canGoBack = false
     @Published public private(set) var canGoForward = false
+    /// The preview fills the whole window: the chat and the sidebar step aside until it is collapsed or closed.
+    @Published public var expanded = false
     private var back: [(URL, Int?)] = []
     private var forward: [(URL, Int?)] = []
 
@@ -187,7 +194,7 @@ public enum DocumentPreview {
     }
 
     public func close() {
-        current = nil; back.removeAll(); forward.removeAll(); updateFlags()
+        current = nil; expanded = false; back.removeAll(); forward.removeAll(); updateFlags()
     }
 
     private func location(_ model: DocumentPreviewModel) -> (URL, Int?) {
@@ -229,7 +236,7 @@ public struct DocumentPreviewView: View {
                 Image(nsImage: NSWorkspace.shared.icon(forFile: model.url.path))
                     .resizable().frame(width: 16, height: 16)
                 Text(model.url.lastPathComponent + (model.line.map { ":\($0)" } ?? ""))
-                    .font(.system(size: 13, weight: .semibold)).lineLimit(1).truncationMode(.middle)
+                    .font(.ui(size: 13, weight: .semibold)).lineLimit(1).truncationMode(.middle)
                     .help(model.url.path)
                 Spacer(minLength: 8)
                 if model.text != nil {
@@ -240,8 +247,16 @@ public struct DocumentPreviewView: View {
                     .help(L10n.text("Открыть в программе по умолчанию", "Open in default app"))
                 Button { NSWorkspace.shared.activateFileViewerSelecting([model.url]) } label: { Image(systemName: "folder") }
                     .help(L10n.text("Показать в Finder", "Show in Finder"))
-                Button { session.close() } label: { Image(systemName: "xmark") }
-                    .help(L10n.text("Закрыть предпросмотр", "Close preview"))
+                Button { session.expanded.toggle() } label: {
+                    Image(systemName: session.expanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+                }
+                    .help(session.expanded ? L10n.text("Вернуть рядом с чатом (⇧⌘↩)", "Back beside the chat (⇧⌘↩)")
+                                           : L10n.text("Развернуть на всё окно (⇧⌘↩)", "Expand to the whole window (⇧⌘↩)"))
+                    .accessibilityLabel(session.expanded ? L10n.text("Вернуть рядом с чатом", "Back beside the chat")
+                                                         : L10n.text("Развернуть на всё окно", "Expand to the whole window"))
+                    .keyboardShortcut(.return, modifiers: [.command, .shift])
+                Button { if session.expanded { session.expanded = false } else { session.close() } } label: { Image(systemName: "xmark") }
+                    .help(session.expanded ? L10n.text("Вернуть рядом с чатом (Esc)", "Back beside the chat (Esc)") : L10n.text("Закрыть предпросмотр", "Close preview"))
                     .keyboardShortcut(.cancelAction)
             }
             .buttonStyle(.borderless)
@@ -263,7 +278,7 @@ public struct DocumentPreviewView: View {
     @ViewBuilder private var content: some View {
         if let failure = model.failure {
             VStack(spacing: 8) {
-                Image(systemName: "doc.questionmark").font(.system(size: 28)).foregroundStyle(.secondary)
+                Image(systemName: "doc.questionmark").font(.ui(size: 28)).foregroundStyle(.secondary)
                 Text(failure).foregroundStyle(.secondary)
             }
         } else if model.text != nil {
@@ -279,9 +294,10 @@ public struct DocumentPreviewView: View {
 struct DocumentTextView: NSViewRepresentable {
     @ObservedObject var model: DocumentPreviewModel
     let onOpenFile: (URL, Int?) -> Void
+    let zoom = InterfaceZoom.shared.scale
 
     func makeNSView(context: Context) -> TranscriptScrollView {
-        let view = TranscriptScrollView(positions: TranscriptReadingPositions())
+        let view = TranscriptScrollView(positions: model.readingPositions)
         view.isDocument = true
         view.transcript.usesFindBar = true
         view.transcript.isIncrementalSearchingEnabled = true
@@ -290,6 +306,7 @@ struct DocumentTextView: NSViewRepresentable {
 
     func updateNSView(_ view: TranscriptScrollView, context: Context) {
         view.onOpenFile = onOpenFile
+        view.zoom = zoom
         view.documentURL = model.url
         model.documentView = view
         let coordinator = context.coordinator
@@ -303,10 +320,12 @@ struct DocumentTextView: NSViewRepresentable {
                 view.update(items: Array(items.prefix(count)), conversationID: conversation, followOutput: false, projectPath: project)
             }
             // First parts at once, the rest a part per run-loop turn; parts already shown re-render only if changed.
-            let initial = min(items.count, max(1, coordinator.shown))
+            // A view recreated for an already shown document gets every part at once, so its saved position exists.
+            let initial = min(items.count, max(1, model.hasBeenShown && coordinator.shown == 0 ? items.count : coordinator.shown))
+            model.hasBeenShown = true
             show(initial)
             coordinator.shown = initial
-            let pending = coordinator.focusToken != model.focusToken || !coordinator.focusedOnce
+            let pending = model.appliedFocusToken != model.focusToken
             coordinator.fed = false
             coordinator.feeding = Task { @MainActor in
                 defer { coordinator.fed = !Task.isCancelled }
@@ -320,7 +339,7 @@ struct DocumentTextView: NSViewRepresentable {
                 }
                 if pending { coordinator.applyFocus(model, view) }
             }
-        } else if coordinator.focusToken != model.focusToken, coordinator.fed {
+        } else if model.appliedFocusToken != model.focusToken, coordinator.fed {
             coordinator.applyFocus(model, view)
         }
     }
@@ -334,10 +353,8 @@ struct DocumentTextView: NSViewRepresentable {
         var shown = 0
         var feeding: Task<Void, Never>?
         var fed = true
-        var focusToken = -1
-        var focusedOnce = false
         func applyFocus(_ model: DocumentPreviewModel, _ view: TranscriptScrollView) {
-            focusToken = model.focusToken; focusedOnce = true
+            model.appliedFocusToken = model.focusToken
             if let line = model.line { view.scrollToCodeLine(line) }
             else if let anchor = model.anchor { view.scroll(toAnchor: TranscriptLinks.slug(anchor)) }
         }

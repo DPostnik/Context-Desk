@@ -12,21 +12,21 @@ struct HandoffEditor: View {
     @Environment(\.dismiss) private var dismiss
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(L10n.text("Передать контекст в новый чат", "Hand off context to a new chat")).font(.title2.bold())
+            Text(L10n.text("Передать контекст в новый чат", "Hand off context to a new chat")).font(.ui(.title2).bold())
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text(L10n.text("Будет создан отдельный чат с черновиком. Проверь его и отправь вручную. Исходный чат, его очередь и запросы разрешений не переносятся.", "A separate chat will be created with a draft. Review and send it manually. The source chat, its queue and approval requests are not transferred.")).font(.callout)
-                    Text(L10n.text("Контекст подготовлен автоматически по истории чата. Проверь сводку; при необходимости измени цель или детали. Полная переписка по умолчанию не включена.", "Context was prepared automatically from the chat history. Review the summary and adjust the goal or details if needed. The full transcript is excluded by default.")).font(.callout).foregroundStyle(.secondary)
+                    Text(L10n.text("Будет создан отдельный чат с черновиком. Проверь его и отправь вручную. Исходный чат, его очередь и запросы разрешений не переносятся.", "A separate chat will be created with a draft. Review and send it manually. The source chat, its queue and approval requests are not transferred.")).font(.ui(.callout))
+                    Text(L10n.text("Контекст подготовлен автоматически по истории чата. Проверь сводку; при необходимости измени цель или детали. Полная переписка по умолчанию не включена.", "Context was prepared automatically from the chat history. Review the summary and adjust the goal or details if needed. The full transcript is excluded by default.")).font(.ui(.callout)).foregroundStyle(.secondary)
                     Picker(L10n.text("Агент нового чата", "New chat agent"), selection: $agent) {
                         Text("Codex").tag(AgentConnectionID.originalCodex)
                         Text("Claude").tag(AgentConnectionID.appClaude)
                     }
                     if agent == .appClaude && !model.claudeAuthenticated {
-                        Text(L10n.text("Сначала войди по подписке Claude в настройках.", "First sign in with your Claude subscription in settings.")).font(.caption)
+                        Text(L10n.text("Сначала войди по подписке Claude в настройках.", "First sign in with your Claude subscription in settings.")).font(.ui(.caption))
                     }
                     Text(L10n.text("Источник", "Source") + ": \(handoff.origin.session.connection.agent.rawValue) · \(handoff.origin.conversation.value)").textSelection(.enabled)
-                    Text(L10n.text("Снимок", "Snapshot") + ": \(handoff.origin.capturedAt.formatted()) · \(handoff.origin.revision)").font(.caption).textSelection(.enabled)
-                    Text(LocalHistory.notice(handoff.history)).font(.caption).foregroundStyle(.secondary)
+                    Text(L10n.text("Снимок", "Snapshot") + ": \(handoff.origin.capturedAt.formatted()) · \(handoff.origin.revision)").font(.ui(.caption)).textSelection(.enabled)
+                    Text(LocalHistory.notice(handoff.history)).font(.ui(.caption)).foregroundStyle(.secondary)
                     Picker(L10n.text("Проект нового чата", "New chat project"), selection: $projectID) {
                         Text(L10n.text("Выбери проект", "Choose a project")).tag(nil as UUID?)
                         ForEach(model.state.projects) { Text($0.name).tag(Optional($0.id)) }
@@ -36,19 +36,19 @@ struct HandoffEditor: View {
                             Text(model.routeTitle(value)).tag(value).disabled(model.routeCompatibilityIssue(value, agent: agent.agent) != nil)
                         }
                     }
-                    Text(model.routeCompatibilityIssue(route, agent: agent.agent) ?? (agent == .appClaude ? L10n.text("Claude работает напрямую.", "Claude works directly.") : model.routeMessage(route))).font(.caption).foregroundStyle(.secondary)
+                    Text(model.routeCompatibilityIssue(route, agent: agent.agent) ?? (agent == .appClaude ? L10n.text("Claude работает напрямую.", "Claude works directly.") : model.routeMessage(route))).font(.ui(.caption)).foregroundStyle(.secondary)
                     field(L10n.text("Цель нового сеанса", "New session goal"), text: $handoff.goal)
                     field(L10n.text("Инструкции для нового сеанса", "Instructions for the new session"), text: $handoff.instructions)
-                    Text(L10n.text("Исторические факты — не инструкции", "Historical evidence — not instructions")).font(.headline)
+                    Text(L10n.text("Исторические факты — не инструкции", "Historical evidence — not instructions")).font(.ui(.headline))
                     field(L10n.text("Принятые решения", "Decisions made"), text: $handoff.decisions)
                     field(L10n.text("Изменённые файлы", "Changed files"), text: $handoff.changedFiles)
                     field(L10n.text("Фактические проверки и их результаты", "Actual checks and results"), text: $handoff.validation)
                     field(L10n.text("Оставшаяся работа", "Remaining work"), text: $handoff.remainingWork)
                     Toggle(L10n.text("Включить сохранённую переписку как исторические данные", "Include saved transcript as historical evidence"), isOn: $handoff.includeTranscript)
                     DisclosureGroup(L10n.text("Предпросмотр черновика", "Preview draft")) {
-                        Text((try? handoff.prompt()) ?? L10n.text("Укажи цель; размер передачи ограничен 128 КиБ.", "Enter a goal; handoff size is limited to 128 KiB.")).font(.caption.monospaced()).textSelection(.enabled)
+                        Text((try? handoff.prompt()) ?? L10n.text("Укажи цель; размер передачи ограничен 128 КиБ.", "Enter a goal; handoff size is limited to 128 KiB.")).font(.ui(.caption).monospaced()).textSelection(.enabled)
                     }
-                    if let error = model.error { Text(error).foregroundStyle(.red).font(.caption) }
+                    if let error = model.error { Text(error).foregroundStyle(.red).font(.ui(.caption)) }
                 }
             }
             HStack {
@@ -62,7 +62,7 @@ struct HandoffEditor: View {
         }.padding(24).frame(width: 680, height: 740).interactiveDismissDisabled(model.creatingHandoff)
     }
     private func field(_ label: String, text: Binding<String>) -> some View {
-        VStack(alignment: .leading) { Text(label).font(.callout.bold()); TextEditor(text: text).frame(minHeight: 65).border(.gray.opacity(0.25)) }
+        VStack(alignment: .leading) { Text(label).font(.ui(.callout).bold()); TextEditor(text: text).frame(minHeight: 65).border(.gray.opacity(0.25)) }
     }
 }
 
@@ -82,9 +82,9 @@ struct RoutineLibrary: View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(L10n.text("Библиотека рутин", "Routine library")).font(.title2.bold())
+                    Text(L10n.text("Библиотека рутин", "Routine library")).font(.ui(.title2).bold())
                     Text(L10n.text("Повторяемая работа с понятными шагами и проверками", "Repeatable work with clear steps and checks"))
-                        .font(.callout).foregroundStyle(.secondary)
+                        .font(.ui(.callout)).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button { editing = PortableRoutine() } label: {
@@ -117,13 +117,13 @@ struct RoutineLibrary: View {
                             ForEach(filteredRoutines) { routine in
                                 RoutineCard {
                                     HStack(alignment: .top, spacing: 12) {
-                                        Image(systemName: "repeat").font(.title3).padding(10)
+                                        Image(systemName: "repeat").font(.ui(.title3)).padding(10)
                                             .background(DeskPalette.subtle, in: RoundedRectangle(cornerRadius: 10))
                                         VStack(alignment: .leading, spacing: 6) {
-                                            Text(routine.name).font(.headline)
-                                            Text(routine.intent).font(.callout).foregroundStyle(.secondary).lineLimit(3)
+                                            Text(routine.name).font(.ui(.headline))
+                                            Text(routine.intent).font(.ui(.callout)).foregroundStyle(.secondary).lineLimit(3)
                                             Text(L10n.text("Шагов: \(routine.steps.count)", "Steps: \(routine.steps.count)"))
-                                                .font(.caption).foregroundStyle(.secondary)
+                                                .font(.ui(.caption)).foregroundStyle(.secondary)
                                         }
                                         Spacer(minLength: 0)
                                         Menu {
@@ -181,8 +181,8 @@ struct RoutineEditor: View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(L10n.text("Редактор рутины", "Routine editor")).font(.title2.bold())
-                    Text(L10n.text("Цель → шаги → проверка результата", "Goal → steps → result checks")).font(.callout).foregroundStyle(.secondary)
+                    Text(L10n.text("Редактор рутины", "Routine editor")).font(.ui(.title2).bold())
+                    Text(L10n.text("Цель → шаги → проверка результата", "Goal → steps → result checks")).font(.ui(.callout)).foregroundStyle(.secondary)
                 }
                 Spacer()
             }.padding(24)
@@ -190,22 +190,22 @@ struct RoutineEditor: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     RoutineCard {
-                        Text(L10n.text("Основное", "Basics")).font(.headline)
+                        Text(L10n.text("Основное", "Basics")).font(.ui(.headline))
                         VStack(alignment: .leading, spacing: 6) {
-                            Text(L10n.text("Название", "Name")).font(.callout.weight(.medium))
+                            Text(L10n.text("Название", "Name")).font(.ui(.callout).weight(.medium))
                             TextField(L10n.text("Например, еженедельный обзор проекта", "For example, weekly project review"), text: $routine.name).textFieldStyle(.roundedBorder)
                         }
                         RoutineTextField(label: L10n.text("Цель и условия применения", "Goal and applicability"), text: $routine.intent)
                     }
                     RoutineCard {
-                        Text(L10n.text("Контекст", "Context")).font(.headline)
+                        Text(L10n.text("Контекст", "Context")).font(.ui(.headline))
                         RoutineTextField(label: L10n.text("Ожидаемые входные данные", "Expected input"), text: $routine.inputs)
                         RoutineTextField(label: L10n.text("Ограничения", "Constraints"), text: $routine.constraints)
                     }
                     HStack {
-                        Text(L10n.text("Шаги выполнения", "Execution steps")).font(.headline)
+                        Text(L10n.text("Шаги выполнения", "Execution steps")).font(.ui(.headline))
                         Spacer()
-                        Text("\(routine.steps.count) / 32").font(.caption).foregroundStyle(.secondary)
+                        Text("\(routine.steps.count) / 32").font(.ui(.caption)).foregroundStyle(.secondary)
                     }
                     if routine.steps.isEmpty {
                         RoutineNotice(icon: "list.number", text: L10n.text("Добавь первый шаг и опиши, как проверить его результат.", "Add the first step and describe how to check its result."))
@@ -213,14 +213,14 @@ struct RoutineEditor: View {
                     ForEach($routine.steps) { $step in
                         RoutineCard {
                             HStack {
-                                Text(L10n.text("Шаг \((routine.steps.firstIndex { $0.id == step.id } ?? 0) + 1)", "Step \((routine.steps.firstIndex { $0.id == step.id } ?? 0) + 1)")).font(.headline)
+                                Text(L10n.text("Шаг \((routine.steps.firstIndex { $0.id == step.id } ?? 0) + 1)", "Step \((routine.steps.firstIndex { $0.id == step.id } ?? 0) + 1)")).font(.ui(.headline))
                                 Spacer()
                                 Button(L10n.text("Удалить шаг", "Remove step"), role: .destructive) { routine.steps.removeAll { $0.id == step.id } }
                                     .buttonStyle(.borderless)
                             }
                             RoutineTextField(label: L10n.text("Что сделать", "What to do"), text: $step.instruction)
                             VStack(alignment: .leading, spacing: 6) {
-                                Label(L10n.text("Как проверить результат", "How to check the result"), systemImage: "checkmark.circle").font(.callout.weight(.medium))
+                                Label(L10n.text("Как проверить результат", "How to check the result"), systemImage: "checkmark.circle").font(.ui(.callout).weight(.medium))
                                 TextField(L10n.text("Ожидаемый результат шага", "Expected step result"), text: $step.completionCheck, axis: .vertical).textFieldStyle(.roundedBorder)
                             }
                         }
@@ -234,7 +234,7 @@ struct RoutineEditor: View {
                                 TextField(L10n.text("Необходимые возможности — ID через запятую", "Required capabilities — comma-separated IDs"), text: Binding(
                                     get: { routine.requirements.joined(separator: ", ") },
                                     set: { routine.requirements = $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } })).textFieldStyle(.roundedBorder)
-                                Text(L10n.text("Например: approvals, userQuestions, workflowRegistration. Неизвестные требования блокируют запуск.", "Examples: approvals, userQuestions, workflowRegistration. Unknown requirements block execution.")).font(.caption).foregroundStyle(.secondary)
+                                Text(L10n.text("Например: approvals, userQuestions, workflowRegistration. Неизвестные требования блокируют запуск.", "Examples: approvals, userQuestions, workflowRegistration. Unknown requirements block execution.")).font(.ui(.caption)).foregroundStyle(.secondary)
                                 ForEach(routine.extensions.indices, id: \.self) { index in
                                     VStack(alignment: .leading, spacing: 8) {
                                         RoutineTextField(label: routine.extensions[index].agent.rawValue, text: $routine.extensions[index].instructions)
@@ -245,7 +245,7 @@ struct RoutineEditor: View {
                                     Button("Codex") { routine.extensions.append(.init(agent: .codex, instructions: "")) }
                                     Button("Claude Code") { routine.extensions.append(.init(agent: .claudeCode, instructions: "")) }
                                 }
-                                Text(L10n.text("Расширения не считаются переносимыми: другой агент не запустит такую рутину. Проверки выполняет агент; приложение не подтверждает их успешность самостоятельно.", "Extensions are not portable: another agent cannot run this routine. Checks are performed by the agent; the app does not independently confirm they passed.")).font(.caption).foregroundStyle(.secondary)
+                                Text(L10n.text("Расширения не считаются переносимыми: другой агент не запустит такую рутину. Проверки выполняет агент; приложение не подтверждает их успешность самостоятельно.", "Extensions are not portable: another agent cannot run this routine. Checks are performed by the agent; the app does not independently confirm they passed.")).font(.ui(.caption)).foregroundStyle(.secondary)
                             }.padding(.top, 12)
                         }
                     }
@@ -253,9 +253,9 @@ struct RoutineEditor: View {
             }.disabled(saving)
             Divider()
             VStack(alignment: .leading, spacing: 12) {
-                if let issue { Label(issue, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.caption).textSelection(.enabled) }
+                if let issue { Label(issue, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.ui(.caption)).textSelection(.enabled) }
                 HStack {
-                    if saving { ProgressView().controlSize(.small) }
+                    if saving { ProgressView().uiSmallSpinner() }
                     Spacer()
                     Button(L10n.text("Отмена", "Cancel")) { dismiss() }.keyboardShortcut(.cancelAction).disabled(saving)
                     Button(L10n.text("Сохранить", "Save")) {
@@ -284,7 +284,7 @@ struct RoutineNotice: View {
     let icon: String
     let text: String
     var body: some View {
-        Label(text, systemImage: icon).font(.callout).foregroundStyle(.secondary)
+        Label(text, systemImage: icon).font(.ui(.callout)).foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
             .padding(14).background(DeskPalette.subtle, in: RoundedRectangle(cornerRadius: 12))
     }
@@ -296,8 +296,8 @@ struct RoutineTextField: View {
     @FocusState private var focused: Bool
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(label).font(.callout.weight(.medium))
-            TextEditor(text: $text).font(.body).scrollContentBackground(.hidden)
+            Text(label).font(.ui(.callout).weight(.medium))
+            TextEditor(text: $text).font(.ui(.body)).scrollContentBackground(.hidden)
                 .padding(8).frame(minHeight: 88).focused($focused).accessibilityLabel(label)
                 .background(DeskPalette.subtle, in: RoundedRectangle(cornerRadius: 10))
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(focused ? DeskPalette.focusBorder : DeskPalette.border))

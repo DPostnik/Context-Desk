@@ -26,7 +26,7 @@ struct SubagentsBar: View {
                     if agents.count > 4 { Text("+\(agents.count - 4)").foregroundStyle(.secondary) }
                     Spacer(minLength: 0)
                     Text(L10n.text("Показать", "Show")).foregroundStyle(.blue)
-                }.font(.callout).contentShape(Rectangle())
+                }.font(.ui(.callout)).contentShape(Rectangle())
             }
             .buttonStyle(PointerButtonStyle(base: .plain))
             .help(L10n.text("Посмотреть, чем заняты подагенты", "See what the sub-agents are doing"))
@@ -102,9 +102,9 @@ private struct SubagentRow: View {
         HStack(alignment: .top, spacing: 8) {
             SubagentStatusIcon(status: agent.status).padding(.top, 2)
             VStack(alignment: .leading, spacing: 3) {
-                Text(agent.title).font(.callout.weight(.medium)).lineLimit(2)
-                Text(agent.activity ?? SubagentStatusIcon.title(agent.status)).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                SubagentElapsed(agent: agent).font(.caption2).foregroundStyle(.tertiary)
+                Text(agent.title).font(.ui(.callout).weight(.medium)).lineLimit(2)
+                Text(agent.activity ?? SubagentStatusIcon.title(agent.status)).font(.ui(.caption)).foregroundStyle(.secondary).lineLimit(2)
+                SubagentElapsed(agent: agent).font(.ui(.caption2)).foregroundStyle(.tertiary)
             }
             Spacer(minLength: 0)
         }.padding(8).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
@@ -133,37 +133,37 @@ private struct SubagentDetail: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 SubagentStatusIcon(status: agent.status)
-                Text(agent.title).font(.headline).lineLimit(2).textSelection(.enabled)
+                Text(agent.title).font(.ui(.headline)).lineLimit(2).textSelection(.enabled)
                 Spacer(minLength: 0)
-                Text(SubagentStatusIcon.title(agent.status)).font(.caption).foregroundStyle(.secondary)
+                Text(SubagentStatusIcon.title(agent.status)).font(.ui(.caption)).foregroundStyle(.secondary)
             }
             HStack(spacing: 6) {
                 if let type = agent.type { Text(type) }
                 SubagentElapsed(agent: agent)
-            }.font(.caption).foregroundStyle(.secondary)
+            }.font(.ui(.caption)).foregroundStyle(.secondary)
             if let activity = agent.activity {
-                Label(activity, systemImage: "ellipsis.circle").font(.callout).lineLimit(2)
+                Label(activity, systemImage: "ellipsis.circle").font(.ui(.callout)).lineLimit(2)
             }
             DisclosureGroup(L10n.text("Задание", "Task"), isExpanded: $showingPrompt) {
-                ScrollView { Text(agent.prompt).font(.caption).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
+                ScrollView { Text(agent.prompt).font(.ui(.caption)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
                     .frame(maxHeight: 120)
-            }.font(.callout)
+            }.font(.ui(.callout))
             Divider()
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 8) {
                         if agent.droppedSteps > 0 {
                             Text(L10n.text("Ранние шаги скрыты: \(agent.droppedSteps)", "Earlier steps hidden: \(agent.droppedSteps)"))
-                                .font(.caption).foregroundStyle(.secondary)
+                                .font(.ui(.caption)).foregroundStyle(.secondary)
                         }
                         if agent.steps.isEmpty && agent.report == nil {
-                            Text(L10n.text("Шагов пока нет.", "No steps yet.")).font(.callout).foregroundStyle(.secondary)
+                            Text(L10n.text("Шагов пока нет.", "No steps yet.")).font(.ui(.callout)).foregroundStyle(.secondary)
                         }
                         ForEach(agent.steps) { step in SubagentStepView(step: step).id(step.id) }
                         if let report = agent.report, agent.status != .running {
                             VStack(alignment: .leading, spacing: 4) {
-                                Text(L10n.text("Итоговый отчёт", "Final report")).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                                Text(report).font(.callout).textSelection(.enabled)
+                                Text(L10n.text("Итоговый отчёт", "Final report")).font(.ui(.caption).weight(.semibold)).foregroundStyle(.secondary)
+                                Text(report).font(.ui(.callout)).textSelection(.enabled)
                             }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
                                 .background(.green.opacity(0.07), in: RoundedRectangle(cornerRadius: 8)).id("report")
                         }
@@ -183,15 +183,15 @@ private struct SubagentStepView: View {
     var body: some View {
         switch step.kind {
         case .text:
-            Text(step.text).font(.callout).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+            Text(step.text).font(.ui(.callout)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
         case .tool:
-            Label { Text(step.text).font(.system(.caption, design: .monospaced)).lineLimit(3).textSelection(.enabled) }
+            Label { Text(step.text).font(.ui(.caption, design: .monospaced)).lineLimit(3).textSelection(.enabled) }
                 icon: { Image(systemName: "wrench.and.screwdriver").foregroundStyle(.secondary) }
                 .padding(6).frame(maxWidth: .infinity, alignment: .leading)
                 .background(DeskPalette.subtle, in: RoundedRectangle(cornerRadius: 6))
         case .result:
             Text(step.text.isEmpty ? L10n.text("(пустой результат)", "(empty result)") : step.text)
-                .font(.system(.caption2, design: .monospaced)).foregroundStyle(step.isError ? .orange : .secondary)
+                .font(.ui(.caption2, design: .monospaced)).foregroundStyle(step.isError ? .orange : .secondary)
                 .lineLimit(6).textSelection(.enabled).padding(.leading, 22).frame(maxWidth: .infinity, alignment: .leading)
         }
     }

@@ -43,7 +43,8 @@ public actor ClaudeJobRunner: AgentScheduledExecutor {
         consumed = true
         if let browserBlocker { return .success(.finished(.blocked, output: browserBlocker)) }
         do {
-            let prompt = browser?.policy.map { request.prompt + "\n\n" + ScheduledBrowserImport.instructions($0, tool: ScheduledBrowserImport.claudeImportTool) } ?? request.prompt
+            let browserPrompt = browser?.policy.map { request.prompt + "\n\n" + ScheduledBrowserImport.instructions($0, tool: ScheduledBrowserImport.claudeImportTool) } ?? request.prompt
+            let prompt = browserPrompt + "\n\n" + AttentionMarkers.instructions()
             let (status, output) = try await run(prompt: prompt, model: request.model.model,
                 effort: request.model.effort, cwd: URL(fileURLWithPath: request.projectPath),
                 executable: executableOverride, runID: request.id, willStart: willStart)

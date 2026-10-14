@@ -116,7 +116,10 @@ import ContextCore
         let wasActive = jobLedger.runs.first { $0.id == id }?.status.active == true
         do { jobLedger = try await jobStore.finish(id, status: status, output: output); jobExecutors.removeValue(forKey: id) }
         catch { schedulerReady = false; self.error = error.localizedDescription }
-        if wasActive { await finishScheduledRecord(id, status: status, output: output) }
+        if wasActive {
+            await finishScheduledRecord(id, status: status, output: output)
+            if let run = jobLedger.runs.first(where: { $0.id == id }) { await recordAttention(run, status: status, output: output) }
+        }
     }
     func stopJob(_ run: JobRun) async {
         jobTasks[run.id]?.cancel()

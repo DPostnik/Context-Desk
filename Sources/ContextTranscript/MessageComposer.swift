@@ -10,6 +10,8 @@ public struct MessageComposer: NSViewRepresentable {
     let onSubmit: () -> Void
     /// Reports the text's height so the composer can grow with what is typed.
     let onContentHeight: ((CGFloat) -> Void)?
+    /// Read while the parent renders, so a zoom change updates the editor font.
+    let fontSize = InterfaceZoom.shared.scaled(14)
     public init(text: Binding<String>, focused: Binding<Bool>, focusRequest: UUID? = nil,
                 onContentHeight: ((CGFloat) -> Void)? = nil, onSubmit: @escaping () -> Void) {
         _text = text; _focused = focused; self.focusRequest = focusRequest; self.onSubmit = onSubmit
@@ -26,7 +28,7 @@ public struct MessageComposer: NSViewRepresentable {
         editor.minSize = NSSize(width: 0, height: 22)
         editor.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         editor.isRichText = false; editor.drawsBackground = false
-        editor.font = .systemFont(ofSize: 14)
+        editor.font = .systemFont(ofSize: fontSize)
         editor.textColor = .labelColor
         editor.insertionPointColor = .labelColor
         editor.textContainerInset = NSSize(width: 0, height: 2)
@@ -47,6 +49,7 @@ public struct MessageComposer: NSViewRepresentable {
         guard let editor = scroll.documentView as? ComposerTextView else { return }
         editor.onSubmit = onSubmit
         editor.onContentHeight = onContentHeight
+        if editor.font?.pointSize != fontSize { editor.font = .systemFont(ofSize: fontSize); editor.reportContentHeight() }
         if editor.string != text { editor.string = text; editor.reportContentHeight() }
         if focusRequest != context.coordinator.focusRequest {
             context.coordinator.focusRequest = focusRequest
@@ -71,8 +74,9 @@ public struct MessageComposer: NSViewRepresentable {
 @MainActor public class WidthBoundTextScrollView: NSScrollView {
     public override func layout() {
         super.layout()
-        guard let editor = documentView as? NSTextView, contentSize.width > 0 else { return }
-        let width = contentSize.width
+        // Clip bounds are in document points, which differ from the viewport under magnification.
+        guard let editor = documentView as? NSTextView, contentView.bounds.width > 0 else { return }
+        let width = contentView.bounds.width
         if abs(editor.frame.width - width) > 0.5 {
             editor.setFrameSize(NSSize(width: width, height: editor.frame.height))
         }
@@ -106,6 +110,17 @@ public final class ComposerTextView: NSTextView {
         reportedHeight = height
         // Never publish SwiftUI state during AppKit layout.
         DispatchQueue.main.async { onContentHeight(height) }
+    }
+    /// Files keep the native result (paths at the drop point), but are read while the drop is still on
+    /// and temporary ones, such as a screenshot thumbnail's, are copied before their source deletes them.
+    public override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        guard let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
+              !urls.isEmpty else { return super.performDragOperation(sender) }
+        let index = characterIndexForInsertion(at: convert(sender.draggingLocation, from: nil))
+        let paths = DroppedFiles.preserving(urls, in: DroppedFiles.directory).map(\.path).joined(separator: "\n")
+        insertText(paths, replacementRange: NSRange(location: index, length: 0))
+        window?.makeFirstResponder(self)
+        return true
     }
     public override func keyDown(with event: NSEvent) {
         // Let the input method confirm marked text before interpreting Return.

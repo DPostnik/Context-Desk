@@ -1,4 +1,5 @@
 import ContextCore
+import ContextTranscript
 import SwiftUI
 import IOKit.pwr_mgt
 
@@ -79,13 +80,13 @@ struct KeepAwakeSettings: View {
             Text(L10n.text(
                 "Пока Context Desk запущен, Mac не засыпает от бездействия, даже если окно закрыто. Настройка сохраняется. Экран может гаснуть; закрытие крышки и ручной сон по-прежнему работают. Расход батареи может увеличиться.",
                 "While Context Desk is running, your Mac stays awake when idle, even with the window closed. This setting is saved. The display can sleep; closing the lid and manual sleep still work. Battery use may increase."))
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.ui(.caption)).foregroundStyle(.secondary)
             if let error = controller.error {
-                Text(error).font(.caption).foregroundStyle(.red)
+                Text(error).font(.ui(.caption)).foregroundStyle(.red)
                 Button(L10n.text("Повторить", "Retry")) { controller.setEnabled(controller.enabled) }
             } else if controller.assertionID != nil {
                 Text(L10n.text("Защита от автоматического сна активна", "Automatic sleep prevention is active"))
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.ui(.caption)).foregroundStyle(.secondary)
             }
         }
     }

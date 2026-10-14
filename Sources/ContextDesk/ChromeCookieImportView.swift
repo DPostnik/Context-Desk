@@ -1,4 +1,5 @@
 import AppKit
+import ContextTranscript
 import SwiftUI
 import ContextCore
 
@@ -23,12 +24,12 @@ struct ChromeCookieImportView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(L10n.text("Импортировать только cookies", "Import cookies only")).font(.title2.bold())
+            Text(L10n.text("Импортировать только cookies", "Import cookies only")).font(.ui(.title2).bold())
             Text(L10n.text("Cookies сайтов станут доступны выбранному браузеру и агенту этого чата. Если профиль сохранён, они будут доступны и следующим чатам, которым ты передашь этот профиль.",
                            "Website cookies will be available to this chat’s selected browser and agent. If you save the profile, later chats you assign to it will also have access."))
             Text(L10n.text("Обычный Google Chrome можно не закрывать; если он не даст прочитать cookies, заверши его через Cmd+Q и повтори. Если браузер чата открыт, сначала закрой его через меню «Браузер». macOS может запросить доступ к Chrome Safe Storage в Связке ключей.",
                            "Regular Google Chrome can stay open; if it blocks reading cookies, quit it with Cmd+Q and try again. If this chat’s browser is open, close it from the Browser menu first. macOS may request access to Chrome Safe Storage in Keychain."))
-                .font(.callout)
+                .font(.ui(.callout))
             if loading {
                 ProgressView(L10n.text("Поиск профилей…", "Finding profiles…"))
             } else if !profiles.isEmpty {
@@ -38,12 +39,12 @@ struct ChromeCookieImportView: View {
             }
             Text(L10n.text("Импорт заменит совпадающие cookies. Некоторые сайты потребуют входа заново. Пароли и файлы авторизации Codex / Claude Code не переносятся.",
                            "Import replaces matching cookies. Some sites will require signing in again. Passwords and Codex / Claude Code authentication files are not transferred."))
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.ui(.caption)).foregroundStyle(.secondary)
             Text(L10n.text("localStorage, IndexedDB, аккаунт Chrome и значок профиля не переносятся. Проверка cookies не подтверждает вход на сайте.",
                            "localStorage, IndexedDB, the Chrome account and profile avatar are not transferred. Cookie verification does not confirm website sign-in."))
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.ui(.caption)).foregroundStyle(.secondary)
             Divider()
-            Text(L10n.text("Импорт сессии агентом", "Agent session import")).font(.headline)
+            Text(L10n.text("Импорт сессии агентом", "Agent session import")).font(.ui(.headline))
             Toggle(L10n.text("Любой сайт", "Any site"), isOn: $automaticAnySite).disabled(importing)
             if !automaticAnySite {
                 TextField(L10n.text("Домен сайта, например linkedin.com", "Site domain, for example linkedin.com"), text: $automaticSite)
@@ -52,16 +53,16 @@ struct ChromeCookieImportView: View {
             Toggle(L10n.text("Во всех чатах", "In every chat"), isOn: $automaticAllChats).disabled(importing)
             Text(L10n.text("Разреши агенту переносить cookies сайта из выбранного профиля Chrome при отсутствии входа. Для одного сайта переносятся cookies сайта и его поддоменов; для любого сайта — только cookies, которые Chrome отправил бы открытой странице. Разрешение для чата действует для этого браузерного профиля, включая чаты, которым он будет передан; разрешение для всех чатов — для каждого браузера чата. Обычный Chrome можно не закрывать.",
                            "Allow the agent to import site cookies from the selected Chrome profile when sign-in is missing. For one site, cookies of the site and its subdomains are imported; for any site, only the cookies Chrome would send to the open page. Chat permission applies to this browser profile, including chats it is handed to; every-chat permission applies to each chat browser. Regular Chrome can stay open."))
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.ui(.caption)).foregroundStyle(.secondary)
             if let automaticPolicy {
                 HStack {
-                    Text(L10n.text("Разрешено в этом чате: ", "Enabled in this chat: ") + siteLabel(automaticPolicy) + " · " + automaticPolicy.profile).font(.callout)
+                    Text(L10n.text("Разрешено в этом чате: ", "Enabled in this chat: ") + siteLabel(automaticPolicy) + " · " + automaticPolicy.profile).font(.ui(.callout))
                     Button(L10n.text("Отключить", "Disable")) { saveAutomaticPolicy(enabled: false, shared: false) }.disabled(importing)
                 }
             }
             if let sharedPolicy {
                 HStack {
-                    Text(L10n.text("Разрешено во всех чатах: ", "Enabled in every chat: ") + siteLabel(sharedPolicy) + " · " + sharedPolicy.profile).font(.callout)
+                    Text(L10n.text("Разрешено во всех чатах: ", "Enabled in every chat: ") + siteLabel(sharedPolicy) + " · " + sharedPolicy.profile).font(.ui(.callout))
                     Button(L10n.text("Отключить", "Disable")) { saveAutomaticPolicy(enabled: false, shared: true) }.disabled(importing)
                 }
             }
@@ -71,7 +72,7 @@ struct ChromeCookieImportView: View {
                 Text(L10n.text("Последний импорт: ", "Last import: ") + receipt.date.formatted(date: .abbreviated, time: .shortened) + " · " +
                      L10n.text("Проверено cookies: \(receipt.result.verified). Вход на сайте не проверен.",
                                "Cookies verified: \(receipt.result.verified). Website sign-in has not been checked."))
-                    .font(.callout)
+                    .font(.ui(.callout))
             }
             if let result {
                 Text(L10n.text("Проверено cookies: \(result.verified). Пропущено: \(result.skipped). Не подтверждено: \(result.unverified). Открой нужный сайт в браузере чата и проверь вход.",
@@ -83,7 +84,7 @@ struct ChromeCookieImportView: View {
                 Button(L10n.text("Обновить профили", "Refresh profiles")) { loadProfiles() }
                     .disabled(loading || importing)
                 Spacer()
-                if importing { ProgressView().controlSize(.small) }
+                if importing { ProgressView().uiSmallSpinner() }
                 Button(L10n.text("Закрыть", "Close")) { dismiss() }.disabled(importing)
                     .keyboardShortcut(.cancelAction)
                 Button(L10n.text("Импортировать", "Import")) { start() }

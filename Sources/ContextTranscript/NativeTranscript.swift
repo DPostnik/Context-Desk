@@ -16,6 +16,8 @@ public struct NativeTranscript: NSViewRepresentable {
     let onReadToEnd: ((String, String) -> Void)?
     let projectPath: String?
     let onOpenFile: ((URL, Int?) -> Void)?
+    /// Read while the parent renders, so a zoom change updates the view.
+    let zoom = InterfaceZoom.shared.scale
     public init(items: [TranscriptItem], conversationID: String?, followOutput: Bool, isWorking: Bool = false, workingStatus: String? = nil,
                 workingSince: Date? = nil, unreadCompletionID: String? = nil, unreadResponseItemID: String? = nil, projectPath: String? = nil,
                 onOpenFile: ((URL, Int?) -> Void)? = nil, onReadToEnd: ((String, String) -> Void)? = nil) {
@@ -32,6 +34,7 @@ public struct NativeTranscript: NSViewRepresentable {
     public func updateNSView(_ view: TranscriptScrollView, context: Context) {
         view.onReadToEnd = onReadToEnd
         view.onOpenFile = onOpenFile
+        view.zoom = zoom
         view.update(items: items, conversationID: conversationID, followOutput: followOutput,
                     isWorking: isWorking, workingStatus: workingStatus, workingSince: workingSince, unreadCompletionID: unreadCompletionID,
                     unreadResponseItemID: unreadResponseItemID, projectPath: projectPath)
@@ -79,6 +82,15 @@ public struct NativeTranscript: NSViewRepresentable {
     public private(set) var hoveredItemID: String?
     /// Transcript text keeps a readable column; wider windows add margins instead of longer lines.
     public static let readableWidth: CGFloat = 760
+    /// Interface zoom. Magnification keeps every font, inset and table width in proportion;
+    /// TextKit lays out in unscaled document points, so the readable column scales too.
+    public var zoom: CGFloat = 1 {
+        didSet {
+            guard abs(zoom - oldValue) > 0.001 else { return }
+            magnification = zoom
+            needsLayout = true
+        }
+    }
 
     public init(pasteboard: NSPasteboard = .general, positions: TranscriptReadingPositions = TranscriptReadingPositions()) {
         self.positions = positions
@@ -103,7 +115,9 @@ public struct NativeTranscript: NSViewRepresentable {
         transcript.minSize = NSSize(width: 0, height: 0)
         transcript.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         transcript.isVerticallyResizable = true; transcript.isHorizontallyResizable = false
-        transcript.autoresizingMask = [.width]
+        // Width is set only by `WidthBoundTextScrollView.layout()` in document points. Autoresizing
+        // would apply the unmagnified clip width, so under zoom the two would keep resetting each other.
+        transcript.autoresizingMask = []
         transcript.textContainerInset = NSSize(width: 24, height: 24)
         container.widthTracksTextView = true; container.heightTracksTextView = false
         transcript.delegate = self
@@ -200,7 +214,7 @@ public struct NativeTranscript: NSViewRepresentable {
     public override func layout() {
         changingLayout = true
         defer { changingLayout = false; rememberPosition() }
-        let margin = max(24, ((contentSize.width - Self.readableWidth) / 2).rounded(.down))
+        let margin = max(24, ((contentView.bounds.width - Self.readableWidth) / 2).rounded(.down))
         if abs(transcript.textContainerInset.width - margin) > 0.5 {
             transcript.textContainerInset = NSSize(width: margin, height: 24)
         }

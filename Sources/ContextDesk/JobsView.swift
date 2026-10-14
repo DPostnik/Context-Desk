@@ -18,7 +18,7 @@ struct JobsView: View {
             Text(model.schedulerReady
                  ? L10n.text("Запуски работают, пока Context Desk открыт и Mac не спит. После простоя выполняется одно пропущенное задание. До трёх запусков одновременно.", "Tasks run while Context Desk is open and your Mac is awake. After downtime, each due task runs once. Up to three runs at a time.")
                  : L10n.text("Планировщик недоступен. Проверь сообщение об ошибке и перезапусти приложение.", "The scheduler is unavailable. Check the error and restart the app."))
-                .font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal).padding(.bottom)
+                .font(.ui(.caption)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal).padding(.bottom)
             Divider()
             HSplitView {
                 VStack(spacing: 0) {
@@ -30,22 +30,22 @@ struct JobsView: View {
                     Section("Context Desk") {
                         ForEach(model.jobLedger.jobs.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) }) { job in
                             VStack(alignment: .leading, spacing: 6) {
-                                Text(job.name).font(.callout.weight(.medium))
-                                Text(job.engine.title + " · " + (job.enabled ? L10n.text("Включено", "Enabled") : L10n.text("Пауза", "Paused"))).font(.caption).foregroundStyle(.secondary)
+                                Text(job.name).font(.ui(.callout).weight(.medium))
+                                Text(job.engine.title + " · " + (job.enabled ? L10n.text("Включено", "Enabled") : L10n.text("Пауза", "Paused"))).font(.ui(.caption)).foregroundStyle(.secondary)
                             }.padding(.vertical, 6).tag(job.id.uuidString)
                         }
                     }
                     if !model.jobs.isEmpty {
                     Section(L10n.text("Доступны для импорта", "Available to import")) {
                         ForEach(model.jobs.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) }) { job in
-                            VStack(alignment: .leading) { Text(job.name); Text(job.engine.title).font(.caption).foregroundStyle(.secondary) }.tag("source:" + job.id)
+                            VStack(alignment: .leading) { Text(job.name); Text(job.engine.title).font(.ui(.caption)).foregroundStyle(.secondary) }.tag("source:" + job.id)
                         }
                     }
                     }
                 }.listStyle(.sidebar).scrollContentBackground(.hidden)
                     .overlay {
                         if !search.isEmpty && !model.jobLedger.jobs.contains(where: { $0.name.localizedCaseInsensitiveContains(search) }) && !model.jobs.contains(where: { $0.name.localizedCaseInsensitiveContains(search) }) {
-                            Text(L10n.text("Ничего не найдено", "No results")).font(.callout).foregroundStyle(.secondary)
+                            Text(L10n.text("Ничего не найдено", "No results")).font(.ui(.callout)).foregroundStyle(.secondary)
                         }
                     }
                 }.background(DeskPalette.sidebar).frame(minWidth: 220, idealWidth: 260, maxWidth: 340)
@@ -54,7 +54,7 @@ struct JobsView: View {
                 } else if let source = model.jobs.first(where: { "source:" + $0.id == selection }) {
                     VStack(alignment: .leading) {
                         HStack {
-                            Text(L10n.text("Импорт создаёт отдельное задание. Исходное расписание останется без изменений.", "Import creates a separate task. The original schedule stays unchanged.")).font(.caption)
+                            Text(L10n.text("Импорт создаёт отдельное задание. Исходное расписание останется без изменений.", "Import creates a separate task. The original schedule stays unchanged.")).font(.ui(.caption))
                             Spacer()
                             Button(L10n.text("Импортировать…", "Import…")) { editing = model.importedJob(source) }.disabled(!model.schedulerReady || source.prompt.isEmpty)
                         }.padding()
@@ -81,8 +81,8 @@ struct JobsView: View {
     }
     private var pageTitle: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(L10n.text("Рутины и расписание", "Routines and schedules")).font(.title2.bold())
-            Text(L10n.text("Задания, результаты и библиотека повторяемой работы", "Tasks, results and a library of repeatable work")).font(.callout).foregroundStyle(.secondary)
+            Text(L10n.text("Рутины и расписание", "Routines and schedules")).font(.ui(.title2).bold())
+            Text(L10n.text("Задания, результаты и библиотека повторяемой работы", "Tasks, results and a library of repeatable work")).font(.ui(.callout)).foregroundStyle(.secondary)
         }
     }
     private var pageActions: some View {
@@ -109,7 +109,7 @@ struct JobsView: View {
         let active = model.jobLedger.runs.first { $0.jobID == job.id && $0.status.active }
         return ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                Text(job.name).font(.title2.bold())
+                Text(job.name).font(.ui(.title2).bold())
                 ViewThatFits(in: .horizontal) {
                     HStack { taskActions(job, active: active != nil) }
                     VStack(alignment: .leading) { taskActions(job, active: active != nil) }
@@ -117,33 +117,33 @@ struct JobsView: View {
                 RoutineCard {
                 LabeledContent(L10n.text("Исполнитель", "Agent"), value: job.engine.title)
                 if let routine = job.routine {
-                    Text(L10n.text("Рутина", "Routine") + ": \(routine.definition.name) · \(routine.definition.revision.uuidString)").font(.caption).textSelection(.enabled)
-                    if let issue = model.routineIssue(job) { Text(issue).font(.caption).foregroundStyle(.orange) }
+                    Text(L10n.text("Рутина", "Routine") + ": \(routine.definition.name) · \(routine.definition.revision.uuidString)").font(.ui(.caption)).textSelection(.enabled)
+                    if let issue = model.routineIssue(job) { Text(issue).font(.ui(.caption)).foregroundStyle(.orange) }
                 }
                 LabeledContent(L10n.text("Проект", "Project"), value: model.state.projects.first { $0.id == job.projectID }?.path ?? L10n.text("Недоступен", "Unavailable"))
                 LabeledContent(L10n.text("Часовой пояс", "Time zone"), value: job.schedule.timeZone)
                 if let next = job.nextRun, job.enabled { LabeledContent(L10n.text("Следующий запуск", "Next run")) { Text(jobDate(next, zone: job.schedule.timeZone)).textSelection(.enabled) } }
-                Text(job.schedule.once != nil ? L10n.text("Однократно", "Once") : job.schedule.rule.isEmpty ? L10n.text("Только вручную", "Manual only") : ScheduledJobs.readableSchedule(job.schedule.rule)).font(.callout).textSelection(.enabled)
+                Text(job.schedule.once != nil ? L10n.text("Однократно", "Once") : job.schedule.rule.isEmpty ? L10n.text("Только вручную", "Manual only") : ScheduledJobs.readableSchedule(job.schedule.rule)).font(.ui(.callout)).textSelection(.enabled)
                 if job.engine == .codex {
-                    Text(L10n.text("Каждый запуск создаёт новый чат с текущими разрешениями проекта.", "Each run creates a new chat using the project's current permissions.")).font(.caption).foregroundStyle(.secondary)
+                    Text(L10n.text("Каждый запуск создаёт новый чат с текущими разрешениями проекта.", "Each run creates a new chat using the project's current permissions.")).font(.ui(.caption)).foregroundStyle(.secondary)
                 } else {
-                    Text(L10n.text("Claude Code использует существующий вход и правила разрешений CLI. Новые запросы разрешений отклоняются; результат сохраняется здесь. Требуется версия \(AgentIntegrationFactory.claudeVersion).", "Claude Code uses existing CLI sign-in and permission rules. New permission requests are denied; results are saved here. Version \(AgentIntegrationFactory.claudeVersion) is required.")).font(.caption).foregroundStyle(.secondary)
+                    Text(L10n.text("Claude Code использует существующий вход и правила разрешений CLI. Новые запросы разрешений отклоняются; результат сохраняется здесь. Требуется версия \(AgentIntegrationFactory.claudeVersion).", "Claude Code uses existing CLI sign-in and permission rules. New permission requests are denied; results are saved here. Version \(AgentIntegrationFactory.claudeVersion) is required.")).font(.ui(.caption)).foregroundStyle(.secondary)
                 }
                 }
                 RoutineCard {
-                    Text(L10n.text("Инструкции", "Instructions")).font(.headline)
+                    Text(L10n.text("Инструкции", "Instructions")).font(.ui(.headline))
                     Text(job.prompt).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
                 }
                 Divider()
-                Text(L10n.text("История запусков", "Run history")).font(.headline)
+                Text(L10n.text("История запусков", "Run history")).font(.ui(.headline))
                 if !model.jobLedger.runs.contains(where: { $0.jobID == job.id }) {
                     RoutineNotice(icon: "clock", text: L10n.text("Запусков пока нет. Здесь появятся результаты и ссылки на чаты.", "No runs yet. Results and conversation links will appear here."))
                 }
                 ForEach(model.jobLedger.runs.filter { $0.jobID == job.id }) { run in
                     RoutineCard {
                         HStack {
-                            Text(jobDate(run.started, zone: job.schedule.timeZone)).font(.callout)
-                            Text(run.status.title).font(.caption).foregroundStyle(.secondary)
+                            Text(jobDate(run.started, zone: job.schedule.timeZone)).font(.ui(.callout))
+                            Text(run.status.title).font(.ui(.caption)).foregroundStyle(.secondary)
                             Spacer()
                             if run.status.active { Button(L10n.text("Остановить", "Stop")) { Task { await model.stopJob(run) } } }
                             if let id = run.threadID, let chat = model.state.chats.first(where: { $0.id == id }) {
@@ -157,10 +157,10 @@ struct JobsView: View {
                         }
                         if let routine = run.routine {
                             DisclosureGroup(L10n.text("Рутина этого запуска", "Routine used for this run")) {
-                                Text((try? routine.prompt()) ?? L10n.text("Сохранённая рутина недоступна", "Saved routine unavailable")).font(.caption).textSelection(.enabled)
+                                Text((try? routine.prompt()) ?? L10n.text("Сохранённая рутина недоступна", "Saved routine unavailable")).font(.ui(.caption)).textSelection(.enabled)
                             }
                         }
-                        if run.status == .uncertain { Text(L10n.text("Результат этого запуска не подтверждён. Автоматического повтора не было; настройки расписания не изменились. Перед ручным повтором проверь результат.", "This run's outcome is unconfirmed. No automatic retry was made; schedule settings are unchanged. Check the outcome before retrying manually.")).font(.caption).foregroundStyle(.orange) }
+                        if run.status == .uncertain { Text(L10n.text("Результат этого запуска не подтверждён. Автоматического повтора не было; настройки расписания не изменились. Перед ручным повтором проверь результат.", "This run's outcome is unconfirmed. No automatic retry was made; schedule settings are unchanged. Check the outcome before retrying manually.")).font(.ui(.caption)).foregroundStyle(.orange) }
                     }
                 }
             }.padding(24).frame(maxWidth: .infinity, alignment: .leading)
@@ -181,8 +181,8 @@ struct JobEditor: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(L10n.text("Настройка задания", "Task setup")).font(.title2.bold())
-            Text(L10n.text("Выбери исполнителя, инструкции и время запуска.", "Choose an agent, instructions and run time.")).font(.callout).foregroundStyle(.secondary)
+            Text(L10n.text("Настройка задания", "Task setup")).font(.ui(.title2).bold())
+            Text(L10n.text("Выбери исполнителя, инструкции и время запуска.", "Choose an agent, instructions and run time.")).font(.ui(.callout)).foregroundStyle(.secondary)
             Divider()
             Form {
                 Section(L10n.text("Основное", "Basics")) {
@@ -227,13 +227,13 @@ struct JobEditor: View {
                     }
                 }
                 if let routine = job.routine {
-                    Text(L10n.text("Сохранённая версия рутины", "Frozen routine revision") + ": \(routine.definition.name) · \(routine.definition.revision.uuidString)").font(.caption).textSelection(.enabled)
+                    Text(L10n.text("Сохранённая версия рутины", "Frozen routine revision") + ": \(routine.definition.name) · \(routine.definition.revision.uuidString)").font(.ui(.caption)).textSelection(.enabled)
                     TextField(L10n.text("Входные данные этого задания", "Input for this task"), text: Binding(get: { job.routine?.input ?? "" }, set: { value in
                         job.routine?.input = value
                         do { job.prompt = try job.routine?.prompt() ?? ""; validation = nil }
                         catch { job.prompt = ""; validation = error.localizedDescription }
                     }), axis: .vertical)
-                    if let issue = model.routineIssue(job) { Text(issue).foregroundStyle(.orange).font(.caption) }
+                    if let issue = model.routineIssue(job) { Text(issue).foregroundStyle(.orange).font(.ui(.caption)) }
                     Button(L10n.text("Преобразовать в обычные инструкции", "Convert to plain instructions")) { job.routine = nil }
                 }
                 if job.engine == .codex {
@@ -245,14 +245,14 @@ struct JobEditor: View {
                 ScheduledBrowserImportEditor(policy: $job.browserSessionImport)
                 if job.engine == .claude {
                     if job.route != .direct {
-                        Text(model.routeCompatibilityIssue(job.route, agent: .claudeCode) ?? "").foregroundStyle(.orange).font(.caption)
+                        Text(model.routeCompatibilityIssue(job.route, agent: .claudeCode) ?? "").foregroundStyle(.orange).font(.ui(.caption))
                         Button(L10n.text("Работать напрямую", "Work directly")) { job.route = .direct }
                     }
                     Picker(L10n.text("Рассуждение", "Reasoning effort"), selection: $job.effort) {
                         Text(L10n.text("Как в CLI", "CLI default")).tag("")
                         ForEach(ClaudeEffort.allCases, id: \.rawValue) { level in Text(level.title).tag(level.rawValue) }
                     }
-                    Text(L10n.text("Claude работает в профиле Claude приложения, как обычный чат: каждый запуск появляется чатом, который можно продолжить. Разрешения задаёт режим доступа проекта; при полном доступе действия коннекторов claude.ai (Gmail, Calendar…) выполняются без подтверждения. Нужен вход по подписке Claude в настройках.", "Claude runs in the app's Claude profile like a regular chat: each run appears as a chat you can continue. The project's access mode sets permissions; with full access, claude.ai connector actions (Gmail, Calendar…) run without approval. Requires signing in with your Claude subscription in settings.")).font(.caption).frame(maxWidth: 460, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+                    Text(L10n.text("Claude работает в профиле Claude приложения, как обычный чат: каждый запуск появляется чатом, который можно продолжить. Разрешения задаёт режим доступа проекта; при полном доступе действия коннекторов claude.ai (Gmail, Calendar…) выполняются без подтверждения. Нужен вход по подписке Claude в настройках.", "Claude runs in the app's Claude profile like a regular chat: each run appears as a chat you can continue. The project's access mode sets permissions; with full access, claude.ai connector actions (Gmail, Calendar…) run without approval. Requires signing in with your Claude subscription in settings.")).font(.ui(.caption)).frame(maxWidth: 460, alignment: .leading).fixedSize(horizontal: false, vertical: true)
                 }
                 }
                 Section(L10n.text("Расписание", "Schedule")) {
@@ -287,12 +287,12 @@ struct JobEditor: View {
                     }
                     DisclosureGroup(L10n.text("Точное правило расписания", "Exact schedule rule")) {
                         TextField("RRULE", text: $job.schedule.rule)
-                        Text(L10n.text("Минуты: FREQ=MINUTELY;INTERVAL=15. Дни недели: MO,TU,WE,TH,FR,SA,SU. Можно указать несколько часов через запятую.", "Minutes: FREQ=MINUTELY;INTERVAL=15. Weekdays: MO,TU,WE,TH,FR,SA,SU. Multiple hours can be separated by commas.")).font(.caption).foregroundStyle(.secondary)
+                        Text(L10n.text("Минуты: FREQ=MINUTELY;INTERVAL=15. Дни недели: MO,TU,WE,TH,FR,SA,SU. Можно указать несколько часов через запятую.", "Minutes: FREQ=MINUTELY;INTERVAL=15. Weekdays: MO,TU,WE,TH,FR,SA,SU. Multiple hours can be separated by commas.")).font(.ui(.caption)).foregroundStyle(.secondary)
                     }
                 }
                 TextField(L10n.text("Часовой пояс", "Time zone"), text: $job.schedule.timeZone)
                 if job.source != nil {
-                    Text(L10n.text("Импорт переносит только инструкции. История исходного чата, рабочие деревья и разрешения не переносятся. Проверь проект, модель, время и часовой пояс. Перед включением отключи исходное расписание.", "Import transfers instructions only. Source chat history, worktrees and permissions are not transferred. Review the project, model, time and time zone. Disable the original schedule before enabling this one.")).font(.caption)
+                    Text(L10n.text("Импорт переносит только инструкции. История исходного чата, рабочие деревья и разрешения не переносятся. Проверь проект, модель, время и часовой пояс. Перед включением отключи исходное расписание.", "Import transfers instructions only. Source chat history, worktrees and permissions are not transferred. Review the project, model, time and time zone. Disable the original schedule before enabling this one.")).font(.ui(.caption))
                     Toggle(L10n.text("Исходное расписание отключено", "I disabled the original schedule"), isOn: $job.sourceDisabled)
                 }
                 Toggle(L10n.text("Включить расписание", "Enable schedule"), isOn: $job.enabled).disabled(mode == "manual")
@@ -301,10 +301,10 @@ struct JobEditor: View {
                     RoutineTextField(label: L10n.text("Инструкции", "Instructions"), text: $job.prompt).disabled(job.routine != nil)
                 }
             }.formStyle(.grouped).disabled(saving)
-            if let validation { Text(validation).foregroundStyle(.red).font(.caption) }
+            if let validation { Text(validation).foregroundStyle(.red).font(.ui(.caption)) }
             Divider()
             HStack {
-                if saving { ProgressView().controlSize(.small) }
+                if saving { ProgressView().uiSmallSpinner() }
                 Spacer()
                 Button(L10n.text("Отмена", "Cancel")) { dismiss() }.disabled(saving).keyboardShortcut(.cancelAction)
                 Button(L10n.text("Сохранить", "Save")) {

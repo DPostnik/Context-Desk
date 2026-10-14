@@ -491,3 +491,41 @@ import ContextTranscript
     #expect(tall > 80)
     #expect((heights.last ?? .infinity) < 30)
 }
+
+@Test @MainActor func zoomedTranscriptWidthDoesNotOscillateWhileStreaming() throws {
+    // Under magnification the autoresizing width (unmagnified clip width) and the
+    // document-point width used to reset each other on every pass, an endless layout loop.
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let model = DeskModel(store: AppStore(file: folder.appendingPathComponent("state.sqlite")))
+    model.authenticated = true
+    model.models = [CodexModel(id: "gpt-5.4", displayName: "GPT-5.4")]
+    model.state.model = "gpt-5.4"
+    model.items = (0..<10).flatMap { index in
+        [TranscriptItem(id: "u\(index)", kind: "user", text: "Вопрос \(index)"),
+         TranscriptItem(id: "a\(index)", kind: "assistant", text: String(repeating: "Ответ с `кодом`. ", count: 60))]
+    }
+    let host = NSHostingView(rootView: ChatView(model: model))
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 800), styleMask: [.titled], backing: .buffered, defer: false)
+    window.contentView = host
+    func settle() { for _ in 0..<3 { window.layoutIfNeeded(); window.displayIfNeeded() } }
+    settle()
+    func find(_ view: NSView) -> TranscriptScrollView? { (view as? TranscriptScrollView) ?? view.subviews.lazy.compactMap(find).first }
+    let scroll = try #require(find(host))
+    let editor = try #require(scroll.documentView)
+    InterfaceZoom.shared.set(1.1)
+    defer { InterfaceZoom.shared.set(1); UserDefaults.standard.removeObject(forKey: InterfaceZoom.preferenceKey) }
+    settle()
+    var widths: [CGFloat] = []
+    editor.postsFrameChangedNotifications = true
+    let token = NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification, object: editor, queue: nil) { _ in
+        MainActor.assumeIsolated { widths.append(editor.frame.width) }
+    }
+    defer { NotificationCenter.default.removeObserver(token) }
+    for step in 0..<5 {
+        model.items.append(TranscriptItem(id: "s\(step)", kind: "assistant", text: String(repeating: "Поток ", count: 30)))
+        settle()
+    }
+    #expect(scroll.magnification == 1.1)
+    #expect(abs(editor.frame.width - scroll.contentView.bounds.width) < 0.5)
+    #expect(widths.allSatisfy { abs($0 - scroll.contentView.bounds.width) < 0.5 })
+}

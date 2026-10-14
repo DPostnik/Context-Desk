@@ -17,6 +17,20 @@ public extension Font {
     }
 }
 
+public extension CGFloat {
+    /// A layout length (padding, row height, icon frame, column width) scaled with the interface zoom,
+    /// so spacing grows together with `Font.ui` text instead of squeezing it.
+    @MainActor static func ui(_ value: CGFloat) -> CGFloat { InterfaceZoom.shared.scaled(value) }
+}
+
+public extension View {
+    /// A small spinner (16 pt at actual size) that grows with the interface zoom; control sizes jump 16 → 32 pt.
+    @MainActor func uiSmallSpinner() -> some View {
+        let scale = InterfaceZoom.shared.scale
+        return controlSize(.small).scaleEffect(scale).frame(width: .ui(16), height: .ui(16))
+    }
+}
+
 private extension Font.TextStyle {
     var appKit: NSFont.TextStyle {
         switch self {

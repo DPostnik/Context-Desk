@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 import ContextCore
 import ContextTranscript
 
@@ -24,13 +25,17 @@ struct DeskView: View {
     @State private var limitsPlacement = PopoverPlacement.fallback
     @State private var limitsAnchor = ScreenFrameProbe()
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    /// The sidebar state before a document preview was expanded, restored when it collapses.
+    @State private var sidebarBeforeDocument: NavigationSplitViewVisibility?
     @State private var sidebarViewportHeight: CGFloat = 0
     @State private var sidebarContentHeight: CGFloat = 0
     @State private var scrollerStyle = NSScroller.preferredScrollerStyle
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
-            sidebar
+            // The system toggle lives in the sidebar column (and moves into the detail toolbar when the
+            // sidebar is hidden); removing it only on the split view left it next to our own button.
+            sidebar.toolbar(removing: .sidebarToggle)
         } detail: {
             detail
                 .background(DeskPalette.canvas)
@@ -58,6 +63,17 @@ struct DeskView: View {
         .onChange(of: model.chatID) { _, _ in
             revealSelectedChat()
         }
+        .onChange(of: model.documentExpanded) { _, expanded in
+            withAnimation {
+                if expanded {
+                    sidebarBeforeDocument = columnVisibility
+                    columnVisibility = .detailOnly
+                } else if let previous = sidebarBeforeDocument {
+                    columnVisibility = previous
+                    sidebarBeforeDocument = nil
+                }
+            }
+        }
         .onChange(of: activeChatIDs) { _, ids in
             selection.prune(keeping: ids)
         }
@@ -77,45 +93,48 @@ struct DeskView: View {
         }
     }
     private var sidebar: some View {
-            VStack(spacing: 12) {
+            VStack(spacing: .ui(12)) {
                 HStack {
-                    Text("Context Desk").font(.headline)
+                    Text("Context Desk").font(.ui(.headline))
                     Spacer()
                     Button { showingNotifications.toggle() } label: {
                         Image(systemName: (model.notices.isEmpty && !model.state.chats.contains(where: \.hasUnreadResponse)) ? "bell" : "bell.badge.fill")
                             .foregroundStyle((model.notices.isEmpty && !model.state.chats.contains(where: \.hasUnreadResponse)) ? Color.primary : .blue)
                     }.buttonStyle(PointerButtonStyle(base: .plain)).help(L10n.text("Уведомления", "Notifications"))
-                }.padding(.horizontal, 16).padding(.top, 16)
+                }.padding(.horizontal, .ui(16)).padding(.top, .ui(16))
+                if model.openAttentionCount > 0 && !model.showingAttention {
+                    AttentionBanner(model: model).padding(.horizontal, .ui(12))
+                }
                 Button { model.newChat() } label: {
                     Label(L10n.text("Новый чат", "New chat"), systemImage: "square.and.pencil").frame(maxWidth: .infinity, alignment: .leading)
-                }.buttonStyle(DeskButtonStyle()).disabled(model.selectedProject == nil).padding(.horizontal, 12)
-                HStack(spacing: 8) {
+                }.buttonStyle(DeskButtonStyle()).disabled(model.selectedProject == nil).padding(.horizontal, .ui(12))
+                HStack(spacing: .ui(8)) {
                     Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                     TextField(L10n.text("Найти проект или чат", "Find a project or chat"), text: $search).textFieldStyle(.plain)
                     if !search.isEmpty {
                         Button { search = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
                             .buttonStyle(PointerButtonStyle(base: .plain)).help(L10n.text("Очистить поиск", "Clear search"))
                     }
-                }.padding(10).background(DeskPalette.subtle, in: RoundedRectangle(cornerRadius: 10))
+                }.padding(.ui(10)).background(DeskPalette.subtle, in: RoundedRectangle(cornerRadius: 10))
                     .overlay(RoundedRectangle(cornerRadius: 10).stroke(DeskPalette.border))
-                    .padding(.horizontal, 12)
+                    .padding(.horizontal, .ui(12))
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: .ui(4)) {
                         if !model.state.visiblePinnedChats.isEmpty {
                             Text(L10n.text("Избранное", "Favorites"))
-                                .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                                .padding(.horizontal, 8).padding(.top, 8).padding(.bottom, 4)
+                                .font(.ui(.caption).weight(.semibold)).foregroundStyle(.secondary)
+                                .padding(.horizontal, .ui(8)).padding(.top, .ui(8)).padding(.bottom, .ui(4))
                             ForEach(model.state.visiblePinnedChats.filter { chat in
                                 (search.isEmpty || chat.title.localizedCaseInsensitiveContains(search)
                                     || model.state.projects.contains { $0.id == chat.projectID && ($0.name.localizedCaseInsensitiveContains(search) || $0.path.localizedCaseInsensitiveContains(search)) })
                             }) { chat in
                                 chatEntry(chat, favorite: true)
                             }
-                            Divider().padding(.vertical, 6)
+                            Divider().padding(.vertical, .ui(6))
                         }
                         Text(L10n.text("Проекты", "Projects"))
-                            .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                            .padding(.horizontal, 8).padding(.top, 8).padding(.bottom, 4)
+                            .font(.ui(.caption).weight(.semibold)).foregroundStyle(.secondary)
+                            .padding(.horizontal, .ui(8)).padding(.top, .ui(8)).padding(.bottom, .ui(4))
                         ForEach(model.state.visibleProjects.filter { project in
                             search.isEmpty || project.name.localizedCaseInsensitiveContains(search) || project.path.localizedCaseInsensitiveContains(search) || model.state.chats.contains { $0.projectID == project.id && !$0.isArchived && $0.title.localizedCaseInsensitiveContains(search) }
                         }) { project in
@@ -124,15 +143,28 @@ struct DeskView: View {
                         Button { model.openProject() } label: {
                             Label(L10n.text("Добавить проект…", "Add project…"), systemImage: "folder.badge.plus")
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal, 8).padding(.vertical, 10).contentShape(Rectangle())
+                                .padding(.horizontal, .ui(8)).padding(.vertical, .ui(10)).contentShape(Rectangle())
                         }.buttonStyle(PointerButtonStyle(base: .plain))
-                        Divider().padding(.vertical, 6)
-                        Button { model.showingArchive = false; model.showingJobs = true; Task { await model.refreshJobs() } } label: {
+                        Divider().padding(.vertical, .ui(6))
+                        Button { model.showingArchive = false; model.showingAttention = false; model.showingJobs = true; Task { await model.refreshJobs() } } label: {
                             Label(L10n.text("По расписанию", "Scheduled jobs"), systemImage: "calendar")
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal, 8).padding(.vertical, 10).contentShape(Rectangle())
+                                .padding(.horizontal, .ui(8)).padding(.vertical, .ui(10)).contentShape(Rectangle())
                         }.buttonStyle(PointerButtonStyle(base: .plain))
-                    }.padding(.horizontal, 12).padding(.bottom, 8)
+                        Button { model.openAttention() } label: {
+                            HStack {
+                                Label(L10n.text("Важное", "Important"), systemImage: model.openAttentionCount > 0 ? "exclamationmark.triangle.fill" : "exclamationmark.triangle")
+                                    .foregroundStyle(model.openAttentionCount > 0 ? AttentionPalette.accent : Color.primary)
+                                Spacer()
+                                if model.openAttentionCount > 0 {
+                                    Text("\(model.openAttentionCount)").font(.ui(.caption).weight(.bold)).foregroundStyle(.white)
+                                        .padding(.horizontal, .ui(7)).padding(.vertical, .ui(2)).background(AttentionPalette.accent, in: Capsule())
+                                }
+                            }
+                            .padding(.horizontal, .ui(8)).padding(.vertical, .ui(10)).contentShape(Rectangle())
+                            .background(model.showingAttention ? DeskPalette.selection : .clear, in: RoundedRectangle(cornerRadius: 8))
+                        }.buttonStyle(PointerButtonStyle(base: .plain))
+                    }.padding(.horizontal, .ui(12)).padding(.bottom, .ui(8))
                         // Legacy scrollers take layout width only while the list overflows; reserve it otherwise so rows keep their width.
                         .padding(.trailing, sidebarScrollerReserve)
                         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { sidebarContentHeight = $0 }
@@ -146,18 +178,19 @@ struct DeskView: View {
                 Button { limitsPlacement = limitsAnchor.placement; showingLimits = true } label: {
                     Label(L10n.text("Usage и лимиты", "Usage and limits"), systemImage: "chart.bar")
                         .frame(maxWidth: .infinity, alignment: .leading)
-                }.buttonStyle(DeskButtonStyle()).background(ScreenFrameReader(probe: limitsAnchor)).padding(.horizontal, 12).padding(.top, 10)
+                }.buttonStyle(DeskButtonStyle()).background(ScreenFrameReader(probe: limitsAnchor)).padding(.horizontal, .ui(12)).padding(.top, .ui(10))
                     .popover(isPresented: $showingLimits, arrowEdge: limitsPlacement.edge) {
                         AccountLimitsView(model: model, maxListHeight: limitsPlacement.listHeight)
                     }
                 HStack {
-                    Circle().fill(model.currentAgentConnected ? Color.primary : .secondary).frame(width: 6, height: 6)
-                    Text(model.currentAgent == .appClaude ? (model.claudeAuthenticated ? L10n.text("Claude · подключён", "Claude · connected") : L10n.text("Claude · вход не выполнен", "Claude · not signed in")) : (model.connecting ? L10n.text("Подключение…", "Connecting…") : model.accountLabel)).font(.caption).lineLimit(1)
+                    Circle().fill(model.currentAgentConnected ? Color.primary : .secondary).frame(width: .ui(6), height: .ui(6))
+                    Text(model.currentAgent == .appClaude ? (model.claudeAuthenticated ? L10n.text("Claude · подключён", "Claude · connected") : L10n.text("Claude · вход не выполнен", "Claude · not signed in")) : (model.connecting ? L10n.text("Подключение…", "Connecting…") : model.accountLabel)).font(.ui(.caption)).lineLimit(1)
                     Spacer()
                     SettingsLink { Image(systemName: "gearshape") }.buttonStyle(PointerButtonStyle(base: .plain))
-                }.padding(14)
+                }.padding(.ui(14))
             }.background(DeskPalette.sidebar)
-                .navigationSplitViewColumnWidth(min: 240, ideal: 285, max: 380)
+                .navigationSplitViewColumnWidth(min: .ui(240), ideal: .ui(285), max: .ui(380))
+                .background(SidebarWidthLimits(min: .ui(240), ideal: .ui(285), max: .ui(380)))
     }
     private var sidebarScrollerReserve: CGFloat {
         guard scrollerStyle == .legacy, sidebarContentHeight <= sidebarViewportHeight else { return 0 }
@@ -168,34 +201,43 @@ struct DeskView: View {
                 if let error = model.error {
                     HStack(alignment: .top) {
                         Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.blue)
-                        Text(error).font(.callout).textSelection(.enabled)
+                        Text(error).font(.ui(.callout)).textSelection(.enabled)
                         Spacer()
                         Button { model.error = nil } label: { Image(systemName: "xmark") }.buttonStyle(PointerButtonStyle(base: .plain)).help(L10n.text("Закрыть", "Close"))
                     }.padding().background(.blue.opacity(0.08))
                 }
                 if model.showingArchive {
                     ArchiveView(model: model)
+                } else if model.showingAttention {
+                    AttentionView(model: model)
                 } else if model.showingJobs {
                     JobsView(model: model)
                 } else if model.selectedProject == nil {
                     EmptyState(icon: "folder", title: L10n.text("С каким проектом работаем?", "Which project are we working on?"), text: L10n.text("Проект — это папка на компьютере. Добавь свои проекты, и чаты появятся под каждой папкой слева.", "A project is a folder on your computer. Add your projects, and chats will appear under each folder on the left."))
-                    Button(L10n.text("Добавить проект…", "Add project…")) { model.openProject() }.buttonStyle(DeskButtonStyle()).padding(.bottom, 60)
+                    Button(L10n.text("Добавить проект…", "Add project…")) { model.openProject() }.buttonStyle(DeskButtonStyle()).padding(.bottom, .ui(60))
                 } else { ChatView(model: model) }
-            }.navigationTitle(model.showingArchive ? L10n.text("Архив", "Archive") : model.showingJobs ? L10n.text("Расписание", "Schedule") : (model.selectedChat?.title ?? L10n.text("Новый чат", "New chat")))
-                .navigationSubtitle(model.showingArchive || model.showingJobs ? "" : model.selectedProject?.name ?? "")
+            }.navigationTitle(detailTitle)
+                .navigationSubtitle(detailSubtitle)
+                .modifier(ZoomedWindowTitle(title: detailTitle, subtitle: detailSubtitle))
+    }
+    private var detailTitle: String {
+        model.showingArchive ? L10n.text("Архив", "Archive") : model.showingAttention ? L10n.text("Важное", "Important") : model.showingJobs ? L10n.text("Расписание", "Schedule") : (model.selectedChat?.title ?? L10n.text("Новый чат", "New chat"))
+    }
+    private var detailSubtitle: String {
+        model.showingArchive || model.showingJobs || model.showingAttention ? "" : model.selectedProject?.name ?? ""
     }
     private var notificationsPanel: some View {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: .ui(16)) {
                 HStack {
-                    Label(L10n.text("Уведомления", "Notifications"), systemImage: "bell.fill").font(.headline).foregroundStyle(.blue)
+                    Label(L10n.text("Уведомления", "Notifications"), systemImage: "bell.fill").font(.ui(.headline)).foregroundStyle(.blue)
                     Spacer()
                     Button(L10n.text("Очистить", "Clear")) { model.notices.removeAll() }.disabled(model.notices.isEmpty)
                 }
                 Button(L10n.text("Включить уведомления macOS", "Enable macOS notifications")) { Task { await model.enableNotifications() } }
-                Text(model.notificationStatus).font(.caption).foregroundStyle(.secondary)
+                Text(model.notificationStatus).font(.ui(.caption)).foregroundStyle(.secondary)
                 if model.notices.isEmpty { Text(L10n.text("Новых уведомлений нет", "No new notifications")).foregroundStyle(.secondary).padding(.vertical) }
                 ScrollView {
-                    VStack(spacing: 8) {
+                    VStack(spacing: .ui(8)) {
                         ForEach(model.notices) { notice in
                             Button {
                                 showingNotifications = false
@@ -203,17 +245,17 @@ struct DeskView: View {
                             } label: {
                                 HStack(alignment: .top) {
                                     Image(systemName: "bubble.left.fill").foregroundStyle(.blue)
-                                    VStack(alignment: .leading, spacing: 5) {
+                                    VStack(alignment: .leading, spacing: .ui(5)) {
                                         Text(notice.title).fontWeight(.medium)
-                                        Text(notice.detail).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                                        Text(notice.detail).font(.ui(.caption)).foregroundStyle(.secondary).lineLimit(2)
                                     }
                                     Spacer()
-                                }.padding(12).background(.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+                                }.padding(.ui(12)).background(.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
                             }.buttonStyle(PointerButtonStyle(base: .plain))
                         }
                     }
                 }.frame(maxHeight: 320)
-            }.padding(20).frame(width: 350)
+            }.padding(.ui(20)).frame(width: .ui(350))
     }
     private func adjacentProjectMove(_ project: Project, offset: Int) -> (() -> Void)? {
         let projects = model.state.visibleProjects
@@ -226,7 +268,7 @@ struct DeskView: View {
     @ViewBuilder private func projectEntries(_ project: Project) -> some View {
         let isExpanded = search.isEmpty ? expandedProjects.contains(project.id) : !collapsedSearchProjects.contains(project.id)
         VStack(spacing: 0) {
-            HStack(spacing: 2) {
+            HStack(spacing: .ui(2)) {
                 ProjectHeader(project: project, expanded: isExpanded, activate: {
                     withAnimation(sidebarAnimation) {
                         if isExpanded {
@@ -248,31 +290,31 @@ struct DeskView: View {
                     else if dropTargetProjectID == project.id { dropTargetProjectID = nil }
                 }, moveUp: adjacentProjectMove(project, offset: -1), moveDown: adjacentProjectMove(project, offset: 1),
                    remove: { Task { await model.hideProject(project.id) } }) {
-                    HStack(spacing: 9) {
+                    HStack(spacing: .ui(9)) {
                         Image(systemName: "chevron.right")
-                            .font(.caption.weight(.semibold))
+                            .font(.ui(.caption).weight(.semibold))
                             .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                            .frame(width: 10, height: 16)
+                            .frame(width: .ui(10), height: .ui(16))
                             .foregroundStyle(.secondary)
                         Image(systemName: model.projectID == project.id ? "folder.fill" : "folder")
                         Text(project.name).fontWeight(.semibold).lineLimit(1)
                         Spacer(minLength: 0)
                         let projectChats = model.state.chats.filter { $0.projectID == project.id && !$0.isArchived }
                         if projectChats.contains(where: { chat in model.pending.contains { $0.threadID == chat.id } || model.restartWaitingChatIDs.contains(chat.id) }) {
-                            Circle().fill(.yellow).frame(width: 7, height: 7)
+                            Circle().fill(.yellow).frame(width: .ui(7), height: .ui(7))
                                 .help(L10n.text("Есть чаты, которые ждут действия или перезапуска", "Chats are waiting for action or a restart"))
                                 .accessibilityLabel(L10n.text("Есть чаты, которые ждут действия или перезапуска", "Chats are waiting for action or a restart"))
                         } else if projectChats.contains(where: \.hasUnreadResponse) {
-                            Circle().fill(.blue).frame(width: 7, height: 7)
+                            Circle().fill(.blue).frame(width: .ui(7), height: .ui(7))
                                 .help(L10n.text("Есть непрочитанные ответы", "Unread responses"))
                                 .accessibilityLabel(L10n.text("Есть непрочитанные ответы", "Unread responses"))
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .padding(.horizontal, .ui(8)).padding(.vertical, .ui(4))
                     .contentShape(Rectangle())
                 }
-                .frame(height: 32)
+                .frame(height: .ui(32))
 
                 Menu {
                     Button { startChat(in: project) } label: {
@@ -308,7 +350,7 @@ struct DeskView: View {
                     }
                     .help(L10n.text("Файлы и чаты сохранятся. Вернуть проект можно через «Добавить проект».", "Files and chats are kept. Restore it with Add project."))
                 } label: {
-                    Image(systemName: "ellipsis").frame(width: 28, height: 28).contentShape(Rectangle())
+                    Image(systemName: "ellipsis").frame(width: .ui(28), height: .ui(28)).contentShape(Rectangle())
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
@@ -318,25 +360,25 @@ struct DeskView: View {
                 .accessibilityLabel(L10n.text("Действия проекта: \(project.name)", "Project actions: \(project.name)"))
 
                 Button { startChat(in: project) } label: {
-                    Image(systemName: "square.and.pencil").frame(width: 28, height: 28).contentShape(Rectangle())
+                    Image(systemName: "square.and.pencil").frame(width: .ui(28), height: .ui(28)).contentShape(Rectangle())
                 }
                 .buttonStyle(PointerButtonStyle(base: .plain))
                 .help(L10n.text("Новый чат в проекте", "New chat in project"))
                 .accessibilityLabel(L10n.text("Новый чат в проекте \(project.name)", "New chat in \(project.name)"))
             }
-            .padding(.trailing, 4)
-            .frame(height: 32)
+            .padding(.trailing, .ui(4))
+            .frame(height: .ui(32))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(dropTargetProjectID == project.id ? Color.accentColor : .clear, lineWidth: 2).allowsHitTesting(false))
-            .background(model.projectID == project.id && model.chatID == nil && !model.showingJobs && !model.showingArchive ? DeskPalette.selection : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+            .background(model.projectID == project.id && model.chatID == nil && !model.showingJobs && !model.showingAttention && !model.showingArchive ? DeskPalette.selection : Color.clear, in: RoundedRectangle(cornerRadius: 8))
 
             SidebarDisclosure(isExpanded: isExpanded, animation: sidebarAnimation) {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: .ui(4)) {
                     let matching = model.state.orderedChats(projectID: project.id, archived: false).filter {
                         search.isEmpty || project.name.localizedCaseInsensitiveContains(search) || project.path.localizedCaseInsensitiveContains(search) || $0.title.localizedCaseInsensitiveContains(search)
                     }
                     chatEntries(matching, projectID: project.id)
                     if model.state.chats.allSatisfy({ $0.projectID != project.id || $0.isArchived }) {
-                        Text(L10n.text("Пока нет чатов", "No chats yet")).font(.caption).foregroundStyle(.secondary).padding(.leading, 24)
+                        Text(L10n.text("Пока нет чатов", "No chats yet")).font(.ui(.caption)).foregroundStyle(.secondary).padding(.leading, .ui(24))
                     }
                 }
             }
@@ -366,8 +408,8 @@ struct DeskView: View {
                 }
             } label: {
                 Label(L10n.text("Показать ещё", "Show more"), systemImage: "ellipsis")
-                    .font(.callout).foregroundStyle(.secondary)
-                    .padding(.leading, 16).padding(.vertical, 8)
+                    .font(.ui(.callout)).foregroundStyle(.secondary)
+                    .padding(.leading, .ui(16)).padding(.vertical, .ui(8))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
             }
@@ -464,7 +506,7 @@ struct DeskView: View {
     }
     private func chatBackground(_ chat: Chat, favorite: Bool) -> Color {
         if !favorite && selection.contains(chat.id) { return Color.accentColor.opacity(0.18) }
-        return model.chatID == chat.id && !model.showingJobs && !model.showingArchive ? DeskPalette.selection : .clear
+        return model.chatID == chat.id && !model.showingJobs && !model.showingAttention && !model.showingArchive ? DeskPalette.selection : .clear
     }
     private func archiveSelection() {
         // Archive in sidebar order so partial failures are predictable.
@@ -479,10 +521,10 @@ struct DeskView: View {
     }
     private var selectionBar: some View {
         let count = selection.ids.count
-        return HStack(spacing: 8) {
-            Text(L10n.text("Выбрано: \(count)", "Selected: \(count)")).font(.callout.weight(.medium))
+        return HStack(spacing: .ui(8)) {
+            Text(L10n.text("Выбрано: \(count)", "Selected: \(count)")).font(.ui(.callout).weight(.medium))
             Spacer(minLength: 0)
-            if archivingSelection { ProgressView().controlSize(.small) }
+            if archivingSelection { ProgressView().uiSmallSpinner() }
             Button { archiveSelection() } label: {
                 Label(L10n.text("В архив", "Archive"), systemImage: "archivebox")
             }.buttonStyle(DeskButtonStyle()).disabled(!canArchiveSelection)
@@ -492,59 +534,59 @@ struct DeskView: View {
                 .help(L10n.text("Снять выделение (Esc)", "Deselect all (Esc)"))
                 .accessibilityLabel(L10n.text("Снять выделение", "Deselect all"))
         }
-        .padding(10).background(DeskPalette.subtle, in: RoundedRectangle(cornerRadius: 10))
-        .padding(.horizontal, 12)
+        .padding(.ui(10)).background(DeskPalette.subtle, in: RoundedRectangle(cornerRadius: 10))
+        .padding(.horizontal, .ui(12))
     }
 
     private func chatLabel(_ chat: Chat, favorite: Bool) -> some View {
-            HStack(spacing: 8) {
+            HStack(spacing: .ui(8)) {
                 if !favorite && selection.contains(chat.id) {
                     Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.accentColor)
                         .accessibilityLabel(L10n.text("Выбран", "Selected"))
                 } else if chat.isArchived {
                     Image(systemName: "archivebox").foregroundStyle(.secondary)
                 }
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: .ui(3)) {
                     Text(chat.title)
                         .lineLimit(2, reservesSpace: true)
-                        .frame(height: 32, alignment: .leading)
+                        .frame(height: .ui(32), alignment: .leading)
                     if favorite, let project = model.state.projects.first(where: { $0.id == chat.projectID }) {
-                        Text(project.name).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                        Text(project.name).font(.ui(.caption2)).foregroundStyle(.secondary).lineLimit(1)
                             .help(project.path)
                     }
                 }
                 if model.runningBrowserChats[chat.id] != nil {
-                    Image(systemName: "globe").font(.caption2).foregroundStyle(.teal)
+                    Image(systemName: "globe").font(.ui(.caption2)).foregroundStyle(.teal)
                         .help(L10n.text("Браузер этого чата открыт. Показать его можно из контекстного меню чата или меню «Браузеры».",
                                         "This chat’s browser is open. Show it from the chat’s context menu or the Browsers menu."))
                         .accessibilityLabel(L10n.text("Браузер открыт", "Browser is open"))
                 }
                 if chat.isPinned {
-                    Image(systemName: "pin.fill").font(.caption2).foregroundStyle(.secondary)
+                    Image(systemName: "pin.fill").font(.ui(.caption2)).foregroundStyle(.secondary)
                         .accessibilityLabel(L10n.text("В избранном", "In favorites"))
                 }
                 Spacer(minLength: 0)
                 // Yellow: the chat waits for the user or for the app restart. Blue: an unread response.
                 if model.restartWaitingChatIDs.contains(chat.id) {
-                    Image(systemName: "arrow.clockwise.circle.fill").font(.caption).foregroundStyle(.yellow)
+                    Image(systemName: "arrow.clockwise.circle.fill").font(.ui(.caption)).foregroundStyle(.yellow)
                         .help(L10n.text("Ждёт перезапуска приложения", "Waiting for the app restart"))
                         .accessibilityLabel(L10n.text("Ждёт перезапуска приложения", "Waiting for the app restart"))
                 }
                 if model.pending.contains(where: { $0.threadID == chat.id }) {
-                    Circle().fill(.yellow).frame(width: 7, height: 7)
+                    Circle().fill(.yellow).frame(width: .ui(7), height: .ui(7))
                         .help(L10n.text("Требуется действие", "Action required"))
                         .accessibilityLabel(L10n.text("Требуется действие", "Action required"))
                 } else if chat.hasUnreadResponse {
-                    Circle().fill(.blue).frame(width: 7, height: 7)
+                    Circle().fill(.blue).frame(width: .ui(7), height: .ui(7))
                         .help(L10n.text("Непрочитанный ответ", "Unread response"))
                         .accessibilityLabel(L10n.text("Непрочитанный ответ", "Unread response"))
                 }
-                if model.isBusy(threadID: chat.id) { ProgressView().controlSize(.small) }
+                if model.isBusy(threadID: chat.id) { ProgressView().uiSmallSpinner() }
                 else if let notice = model.backgroundWaitNotice(chat.id) {
-                    Image(systemName: "hourglass").font(.caption).foregroundStyle(.secondary)
+                    Image(systemName: "hourglass").font(.ui(.caption)).foregroundStyle(.secondary)
                         .help(notice).accessibilityLabel(notice)
                 }
-            }.font(.callout).padding(.horizontal, 16).padding(.vertical, 4)
+            }.font(.ui(.callout)).padding(.horizontal, .ui(16)).padding(.vertical, .ui(4))
                 .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
     }
 
@@ -589,9 +631,44 @@ private struct SidebarDisclosureLayout: Layout {
     }
 }
 
+/// Reads the dropped file URLs from the drag pasteboard while the drop is still on. Item providers resolve
+/// after the drag ends, and a screenshot thumbnail deletes its temporary file by then, so the first drop was lost.
+private struct ChatFileDrop: DropDelegate {
+    let enabled: Bool
+    @Binding var targeted: Bool
+    let add: ([URL]) -> Void
+    func validateDrop(info: DropInfo) -> Bool { enabled && info.hasItemsConforming(to: [.fileURL]) }
+    func dropEntered(info: DropInfo) { targeted = true }
+    func dropExited(info: DropInfo) { targeted = false }
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: enabled ? .copy : .forbidden) }
+    func performDrop(info: DropInfo) -> Bool {
+        targeted = false
+        guard enabled else { return false }
+        let pasteboard = NSPasteboard(name: .drag)
+        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !urls.isEmpty {
+            add(urls)
+            return true
+        }
+        // Fallback for sources that only answer through item providers; keeps the drop order.
+        let providers = info.itemProviders(for: [.fileURL])
+        guard !providers.isEmpty else { return false }
+        Task { @MainActor in
+            var urls: [URL] = []
+            for provider in providers {
+                let url: URL? = await withCheckedContinuation { done in
+                    _ = provider.loadObject(ofClass: URL.self) { url, _ in done.resume(returning: url) }
+                }
+                if let url { urls.append(url) }
+            }
+            add(urls)
+        }
+        return true
+    }
+}
+
 struct DeskButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label.font(.callout.weight(.medium)).padding(.horizontal, 14).padding(.vertical, 10)
+        configuration.label.font(.ui(.callout).weight(.medium)).padding(.horizontal, .ui(14)).padding(.vertical, .ui(10))
             .background(configuration.isPressed ? DeskPalette.selection : DeskPalette.subtle, in: RoundedRectangle(cornerRadius: 12))
             .contentShape(RoundedRectangle(cornerRadius: 12))
             .pointingHandCursor()
@@ -605,6 +682,7 @@ struct ChatView: View {
     @State private var composerFocused = false
     @State private var composerHeight: CGFloat = 22
     @State private var handoff: ContextHandoff?
+    @State private var fileDropTargeted = false
     /// Files opened from answers in the preview pane, with back/forward history.
     @StateObject private var preview = DocumentPreviewSession()
     /// Composer column: the transcript's readable text width (magnified with the interface zoom) plus the composer's side insets.
@@ -613,7 +691,7 @@ struct ChatView: View {
         VStack(spacing: 0) {
             if !model.currentAgentAuthenticated {
                 HStack {
-                    Text(model.currentAgent == .appClaude ? L10n.text("Войди по подписке Claude в отдельный профиль приложения.", "Sign in with your Claude subscription in the app’s separate profile.") : L10n.text("Войди через ChatGPT, чтобы начать чат.", "Sign in with ChatGPT to start a chat.")).font(.callout)
+                    Text(model.currentAgent == .appClaude ? L10n.text("Войди по подписке Claude в отдельный профиль приложения.", "Sign in with your Claude subscription in the app’s separate profile.") : L10n.text("Войди через ChatGPT, чтобы начать чат.", "Sign in with ChatGPT to start a chat.")).font(.ui(.callout))
                     Spacer()
                     Button(model.currentAgentConnected ? L10n.text("Войти", "Sign in") : L10n.text("Подключиться", "Connect")) { Task { await model.loginCurrentAgent() } }
                         .buttonStyle(DeskButtonStyle()).disabled(model.connecting || model.claudeConnecting)
@@ -623,13 +701,13 @@ struct ChatView: View {
                 }.padding()
             }
             if let notice = model.localHistoryNotice {
-                Text(notice).font(.caption).foregroundStyle(.secondary)
+                Text(notice).font(.ui(.caption)).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 24).padding(.vertical, 8)
             }
             if let origin = model.selectedChat?.handoffOrigin {
                 HStack {
                     Text(L10n.text("Контекст из чата", "Context from chat") + ": " + origin.conversation.value)
-                        .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                        .font(.ui(.caption)).foregroundStyle(.secondary).textSelection(.enabled)
                     Button(L10n.text("Вернуть исходный контекст в черновик", "Restore initial context to draft")) { Task { await model.restoreHandoffDraft() } }.disabled(!model.draft.isEmpty)
                 }.padding(.horizontal, 24)
             }
@@ -647,13 +725,13 @@ struct ChatView: View {
             }
             if let chat = model.selectedChat, chat.isScheduledRecord, !model.selectedChatIsArchived {
                 Label(DeskModel.scheduledRecordFollowUpNotice, systemImage: "clock.arrow.circlepath")
-                    .font(.callout).foregroundStyle(.secondary)
+                    .font(.ui(.callout)).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 24).padding(.vertical, 8)
             }
             if let chat = model.selectedChat { SubagentsBar(model: model, chatID: chat.id) }
             if let chat = model.selectedChat, let notice = model.backgroundWaitNotice(chat.id) {
                 Label(notice, systemImage: "hourglass")
-                    .font(.callout).foregroundStyle(.secondary)
+                    .font(.ui(.callout)).foregroundStyle(.secondary)
                     .frame(maxWidth: columnWidth, alignment: .leading).padding(.horizontal, 24).padding(.vertical, 8)
             }
             if model.selectedChatIsArchived, let chat = model.selectedChat {
@@ -673,12 +751,12 @@ struct ChatView: View {
                         if model.queuePaused && model.priorityMessageID == nil {
                             Button(L10n.text("Продолжить", "Resume")) { model.resumeQueue() }.disabled(model.busy || !model.connected || model.selectedChatIsArchived || model.selectedChat.map { model.isChangingChat($0.id) } == true)
                         }
-                    }.font(.caption)
+                    }.font(.ui(.caption))
                     ScrollView {
                         VStack(spacing: 6) {
                             ForEach(model.visibleQueue) { message in
                                 HStack(alignment: .center, spacing: 12) {
-                                    Text(message.text).font(.callout).lineLimit(3)
+                                    Text(message.text).font(.ui(.callout)).lineLimit(3)
                                         .frame(maxWidth: .infinity, alignment: .leading).help(message.text)
                                     Button {
                                         Task { await model.sendQueuedMessageNow(message.id) }
@@ -725,7 +803,7 @@ struct ChatView: View {
                             .help(L10n.text("Провайдер нового чата", "Provider for the new chat"))
                     } else {
                         ChipLabel(title: model.currentAgentName, systemImage: "sparkle")
-                            .font(.callout).foregroundStyle(.secondary).padding(.horizontal, 9)
+                            .font(.ui(.callout)).foregroundStyle(.secondary).padding(.horizontal, 9)
                             .help(L10n.text("Провайдер этого чата", "Provider for this chat"))
                     }
                     if model.currentAgent == .appClaude {
@@ -757,13 +835,13 @@ struct ChatView: View {
                     // One round control: stop while a response runs and nothing is typed, otherwise send or queue.
                     if model.busy && model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         Button { Task { await model.interrupt() } } label: {
-                            Image(systemName: "stop.fill").font(.system(size: 11)).frame(width: 32, height: 32)
+                            Image(systemName: "stop.fill").font(.ui(size: 11)).frame(width: 32, height: 32)
                                 .foregroundStyle(.white).background(DeskPalette.ink, in: Circle())
                         }.buttonStyle(PointerButtonStyle(base: .plain)).padding(.leading, 6)
                             .help(L10n.text("Остановить ответ", "Stop response")).accessibilityLabel(L10n.text("Остановить ответ", "Stop response"))
                     } else {
                         Button { Task { await model.send() } } label: {
-                            Image(systemName: "arrow.up").font(.system(size: 14, weight: .semibold)).frame(width: 32, height: 32)
+                            Image(systemName: "arrow.up").font(.ui(size: 14, weight: .semibold)).frame(width: 32, height: 32)
                                 .foregroundStyle(.white)
                                 .background(DeskPalette.ink.opacity(model.canSend ? 1 : 0.2), in: Circle())
                         }.buttonStyle(PointerButtonStyle(base: .plain)).keyboardShortcut(.return, modifiers: .command).disabled(!model.canSend).padding(.leading, 6)
@@ -788,10 +866,21 @@ struct ChatView: View {
                 }.buttonStyle(PointerButtonStyle(base: .plain)).popover(isPresented: $showingUsage) { UsageDetail(usage: model.currentUsage, claude: model.currentAgent == .appClaude).padding(20).frame(width: 330) }
                 Spacer()
                 Toggle(L10n.text("Следить за ответом", "Follow response"), isOn: $followOutput).toggleStyle(.checkbox).pointingHandCursor()
-            }.font(.caption2).foregroundStyle(.secondary).padding(.horizontal, 12)
+            }.font(.ui(.caption2)).foregroundStyle(.secondary).padding(.horizontal, 12)
                 .frame(maxWidth: columnWidth).padding(.horizontal, 24).padding(.top, 8).padding(.bottom, 12)
         }
         .background(DeskPalette.canvas)
+        // The whole chat accepts dropped files, such as a screenshot thumbnail, and adds their paths to the draft.
+        .onDrop(of: [.fileURL], delegate: ChatFileDrop(enabled: !model.selectedChatIsArchived, targeted: $fileDropTargeted) { model.addDroppedFiles($0) })
+        .overlay {
+            if fileDropTargeted && !model.selectedChatIsArchived {
+                RoundedRectangle(cornerRadius: 16).fill(DeskPalette.subtle.opacity(0.6))
+                    .overlay(RoundedRectangle(cornerRadius: 16).stroke(DeskPalette.focusBorder, style: StrokeStyle(lineWidth: 2, dash: [8, 6])))
+                    .overlay(Label(L10n.text("Отпусти, чтобы добавить путь к файлу в сообщение", "Drop to add the file path to the message"), systemImage: "photo.badge.plus")
+                        .font(.ui(.title3).weight(.medium)).foregroundStyle(.secondary))
+                    .padding(12).allowsHitTesting(false)
+            }
+        }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 if let chat = model.selectedChat {
@@ -805,8 +894,8 @@ struct ChatView: View {
                             .id(session.nativeID)
                     }
                     if model.preparingHandoff {
-                        ProgressView().controlSize(.small)
-                        Text(model.handoffProgress).font(.caption).lineLimit(1)
+                        ProgressView().uiSmallSpinner()
+                        Text(model.handoffProgress).font(.ui(.caption)).lineLimit(1)
                         Button(L10n.text("Отмена", "Cancel")) { Task { await model.cancelHandoffPreparation() } }
                     }
                     Button { Task { handoff = await model.prepareHandoff(chat) } } label: {
@@ -826,13 +915,24 @@ struct ChatView: View {
                 projectID: model.state.chats.first(where: { $0.id == value.origin.conversation.value })?.projectID,
                 route: model.state.chats.first(where: { $0.id == value.origin.conversation.value })?.route ?? model.defaultRoute)
         }
-        .inspector(isPresented: Binding(get: { preview.current != nil }, set: { if !$0 { preview.close() } })) {
-            if let current = preview.current {
+        // Expanding moves the preview out of the inspector, so hiding the inspector then must not close it.
+        .inspector(isPresented: Binding(get: { preview.current != nil && !preview.expanded },
+                                        set: { if !$0 && !preview.expanded { preview.close() } })) {
+            if let current = preview.current, !preview.expanded {
                 DocumentPreviewView(session: preview, model: current)
                     .id(current.id)
                     .inspectorColumnWidth(min: 320, ideal: 520, max: 1100)
             }
         }
+        .overlay {
+            if preview.expanded, let current = preview.current {
+                DocumentPreviewView(session: preview, model: current)
+                    .id(current.id)
+                    .background(DeskPalette.canvas)
+            }
+        }
+        .onChange(of: preview.expanded) { _, expanded in model.documentExpanded = expanded }
+        .onDisappear { model.documentExpanded = false }
     }
 
     private func openPreview(_ url: URL, line: Int?) {
@@ -883,14 +983,14 @@ struct MessageRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             if item.kind == "user" { Spacer(minLength: 70) }
-            else { Image(systemName: "sparkle").font(.title3).padding(.top, 4).accessibilityHidden(true) }
+            else { Image(systemName: "sparkle").font(.ui(.title3)).padding(.top, 4).accessibilityHidden(true) }
             VStack(alignment: .leading, spacing: 10) {
-                Text(item.kind == "user" ? L10n.text("Ты", "You") : (item.agentName ?? "Codex")).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                Text(item.kind == "user" ? L10n.text("Ты", "You") : (item.agentName ?? "Codex")).font(.ui(.caption).weight(.semibold)).foregroundStyle(.secondary)
                 MessageText(text: item.text)
                 Button {
                     NSPasteboard.general.clearContents(); NSPasteboard.general.setString(item.text, forType: .string)
                     copied = true
-                } label: { Label(copied ? L10n.text("Скопировано", "Copied") : L10n.text("Копировать", "Copy"), systemImage: copied ? "checkmark" : "doc.on.doc").font(.caption2) }
+                } label: { Label(copied ? L10n.text("Скопировано", "Copied") : L10n.text("Копировать", "Copy"), systemImage: copied ? "checkmark" : "doc.on.doc").font(.ui(.caption2)) }
                     .buttonStyle(PointerButtonStyle(base: .plain)).foregroundStyle(.secondary)
             }.padding(item.kind == "user" ? 16 : 0)
                 .background(item.kind == "user" ? Color(nsColor: DeskPalette.outgoingBubble) : .clear, in: RoundedRectangle(cornerRadius: 20))
@@ -913,7 +1013,7 @@ struct UsageDetail: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(L10n.text("Контекст и токены", "Context and tokens")).font(.headline)
+            Text(L10n.text("Контекст и токены", "Context and tokens")).font(.ui(.headline))
             if let usage {
                 LabeledContent(L10n.text("Последний запрос", "Last request"), value: usage.last.map(String.init) ?? L10n.text("Нет данных", "No data"))
                 LabeledContent(L10n.text("Окно контекста", "Context window"), value: usage.window.map(String.init) ?? L10n.text("Нет данных", "No data"))
@@ -921,10 +1021,10 @@ struct UsageDetail: View {
                 LabeledContent(L10n.text("Входные за разговор", "Conversation input"), value: usage.input.map(String.init) ?? L10n.text("Нет данных", "No data"))
                 LabeledContent(L10n.text("Из них из кэша", "Cached input"), value: usage.cached.map(String.init) ?? L10n.text("Нет данных", "No data"))
                 LabeledContent(L10n.text("Выходные", "Output"), value: usage.output.map(String.init) ?? L10n.text("Нет данных", "No data"))
-                Text(L10n.text("Измерено: \(L10n.date(usage.measuredAt))", "Measured: \(L10n.date(usage.measuredAt))")).font(.caption)
+                Text(L10n.text("Измерено: \(L10n.date(usage.measuredAt))", "Measured: \(L10n.date(usage.measuredAt))")).font(.ui(.caption))
             } else { Text(claude ? L10n.text("Показатели появятся после ответа Claude.", "Metrics will appear after Claude responds.") : L10n.text("Показатели появятся после ответа Codex.", "Metrics will appear after Codex responds.")) }
             Text(L10n.text("Процент — оценка по последнему событию, а не точный порог сжатия. Кэш уже входит во входные токены. Эти числа не равны расходу лимита подписки.", "The percentage is an estimate from the latest event, not an exact compaction threshold. Cached tokens are included in input tokens. These numbers do not represent subscription usage."))
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.ui(.caption)).foregroundStyle(.secondary)
         }
     }
 }
@@ -936,7 +1036,7 @@ struct MessageText: View {
         VStack(alignment: .leading, spacing: 10) {
             ForEach(Array(blocks.enumerated()), id: \.offset) { index, block in
                 if index % 2 == 1 {
-                    ScrollView(.horizontal) { Text(block).font(.system(.callout, design: .monospaced)).textSelection(.enabled).padding(12) }
+                    ScrollView(.horizontal) { Text(block).font(.ui(.callout, design: .monospaced)).textSelection(.enabled).padding(12) }
                         .background(.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
                 } else {
                     Text((try? AttributedString(markdown: block, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(block))
@@ -954,9 +1054,9 @@ struct EmptyState: View {
     var icon: String; var title: String; var text: String
     var body: some View {
         VStack(spacing: 14) {
-            Image(systemName: icon).font(.system(size: 32, weight: .light)).foregroundStyle(.secondary)
-            Text(title).font(.title2.weight(.medium))
-            Text(text).font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            Image(systemName: icon).font(.ui(size: 32, weight: .light)).foregroundStyle(.secondary)
+            Text(title).font(.ui(.title2).weight(.medium))
+            Text(text).font(.ui(.callout)).foregroundStyle(.secondary).multilineTextAlignment(.center)
         }.padding(32).frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
@@ -966,17 +1066,17 @@ struct JobDetail: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                Text(job.name).font(.title2.bold())
+                Text(job.name).font(.ui(.title2).bold())
                 Label(L10n.text("Исходное задание · ещё не управляется Context Desk", "Source task · not yet managed by Context Desk"), systemImage: "eye").foregroundStyle(.secondary)
                 LabeledContent(L10n.text("Состояние", "Status"), value: job.status == "ACTIVE" ? L10n.text("Включено", "Enabled") : job.status == "PAUSED" ? L10n.text("Приостановлено", "Paused") : L10n.text("Неизвестно", "Unknown"))
                 LabeledContent(L10n.text("Тип", "Type"), value: job.kind)
-                VStack(alignment: .leading, spacing: 8) { Text(L10n.text("Расписание", "Schedule")).font(.headline); Text(job.schedule).textSelection(.enabled) }
-                Text(L10n.text("Часовой пояс и результаты запусков здесь не проверены.", "The time zone and run results have not been verified here.")).font(.caption).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 8) { Text(L10n.text("Расписание", "Schedule")).font(.ui(.headline)); Text(job.schedule).textSelection(.enabled) }
+                Text(L10n.text("Часовой пояс и результаты запусков здесь не проверены.", "The time zone and run results have not been verified here.")).font(.ui(.caption)).foregroundStyle(.secondary)
                 if let issue = job.issue { Label(issue, systemImage: "exclamationmark.triangle").foregroundStyle(.orange) }
                 Divider()
-                Text(L10n.text("Задание", "Task")).font(.headline)
+                Text(L10n.text("Задание", "Task")).font(.ui(.headline))
                 Text(job.prompt).textSelection(.enabled)
-                if let thread = job.targetThread { Text(L10n.text("Исходный чат: \(thread)", "Source chat: \(thread)")).font(.caption).foregroundStyle(.secondary).textSelection(.enabled) }
+                if let thread = job.targetThread { Text(L10n.text("Исходный чат: \(thread)", "Source chat: \(thread)")).font(.ui(.caption)).foregroundStyle(.secondary).textSelection(.enabled) }
             }.padding(28).frame(maxWidth: .infinity, alignment: .leading)
         }
     }
@@ -1029,14 +1129,15 @@ struct SettingsView: View {
                 }
                 if selectedLanguage != L10n.language.rawValue {
                     Text("Чтобы применить язык, выйди через ⌘Q и открой приложение снова.\nTo apply the language, quit with ⌘Q and reopen the app.")
-                        .font(.callout).foregroundStyle(.secondary)
+                        .font(.ui(.callout)).foregroundStyle(.secondary)
                 } else {
                     Text(L10n.text("Новый язык применяется после перезапуска приложения.", "Language changes take effect after restarting the app."))
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.ui(.caption)).foregroundStyle(.secondary)
                 }
             }
+            InterfaceZoomSettings()
             Section(L10n.text("Уведомления", "Notifications")) {
-                Text(model.notificationStatus).font(.callout)
+                Text(model.notificationStatus).font(.ui(.callout))
                 Button(L10n.text("Разрешить уведомления", "Allow notifications")) { Task { await model.enableNotifications() } }
             }
             KeepAwakeSettings(controller: keepAwake)
@@ -1055,7 +1156,7 @@ struct SettingsView: View {
             Section(L10n.text("Подписка Claude", "Claude subscription")) {
                 Text(model.claudeAuthenticated ? L10n.text("Вход выполнен", "Signed in") : L10n.text("Вход не выполнен", "Not signed in"))
                 Text(L10n.text("Официальный Claude Code 2.1.260. Вход открывается в Terminal, в отдельном профиле Context Desk. После входа нажми «Проверить вход». Существующий профиль Claude Code не изменяется.", "Official Claude Code 2.1.260. Sign-in opens in Terminal using a separate Context Desk profile. Afterwards, click Check sign-in. Your existing Claude Code profile is unchanged."))
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.ui(.caption)).foregroundStyle(.secondary)
                 Button(L10n.text("Войти по подписке Claude", "Sign in with Claude subscription")) { Task { await model.loginClaude() } }.disabled(model.anyBusy || model.claudeConnecting)
                 Button(L10n.text("Проверить вход", "Check sign-in")) { Task { if model.claudeConnected { await model.refreshClaudeAccount() } else { await model.connectClaude() } } }.disabled(model.claudeConnecting)
                 if model.claudeAuthenticated {
@@ -1071,12 +1172,12 @@ struct SettingsView: View {
                 Toggle(L10n.text("Использовать Chrome DevTools", "Use Chrome DevTools"),
                        isOn: Binding(get: { model.state.browserEnabled == true }, set: { model.selectBrowserEnabled($0) }))
                 Text(L10n.text("У каждого чата свой Chrome for Testing и сохранённый профиль. Чаты работают параллельно. В меню «Браузер» можно импортировать входы из выбранного профиля Chrome или войти на сайты вручную. Браузеры остаются открытыми после переподключения.", "Each chat has its own Chrome for Testing and saved profile. Chats work in parallel. Use the Browser menu to import sign-ins from a selected Chrome profile, or sign in manually. Browsers stay open after reconnecting."))
-                    .font(.callout).foregroundStyle(.secondary)
+                    .font(.ui(.callout)).foregroundStyle(.secondary)
                 Picker(L10n.text("Одновременно открытых браузеров", "Simultaneously open browsers"), selection: $parallelBrowserLimit) {
                     ForEach(1...8, id: \.self) { Text(String($0)).tag($0) }
                 }
                 Text(L10n.text("По умолчанию — 2. При достижении лимита заверши неиспользуемый Chrome через Cmd+Q. Новый лимит применяется после переподключения; открытые браузеры автоматически не закрываются.", "Default: 2. At the limit, quit an unused Chrome with Cmd+Q. Apply the new limit by reconnecting; open browsers are never closed automatically."))
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.ui(.caption)).foregroundStyle(.secondary)
                 Button(L10n.text("Инструкция по установке", "Installation instructions")) {
                     if let resources = Bundle.main.resourceURL {
                         NSWorkspace.shared.open(resources.appendingPathComponent("BrowserRuntime/README.md"))
@@ -1087,18 +1188,18 @@ struct SettingsView: View {
                 }.disabled(model.anyBusy || model.connecting)
                 if model.anyBusy {
                     Text(L10n.text("Кнопка недоступна, пока выполняются задачи в чатах или фоновая обработка. Дождись их завершения либо останови нужную задачу в её чате, затем примени настройку. Текущие действия браузера автоматически не повторяются.", "This button is unavailable while chats or background tasks are running. Wait for them to finish or stop the relevant task in its chat, then apply the setting. Browser actions are not automatically replayed."))
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.ui(.caption)).foregroundStyle(.secondary)
                 }
                 Text(L10n.text("Применяется при переподключении Codex после завершения текущих задач. Браузер открывается при первом обращении агента.", "Takes effect when Codex reconnects after current tasks finish. The browser opens on the agent’s first browser request."))
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.ui(.caption)).foregroundStyle(.secondary)
             }
             Section(L10n.text("Мой Chrome", "My Chrome")) {
                 Toggle(L10n.text("Разрешить чатам Claude управлять моим Chrome", "Let Claude chats control my Chrome"),
                        isOn: Binding(get: { model.state.userChromeEnabled != false }, set: { model.selectUserChromeEnabled($0) }))
                 Text(L10n.text("Чаты Claude с полным доступом получают инструменты расширения Claude in Chrome: агент открывает свои вкладки в твоём обычном Chrome с твоими входами на сайты и может загружать файлы. Нужны расширение Claude in Chrome, вход в нём в тот же аккаунт Claude, что и в Context Desk, и открытый Chrome. Пока агент работает, Chrome показывает полосу об отладке. Запланированные задачи и чаты Codex этот путь не используют.", "Full-access Claude chats get the Claude in Chrome extension tools: the agent opens its own tabs in your regular Chrome with your site sign-ins and can upload files. Requires the Claude in Chrome extension signed in to the same Claude account as Context Desk, and Chrome running. While the agent works, Chrome shows a debugging bar. Scheduled tasks and Codex chats do not use this path."))
-                    .font(.callout).foregroundStyle(.secondary)
+                    .font(.ui(.callout)).foregroundStyle(.secondary)
                 Text(L10n.text("Применяется переподключением Claude сразу после переключения, если ни один чат Claude не выполняет задачу. Иначе переключи настройку ещё раз, когда задачи завершатся.", "Applied by reconnecting Claude right after the switch, if no Claude chat is running a task. Otherwise switch it again once those tasks finish."))
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.ui(.caption)).foregroundStyle(.secondary)
             }
         }.formStyle(.grouped)
     }
@@ -1107,31 +1208,31 @@ struct SettingsView: View {
         Form {
             Section(L10n.text("Плагины", "Plugins")) {
                 Text(L10n.text("Плагины дополнительно обрабатывают запросы Codex. Они необязательны: выбери «Без плагина», чтобы работать напрямую.", "Plugins add processing to Codex requests. They are optional: choose No plugin to work directly."))
-                    .font(.callout).foregroundStyle(.secondary)
+                    .font(.ui(.callout)).foregroundStyle(.secondary)
                 Picker(L10n.text("Для новых чатов", "For new chats"), selection: Binding(get: { model.defaultRoute }, set: { model.selectDefaultRoute($0) })) {
                     ForEach(model.availableRoutes, id: \.self) { route in
                         Text(model.routeTitle(route)).tag(route).disabled(model.routeCompatibilityIssue(route) != nil)
                     }
                 }.pointingHandCursor()
-                Text(model.routeMessage(model.defaultRoute)).font(.callout).foregroundStyle(.secondary)
+                Text(model.routeMessage(model.defaultRoute)).font(.ui(.callout)).foregroundStyle(.secondary)
                 Button(model.connecting ? L10n.text("Подключение…", "Connecting…") : L10n.text("Применить выбор", "Apply selection")) {
                     Task { await model.connect() }
                 }.disabled(model.anyBusy || model.connecting)
                 Text(L10n.text("Переподключает Codex, чтобы запустить выбранные плагины. Дождись завершения текущих задач. Существующие чаты сохраняют свой выбор плагина.", "Reconnects Codex to start the selected plugins. Wait for current tasks to finish. Existing chats keep their plugin selection."))
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.ui(.caption)).foregroundStyle(.secondary)
                 if model.plugins.isEmpty {
                     Text(L10n.text("Плагины пока не установлены. Codex может работать без них.", "No plugins installed yet. Codex can work without them."))
-                        .font(.callout).foregroundStyle(.secondary)
+                        .font(.ui(.callout)).foregroundStyle(.secondary)
                 }
                 ForEach(model.plugins) { plugin in
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("\(plugin.manifest.localizedTitle()) · \(plugin.manifest.version)").font(.headline)
+                        Text("\(plugin.manifest.localizedTitle()) · \(plugin.manifest.version)").font(.ui(.headline))
                         if let description = plugin.manifest.descriptionTranslations {
-                            Text(description.text()).font(.callout).foregroundStyle(.secondary)
+                            Text(description.text()).font(.ui(.callout)).foregroundStyle(.secondary)
                         }
-                        Text(model.routeMessage(plugin.route)).font(.caption).foregroundStyle(.secondary)
-                        Text("Codex: " + OptimizerCompatibility.summary(agent: .codex, requirements: plugin.manifest.requirements)).font(.caption)
-                        Text("Claude Code: " + OptimizerCompatibility.summary(agent: .claudeCode, requirements: plugin.manifest.requirements)).font(.caption).foregroundStyle(.secondary)
+                        Text(model.routeMessage(plugin.route)).font(.ui(.caption)).foregroundStyle(.secondary)
+                        Text("Codex: " + OptimizerCompatibility.summary(agent: .codex, requirements: plugin.manifest.requirements)).font(.ui(.caption))
+                        Text("Claude Code: " + OptimizerCompatibility.summary(agent: .claudeCode, requirements: plugin.manifest.requirements)).font(.ui(.caption)).foregroundStyle(.secondary)
                         if let status = model.pluginStatuses[plugin.id] {
                             ForEach(status.metrics) { metric in
                                 LabeledContent(metric.localizedTitle(), value: String(metric.value))
@@ -1139,7 +1240,7 @@ struct SettingsView: View {
                         }
                     }
                 }
-                ForEach(model.pluginIssues, id: \.self) { Text($0).font(.caption).foregroundStyle(.orange) }
+                ForEach(model.pluginIssues, id: \.self) { Text($0).font(.ui(.caption)).foregroundStyle(.orange) }
                 Button(L10n.text("Обновить список", "Refresh list")) { model.refreshPlugins() }.disabled(model.anyBusy || model.connecting)
                 Button(L10n.text("Открыть папку плагинов", "Open plugins folder")) {
                     do {
@@ -1148,7 +1249,7 @@ struct SettingsView: View {
                     } catch { model.error = error.localizedDescription }
                 }
                 Text(L10n.text("Установи плагин с помощью его установщика, затем нажми «Обновить список».", "Use the plugin's installer, then click Refresh list."))
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.ui(.caption)).foregroundStyle(.secondary)
             }
         }.formStyle(.grouped)
     }
@@ -1170,11 +1271,11 @@ struct SettingsView: View {
                     Label(L10n.text("Открыть архив", "Open archive"), systemImage: "archivebox")
                 }
                 Text(L10n.text("Просматривай и восстанавливай архивные чаты всех проектов.", "Browse and restore archived chats from all projects."))
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.ui(.caption)).foregroundStyle(.secondary)
             }
             Section(L10n.text("Данные", "Data")) {
                 Text(L10n.text("Разговоры и настройки этого приложения хранятся отдельно от текущего Codex.", "This app’s conversations and settings are stored separately from your existing Codex setup."))
-                    .font(.callout).foregroundStyle(.secondary)
+                    .font(.ui(.callout)).foregroundStyle(.secondary)
                 Button(L10n.text("Открыть папку данных", "Open data folder")) { NSWorkspace.shared.open(Locations.root) }
             }
         }.formStyle(.grouped)

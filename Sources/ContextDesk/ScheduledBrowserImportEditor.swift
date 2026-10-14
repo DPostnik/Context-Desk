@@ -1,3 +1,4 @@
+import ContextTranscript
 import SwiftUI
 import ContextCore
 
@@ -11,10 +12,10 @@ struct ScheduledBrowserImportEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(L10n.text("Автоматическое восстановление входа", "Automatic sign-in recovery")).font(.headline)
+            Text(L10n.text("Автоматическое восстановление входа", "Automatic sign-in recovery")).font(.ui(.headline))
             Text(L10n.text("Разрешение сохраняется у задания и применяется к каждому новому запуску. Агент сам импортирует cookies при отсутствии входа. Обычный Chrome можно не закрывать; Связка ключей может потребовать подтверждения.",
                            "Permission is saved with the task and applied to every new run. The agent imports cookies when sign-in is missing. Regular Chrome can stay open; Keychain may require confirmation."))
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.ui(.caption)).foregroundStyle(.secondary)
             Picker(L10n.text("Профиль Chrome", "Chrome profile"), selection: $selection) {
                 ForEach(profiles) { Text($0.name + " (" + $0.id + ")").tag($0.id) }
             }
@@ -28,9 +29,9 @@ struct ScheduledBrowserImportEditor: View {
                 Button(L10n.text("Отключить", "Disable")) { policy = nil }.disabled(policy == nil)
             }
             if let policy {
-                Text(L10n.text("Разрешено после сохранения задания: ", "Allowed when the task is saved: ") + (policy.coversAnySite ? L10n.text("любой сайт", "any site") : policy.site) + " · " + policy.profile).font(.caption)
+                Text(L10n.text("Разрешено после сохранения задания: ", "Allowed when the task is saved: ") + (policy.coversAnySite ? L10n.text("любой сайт", "any site") : policy.site) + " · " + policy.profile).font(.ui(.caption))
             }
-            if let error { Text(error).font(.caption).foregroundStyle(.red) }
+            if let error { Text(error).font(.ui(.caption)).foregroundStyle(.red) }
         }.task {
             if let policy {
                 anySite = policy.coversAnySite

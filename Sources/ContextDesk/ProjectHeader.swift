@@ -112,7 +112,7 @@ class SidebarRowView: NSView, NSDraggingSource {
         NSColor.windowBackgroundColor.setFill()
         NSBezierPath(roundedRect: bounds, xRadius: 8, yRadius: 8).fill()
         (title as NSString).draw(at: NSPoint(x: 12, y: max(0, bounds.midY - 8)),
-                                withAttributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.labelColor])
+                                withAttributes: [.font: NSFont.systemFont(ofSize: InterfaceZoom.shared.scaled(13)), .foregroundColor: NSColor.labelColor])
         image.unlockFocus()
         item.setDraggingFrame(bounds, contents: image)
         beginDraggingSession(with: [item], event: event, source: self)

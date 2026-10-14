@@ -136,7 +136,7 @@ public struct JobLedger: Codable, Sendable {
 
 /// Single process owner plus write-before-dispatch ledger. A failed write never authorizes execution.
 public actor JobStore {
-    private let file: URL
+    public nonisolated let file: URL
     private var lock: Int32 = -1
     private var ledger: JobLedger?
     public init(file: URL) { self.file = file }
