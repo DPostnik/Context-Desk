@@ -99,6 +99,7 @@ private func interactiveFixture(_ root: URL) throws -> URL {
     for line in sys.stdin:
         value=json.loads(line)
         if value['type']=='control_request':
+            with (home/'controls').open('a') as f: f.write(json.dumps({'request':value['request'],'pid':os.getpid()})+'\n')
             out({'type':'control_response','response':{'subtype':'success','request_id':value['request_id'],'response':{}}})
             if value['request']['subtype']=='interrupt': result()
         elif value['type']=='user':
@@ -453,6 +454,38 @@ private func interactiveRequest(context: AgentContext, root: URL, session: Agent
     #expect(launches[0].contains("--session-id") && !launches[0].contains("--settings") && !launches[0].contains("--strict-mcp-config"))
     #expect(launches[1].contains("--resume") && launches[1].contains("--settings"))
     #expect(try await adapter.history(session, context: descriptor.context).value().count == 2)
+    await adapter.disconnect()
+}
+
+@Test func claudeMessageDuringScheduledBackgroundTasksKeepsThem() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let binary = try interactiveFixture(root), home = root.appendingPathComponent("home")
+    let adapter = ClaudeIntegration(), events = ClaudeEvents()
+    let reader = Task { for await event in adapter.events { await events.append(event) } }
+    defer { reader.cancel() }
+    func lines(_ name: String) throws -> [JSONValue] {
+        try String(contentsOf: home.appendingPathComponent(name), encoding: .utf8).split(separator: "\n")
+            .map { try JSONDecoder().decode(JSONValue.self, from: Data($0.utf8)) }
+    }
+    let descriptor = try await adapter.connect(.init(executable: binary, home: home)).value()
+    let session = try await adapter.prepare(interactiveRequest(context: descriptor.context, root: root, fullAccess: true)).value()
+    _ = try await adapter.submit(interactiveRequest(context: descriptor.context, root: root, session: session, prompt: "background-hang",
+                                                    fullAccess: true, kind: .scheduled)).value()
+    try await waitFor { await events.background() == [1] }
+    // The user's message goes to the CLI still running the run's sub-agent, with connector approvals applied to it live.
+    for count in [2, 3] {
+        _ = try await adapter.prepare(interactiveRequest(context: descriptor.context, root: root, session: session, fullAccess: true)).value()
+        _ = try await adapter.submit(interactiveRequest(context: descriptor.context, root: root, session: session, fullAccess: true)).value()
+        try await waitFor { await events.completionCount() == count }
+    }
+    let submitted = try lines("submitted")
+    #expect(submitted.count == 3 && Set(submitted.map { $0["pid"] }).count == 1)
+    #expect(try String(contentsOf: home.appendingPathComponent("launches"), encoding: .utf8).split(separator: "\n").count == 1)
+    let applied = try lines("controls").filter { $0["request"]["subtype"].string == "apply_flag_settings" }
+    #expect(applied.count == 1 && applied.first?["request"]["settings"] == ClaudeIntegration.approvalSettings(access: .fullAccess, scheduled: false))
+    #expect(await events.subagents().last?.first?.status == .running)
+    #expect(await events.diagnostics().isEmpty)
     await adapter.disconnect()
 }
 

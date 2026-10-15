@@ -239,9 +239,28 @@ public actor ClaudeIntegration: AgentIntegration {
             let launch = try Self.arguments(id: id, resumed: true, access: expectedAccess, model: request.model.model, effort: request.model.effort,
                                             scheduled: scheduled, projectInstructions: ProjectInstructions.prompt(projectPath: record.cwd),
                                             projectAgents: ProjectAgents.argument(projectPath: record.cwd), userChrome: userChrome)
+            // A scheduled turn's CLI still running background tasks (sub-agents) takes the user's message instead of
+            // restarting, which would end them: the attended approval rules are applied to the live process first.
+            // `--chrome` cannot be added live, so that CLI stays without the user's Chrome until it is replaced.
+            var adopted = false
+            if let current = wires[id], !scheduled, !(backgroundTasks[id] ?? []).isEmpty {
+                func variant(scheduled: Bool, userChrome: Bool) throws -> [String] {
+                    try Self.arguments(id: id, resumed: true, access: expectedAccess, model: request.model.model, effort: request.model.effort,
+                                       scheduled: scheduled, projectInstructions: ProjectInstructions.prompt(projectPath: record.cwd),
+                                       projectAgents: ProjectAgents.argument(projectPath: record.cwd), userChrome: userChrome)
+                }
+                let live = try variant(scheduled: false, userChrome: false)
+                if scheduledWires.contains(id), wireArguments[id] == (try variant(scheduled: true, userChrome: userChrome)) {
+                    if let settings = Self.approvalSettings(access: expectedAccess, scheduled: false) {
+                        _ = try await current.control(.object(["subtype": .string("apply_flag_settings"), "settings": settings]))
+                    }
+                    guard wires[id] === current else { return .rejected(.staleContext) }
+                    scheduledWires.remove(id); wireArguments[id] = live; adopted = true
+                } else { adopted = !scheduledWires.contains(id) && wireArguments[id] == live }
+            }
             // A CLI kept for background tasks was started with its own model, permissions and approval rules
             // (scheduled turns have none); a different launch stops it and resumes in a fresh one.
-            if let current = wires[id], scheduledWires.contains(id) != scheduled || wireArguments[id] != launch {
+            if !adopted, let current = wires[id], scheduledWires.contains(id) != scheduled || wireArguments[id] != launch {
                 wires.removeValue(forKey: id); abandonWait(id); await current.close()
             }
             warm[id] = nil
@@ -314,6 +333,11 @@ public actor ClaudeIntegration: AgentIntegration {
         let leading = ["label", "apply", "add", "set"]
         return anywhere.map { connectorToolPrefix + "*__*" + $0 + "*" } + leading.map { connectorToolPrefix + "*__" + $0 + "*" }
     }()
+    /// Flag settings of attended full-access chats; nil when the launch carries none.
+    static func approvalSettings(access: AccessMode, scheduled: Bool) -> JSONValue? {
+        guard access == .fullAccess, !scheduled else { return nil }
+        return .object(["permissions": .object(["ask": .array(connectorApprovalRules.map(JSONValue.string))])])
+    }
     /// A scheduled turn runs unattended, so full-access connector actions are not held for approval (as print runs were not).
     static func arguments(id: String, resumed: Bool, access: AccessMode, model: String, effort: String?, scheduled: Bool = false,
                           projectInstructions: String? = nil, projectAgents: String? = nil, browserServer: [String]? = nil,
@@ -332,8 +356,7 @@ public actor ClaudeIntegration: AgentIntegration {
             // `--safe-mode` would also drop claude.ai connectors, so its isolation is spelled out as in browser chats.
             args += ["--disable-slash-commands", "--mcp-config", "{\"mcpServers\":{}}"]
         } else { args += ["--safe-mode", "--mcp-config", "{\"mcpServers\":{}}"] }
-        if connectors && !scheduled {
-            let settings: JSONValue = .object(["permissions": .object(["ask": .array(connectorApprovalRules.map(JSONValue.string))])])
+        if let settings = approvalSettings(access: access, scheduled: scheduled) {
             let encoder = JSONEncoder(); encoder.outputFormatting = [.withoutEscapingSlashes, .sortedKeys]
             args += ["--settings", String(decoding: try encoder.encode(settings), as: UTF8.self)]
         }
