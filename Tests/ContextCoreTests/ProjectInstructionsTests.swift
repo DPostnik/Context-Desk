@@ -28,3 +28,27 @@ import Testing
     let prompt = args[args.firstIndex(of: "--append-system-prompt")! + 1]
     #expect(prompt.hasPrefix(AgentAutonomy.instructions()) && prompt.hasSuffix(rules))
 }
+
+@Test func claudeChatsReceiveUserInstructionsAndAttributionFromTheProfile() throws {
+    let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let global = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".md")
+    try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: home); try? FileManager.default.removeItem(at: global) }
+    let bare = try ClaudeIntegration.arguments(id: UUID().uuidString, resumed: false, access: .standard, model: "", effort: nil, profile: home)
+    #expect(!bare.contains("--settings"))
+
+    // The profile's CLAUDE.md is usually a symlink to ~/.claude/CLAUDE.md; only commit/PR attribution is taken from settings.json.
+    try "No Co-Authored-By in commit messages.".write(to: global, atomically: true, encoding: .utf8)
+    try FileManager.default.createSymbolicLink(at: home.appendingPathComponent("CLAUDE.md"), withDestinationURL: global)
+    try #"{"attribution":{"commit":"","pr":"","extra":"x"},"hooks":{"Stop":[]}}"#.write(to: home.appendingPathComponent("settings.json"), atomically: true, encoding: .utf8)
+    let args = try ClaudeIntegration.arguments(id: UUID().uuidString, resumed: false, access: .fullAccess, model: "", effort: nil,
+                                               projectInstructions: "Project rules.", profile: home)
+    let settings = try JSONDecoder().decode(JSONValue.self, from: Data(args[try #require(args.firstIndex(of: "--settings")) + 1].utf8))
+    #expect(settings["attribution"] == .object(["commit": .string(""), "pr": .string("")]))
+    #expect(settings["hooks"] == .null && settings["permissions"]["ask"].array.isEmpty == false)
+    let prompt = args[args.firstIndex(of: "--append-system-prompt")! + 1]
+    let user = try #require(prompt.range(of: "No Co-Authored-By in commit messages."))
+    #expect(prompt.hasSuffix("Project rules.") && user.upperBound < prompt.range(of: "Project rules.")!.lowerBound)
+    #expect(ClaudeProfile.instructions(home: home, language: .russian)?.hasPrefix("Глобальные инструкции пользователя") == true)
+    #expect(ClaudeProfile.instructions(home: home, language: .english)?.hasPrefix("User's global instructions") == true)
+}

@@ -95,6 +95,24 @@ enum ClaudeProfile {
         result["CLAUDE_CONFIG_DIR"] = home.path; result["DISABLE_AUTOUPDATER"] = "1"
         return result
     }
+    /// The profile's CLAUDE.md with the user's global rules (often a symlink to ~/.claude/CLAUDE.md).
+    static func instructions(home: URL, language: AppLanguage = L10n.language) -> String? {
+        let file = home.appendingPathComponent("CLAUDE.md").resolvingSymlinksInPath()
+        guard let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]), values.isRegularFile == true,
+              (values.fileSize ?? 0) <= 64 * 1024, let data = try? Data(contentsOf: file) else { return nil }
+        let body = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !body.isEmpty else { return nil }
+        return L10n.text("Глобальные инструкции пользователя (CLAUDE.md):", "User's global instructions (CLAUDE.md):", language: language)
+            + "\n\n" + body
+    }
+    /// The `attribution` object of the profile's settings.json (e.g. empty strings to drop Co-Authored-By).
+    static func attribution(home: URL) -> JSONValue? {
+        guard let data = try? Data(contentsOf: home.appendingPathComponent("settings.json")), data.count <= 1_048_576,
+              let settings = try? JSONDecoder().decode(JSONValue.self, from: data),
+              case .object(let attribution) = settings["attribution"] else { return nil }
+        let kept = attribution.filter { ["commit", "pr"].contains($0.key) && $0.value.string != nil }
+        return kept.isEmpty ? nil : .object(kept)
+    }
     static func command(executable: URL, home: URL, arguments: [String]) async throws -> (Int32, Data) {
         let folder = home.appendingPathComponent("probe-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])

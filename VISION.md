@@ -1,10 +1,10 @@
 # Context Desk — project vision
 
-Date: 2026-09-25; revised 2026-09-27.
+Date: 2026-09-25; revised 2026-09-27 and 2026-10-15.
 
 Source: agreed product direction, audit of version 0.2.1 at `a6d5b2c`, and user request to update the plan.
 
-Status: accepted direction and revised implementation plan. Stages 1–4 are implemented: the typed contract, identity migration and complete in-process Codex extraction now serve production paths. Codex connection/version/account lifecycle, commands, events, permissions, configuration and isolated generation run through `AgentIntegration`. Stage 5 is in progress (readable local history); stage 6 is implemented for currently supported execution paths. Interactive Claude remains outstanding. See [AGENT_CONTRACT.md](AGENT_CONTRACT.md) for boundaries and acceptance evidence.
+Status: accepted direction and revised implementation plan. Stages 1–4 are implemented: the typed contract, identity migration and complete in-process Codex extraction now serve production paths. Codex connection/version/account lifecycle, commands, events, permissions, configuration and isolated generation run through `AgentIntegration`. Stage 5 is implemented and in daily use: readable local history and interactive Claude Code in an app-owned subscription profile (live since 2026-10-07); a recorded two-engine acceptance run is still open. Stage 6 is implemented for currently supported execution paths. Since the ChatGPT subscription ended (noted 2026-10-07), Claude Code is the engine in everyday use, including scheduled routines; Codex support is kept. See [AGENT_CONTRACT.md](AGENT_CONTRACT.md) for boundaries and acceptance evidence.
 
 ## Purpose
 
@@ -68,15 +68,15 @@ Introduce stable app conversation IDs with explicit agent/connection identities 
 
 Define normalized transcript snapshots with completeness and revision information, backfill through adapters and preserve the original engine's execution state. Readable local history must ship before claiming independence from an installed engine. Cross-agent continuation remains an explicit handoff into a new session.
 
-Codex credentials, settings and sessions remain in the app-dedicated home. Current Claude jobs use existing CLI authentication/configuration in place and disable session persistence; they do not establish an equivalent app-owned Claude home. Before interactive Claude support, establish and validate its authentication/configuration boundary explicitly. Do not copy credentials or silently mutate either external installation's state.
+Codex credentials, settings and sessions remain in the app-dedicated home. Claude Code uses a separate app-owned profile (`CLAUDE_CONFIG_DIR`) with its own subscription sign-in through the official CLI; interactive chats and scheduled runs both use it. Chats launch with empty setting sources, so the user's hooks, MCP servers and settings stay out; the app passes project instructions, project sub-agents, the profile's global `CLAUDE.md` and commit attribution explicitly. Do not copy credentials or silently mutate either external installation's state.
 
 The application must not imply that two engines have identical permission or sandbox semantics. An adapter must preserve the requested restrictions or report that it cannot support them. Unknown requests fail closed.
 
-In particular, the Claude job runner denies new permission prompts and supports only explicitly accepted external CLI policy. Standard project restrictions are rejected before dispatch. Full-access projects additionally require per-job external-policy consent; neither project mode implies that consent. This behavior is not equivalent to Codex's workspace/network sandbox. The shared contract carries permission intent, while each adapter validates and encodes the restrictions it actually supports.
+In particular, Claude standard access offers project-file tools only (no shell), while full access runs the CLI without permission prompts; attended full-access chats still hold claude.ai connector writing actions for approval, and scheduled runs do not. This behavior is not equivalent to Codex's workspace/network sandbox. The shared contract carries permission intent, while each adapter validates and encodes the restrictions it actually supports.
 
 Titles and archive summaries require separately verified isolated generation: bounded input, tools disabled, structured output, explicit model/route, and no retry after uncertain delivery. Disable this capability where its restrictions cannot be established. Never silently send one agent's conversation to another agent for background processing.
 
-Browser and workflow configuration should be app-owned descriptions that adapters register through supported mechanisms. Today browser launch settings and skill registration are Codex-specific. Render agent identity dynamically, offer model/effort controls by capability, and distinguish unavailable usage or account-limit data from zero. New or changed app-owned copy must ship in Russian and English.
+Browser and workflow configuration should be app-owned descriptions that adapters register through supported mechanisms. The Context Desk browser is registered for both engines; workflow skill registration remains Codex-specific. Render agent identity dynamically, offer model/effort controls by capability, and distinguish unavailable usage or account-limit data from zero. New or changed app-owned copy must ship in Russian and English.
 
 ## Switching agents and transferring context
 
@@ -92,7 +92,7 @@ Routines should belong to the application rather than one engine's proprietary c
 
 For example: inspect the changes, run the project's checks, resolve failures, and prepare a commit. Each integration maps supported parts to its engine. Unsupported requirements must be visible; provider-specific extensions must be identified as such rather than treated as portable.
 
-Portable routine definitions and a scheduler are separate concerns. The app already owns schedules and run history and executes Codex and Claude Code jobs while running, under the user's standing authorization of 2026-09-27. Reuse this scheduler when extracting adapters. Preserve durable claims before dispatch, single-owner locking, concurrency limits, missed-run handling, cancellation and uncertain-run pauses without automatic retry.
+Portable routine definitions and a scheduler are separate concerns. The app already owns schedules and run history and executes Codex and Claude Code jobs while running, under the user's standing authorization of 2026-09-27. Both engines use the same chat-based scheduled executor: each run opens a continuable chat. Preserve durable claims before dispatch, single-owner locking, concurrency limits, missed-run handling, cancellation and uncertain-run pauses without automatic retry.
 
 External schedule definitions are imported only on explicit selection. Imports remain paused until review and confirmation that the original schedule is disabled. Never mutate external Codex automations or Claude schedules. Portable routines now compile ordered steps, constraints and completion checks into a frozen scheduled prompt. Step checks are performed and reported by the agent; the app does not independently certify their success or retry steps. Execution while the app is closed remains future work.
 
@@ -104,24 +104,26 @@ Currently shipped:
 - Projects, chat navigation, drafts, queues, archive, notifications and usage displays.
 - Stable app conversation IDs with explicit agent/connection/native-session mapping; legacy associations migrate atomically without renaming keys. Versioned transcript snapshots populate on history reads, item events and read-only backfill; saved records remain readable without the engine.
 - Process-based provider plugins for compatible Responses request routes inside Codex, including the optional Headroom integration.
-- App-owned schedules and persistent run history: Codex jobs create app chats; Claude Code print-mode jobs record their result in run history.
-- Semantic chat titles and archive summaries generated through isolated Codex requests.
-- Browser MCP launch configuration and app-owned workflow skills registered with Codex.
-- Explicit handoff into a fresh Codex session with a reviewable draft, durable source provenance and historical evidence separated from new instructions.
+- Interactive Claude Code chats in an app-owned subscription profile: streaming, questions, approvals, interruption, resume, live sub-agents, context/plan-limit display, project sub-agents, claude.ai connectors and optional Claude in Chrome in full-access projects.
+- App-owned schedules and persistent run history: Codex and Claude Code runs both create continuable app chats.
+- Semantic chat titles and archive summaries generated through isolated requests on either engine.
+- The Context Desk browser (per-chat Chrome for Testing profiles, element-tree refs, screenshots, uploads, explicit cookie import) for both engines; app-owned workflow skills registered with Codex.
+- An experimental iPhone companion over the user's Supabase project that can read, answer and start Codex or Claude chats.
+- Explicit handoff into a fresh Codex or Claude session with a reviewable draft, durable source provenance and historical evidence separated from new instructions.
 - App-owned portable routine definitions with ordered steps, checks, constraints and capability requirements; frozen revisions map to existing Codex/Claude scheduled executors.
 - Explicit optimizer wire/auth/streaming/tool compatibility checks, with unsupported combinations retained visibly and blocked before plugin launch.
 
 Not yet implemented:
 
-- Live acceptance for interactive Claude Code: subscription sign-in and real start/interrupt/resume/archive flows. The adapter, agent selection, subscription login entry and normalized history are implemented locally and undergoing validation.
-- Live acceptance of Claude handoff destinations. The editor now offers Codex and Claude with fresh native sessions and unsent drafts; unsupported optimizer routes remain blocked.
+- A recorded two-engine acceptance run (start/interrupt/resume/archive on Codex and Claude in one session). Claude is verified by daily live use; Codex was last verified live on 2026-09-27 and now lacks an active subscription.
+- Live acceptance of handoffs between engines.
 - Additional verified optimizer profiles beyond Codex Responses process-plugin v1; Claude app optimizer routes remain unavailable.
 
 Existing provider plugins are the starting point for the optimization layer. They are not currently interchangeable agent engines.
 
 ## Implementation plan
 
-Stages 1–4 are implemented; stage 5 is in progress. Stage 6 is implemented for current execution paths, with interactive Claude destinations still gated by stage 5. Each stage should preserve current behavior and pass its acceptance checks before the next dependent stage enables new execution paths.
+Stages 1–4 are implemented; stage 5 is implemented except for its recorded two-engine acceptance run. Stage 6 is implemented for current execution paths. Each stage should preserve current behavior and pass its acceptance checks before the next dependent stage enables new execution paths.
 
 ### 1. Define the contract against both existing engines
 
@@ -157,7 +159,7 @@ Acceptance: both engines satisfy shared lifecycle/error tests with their differe
 
 ### 5. Deliver interactive Claude and readable local history
 
-Status (2026-09-27): in progress. Local snapshots now populate on open, item events and read-only startup/completion backfill. Offline chats and archives display saved snapshots; missing/partial snapshots are visible in Russian and English. The interactive Claude adapter, explicit agent selection and separate official-CLI subscription login are implemented locally. Claude is pinned to 2.1.292; standard access is restricted to project file tools. Real subscription sign-in and two-engine end-to-end acceptance are deferred: the user has no Claude subscription. The user confirmed that the sign-in flow opened an Anthropic page offering a subscription; authentication and model execution are not verified. The implementation must not be treated as fully delivered until that check passes. See [local-history scope](AGENT_CONTRACT.md#readable-local-history-stage-5-in-progress).
+Status (2026-10-15): implemented and in daily use; the recorded two-engine acceptance run is open. The user signed in with a Claude subscription on 2026-10-07; since then interactive Claude chats, resume, archive summaries and scheduled Claude runs (as chats in the app profile since 2026-10-09) run live. Earlier status (2026-09-27): local snapshots now populate on open, item events and read-only startup/completion backfill. Offline chats and archives display saved snapshots; missing/partial snapshots are visible in Russian and English. The interactive Claude adapter, explicit agent selection and separate official-CLI subscription login are implemented locally. Claude is pinned to 2.1.292; standard access is restricted to project file tools. At that time no Claude subscription was available, so sign-in and live execution were unverified. See [local-history scope](AGENT_CONTRACT.md#readable-local-history-stage-5-in-progress).
 
 Establish the supported Claude authentication/configuration boundary and pinned protocol. Add streaming, user questions, approvals, interruption, session recovery and explicit agent selection for new chats. Implement normalized transcript persistence and adapter-based backfill with completeness/revision tracking. Keep native sessions bound to their original engine. Gate background titles, summaries, tools and metrics on independently verified capabilities.
 
@@ -165,7 +167,7 @@ Acceptance: perform an end-to-end workflow on each supported engine without losi
 
 ### 6. Extend handoffs, routines and validated compatibility
 
-Status (2026-09-27): implemented for current execution paths. Handoff creates a fresh Codex chat and an unsent draft with durable provenance; it does not move queues, approvals or native IDs. Routines persist independently of schedules and freeze their revision/input/language in both jobs and run history. Unsupported capability requirements and agent-specific extensions block execution. Optimizer requirements are checked against the existing Codex Responses v1 profile before process launch; no Claude optimizer compatibility is claimed. Agent modules remain in-process; external packaging is a separate future decision. The handoff editor now includes a Claude destination through the stage-5 adapter; live validation remains pending its subscription login. See [portable-work semantics and limits](PORTABLE_WORK.md).
+Status (2026-09-27): implemented for current execution paths. Handoff creates a fresh Codex chat and an unsent draft with durable provenance; it does not move queues, approvals or native IDs. Routines persist independently of schedules and freeze their revision/input/language in both jobs and run history. Unsupported capability requirements and agent-specific extensions block execution. Optimizer requirements are checked against the existing Codex Responses v1 profile before process launch; no Claude optimizer compatibility is claimed. Agent modules remain in-process; external packaging is a separate future decision. The handoff editor includes a Claude destination through the stage-5 adapter; a live cross-engine handoff has not been recorded. See [portable-work semantics and limits](PORTABLE_WORK.md).
 
 Add explicit context handoff into a new session, portable multi-step routine definitions and independently verified optimizer combinations. Decide separately whether agent modules need external packaging and installation. Neither general plugin packaging nor universal optimizer compatibility is a prerequisite for the first two-engine workflow.
 

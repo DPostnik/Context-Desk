@@ -238,7 +238,7 @@ public actor ClaudeIntegration: AgentIntegration {
             let scheduled = request.kind == .scheduled
             let launch = try Self.arguments(id: id, resumed: true, access: expectedAccess, model: request.model.model, effort: request.model.effort,
                                             scheduled: scheduled, projectInstructions: ProjectInstructions.prompt(projectPath: record.cwd),
-                                            projectAgents: ProjectAgents.argument(projectPath: record.cwd), userChrome: userChrome)
+                                            projectAgents: ProjectAgents.argument(projectPath: record.cwd), profile: home, userChrome: userChrome)
             // A scheduled turn's CLI still running background tasks (sub-agents) takes the user's message instead of
             // restarting, which would end them: the attended approval rules are applied to the live process first.
             // `--chrome` cannot be added live, so that CLI stays without the user's Chrome until it is replaced.
@@ -247,7 +247,7 @@ public actor ClaudeIntegration: AgentIntegration {
                 func variant(scheduled: Bool, userChrome: Bool) throws -> [String] {
                     try Self.arguments(id: id, resumed: true, access: expectedAccess, model: request.model.model, effort: request.model.effort,
                                        scheduled: scheduled, projectInstructions: ProjectInstructions.prompt(projectPath: record.cwd),
-                                       projectAgents: ProjectAgents.argument(projectPath: record.cwd), userChrome: userChrome)
+                                       projectAgents: ProjectAgents.argument(projectPath: record.cwd), profile: home, userChrome: userChrome)
                 }
                 let live = try variant(scheduled: false, userChrome: false)
                 if scheduledWires.contains(id), wireArguments[id] == (try variant(scheduled: true, userChrome: userChrome)) {
@@ -280,7 +280,7 @@ public actor ClaudeIntegration: AgentIntegration {
                                                    model: request.model.model, effort: request.model.effort, scheduled: scheduled,
                                                    projectInstructions: ProjectInstructions.prompt(projectPath: record.cwd),
                                                    projectAgents: ProjectAgents.argument(projectPath: record.cwd), browserServer: server,
-                                                   userChrome: userChrome)
+                                                   profile: home, userChrome: userChrome)
                 var environment = ClaudeProfile.environment(home: home).merging(Self.sessionEnvironment) { _, new in new }
                 // Same startup/tool limits as the Codex MCP entry (30 s / 90 s).
                 if server != nil || expectedAccess == .fullAccess { environment.merge(Self.browserEnvironment) { _, new in new } }
@@ -341,7 +341,7 @@ public actor ClaudeIntegration: AgentIntegration {
     /// A scheduled turn runs unattended, so full-access connector actions are not held for approval (as print runs were not).
     static func arguments(id: String, resumed: Bool, access: AccessMode, model: String, effort: String?, scheduled: Bool = false,
                           projectInstructions: String? = nil, projectAgents: String? = nil, browserServer: [String]? = nil,
-                          userChrome: Bool = false) throws -> [String] {
+                          profile: URL? = nil, userChrome: Bool = false) throws -> [String] {
         // Only full-access chats (network allowed) load the account's claude.ai connectors such as Gmail.
         let connectors = access == .fullAccess
         // The user's real Chrome only for attended full-access turns; `--restricted` would skip it anyway.
@@ -356,9 +356,12 @@ public actor ClaudeIntegration: AgentIntegration {
             // `--safe-mode` would also drop claude.ai connectors, so its isolation is spelled out as in browser chats.
             args += ["--disable-slash-commands", "--mcp-config", "{\"mcpServers\":{}}"]
         } else { args += ["--safe-mode", "--mcp-config", "{\"mcpServers\":{}}"] }
-        if let settings = approvalSettings(access: access, scheduled: scheduled) {
+        // `--setting-sources ""` also skips the profile's settings.json; only its commit/PR attribution is carried over.
+        var settings = approvalSettings(access: access, scheduled: scheduled)?.object ?? [:]
+        if let profile, let attribution = ClaudeProfile.attribution(home: profile) { settings["attribution"] = attribution }
+        if !settings.isEmpty {
             let encoder = JSONEncoder(); encoder.outputFormatting = [.withoutEscapingSlashes, .sortedKeys]
-            args += ["--settings", String(decoding: try encoder.encode(settings), as: UTF8.self)]
+            args += ["--settings", String(decoding: try encoder.encode(JSONValue.object(settings)), as: UTF8.self)]
         }
         // `--setting-sources ""` skips `claudeInChromeDefaultEnabled`, so the flag is explicit.
         if chrome { args.append("--chrome") }
@@ -371,10 +374,11 @@ public actor ClaudeIntegration: AgentIntegration {
         if let level = ClaudeEffort.accepted(effort) { args += ["--effort", level.rawValue] }
         // `--setting-sources ""` also skips the project's `.claude/agents`; only full access has the Agent tool to use them.
         if access == .fullAccess, let projectAgents { args += ["--agents", projectAgents] }
-        // `--setting-sources ""` also skips the project's CLAUDE.md, so project rules come in here.
+        // `--setting-sources ""` also skips the user's and the project's CLAUDE.md, so both come in here; project rules last.
         // Only full access has the Agent tool; the guidance would be noise in restricted chats.
         let delegation = access == .fullAccess ? delegationInstructions() : nil
         args += ["--append-system-prompt", ([AgentAutonomy.instructions(), delegation, chrome ? userChromeInstructions() : nil,
+                                             profile.flatMap { ClaudeProfile.instructions(home: $0) },
                                              projectInstructions].compactMap { $0 }).joined(separator: "\n\n")]
         return args
     }

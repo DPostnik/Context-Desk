@@ -1,13 +1,13 @@
 # Context Desk
 
-Personal, native macOS client for Codex. SwiftUI/AppKit only; no Electron/WebView shell.
+Personal, native macOS client for Codex and Claude Code. SwiftUI/AppKit only; no Electron/WebView shell.
 
-- Keep Codex credentials, sessions and settings in the app's dedicated home. Never copy or mutate the user's existing Codex credentials/state.
+- Keep Codex and Claude Code credentials, sessions and settings in the app's dedicated homes (`codex/`, `claude/` under `~/Library/Application Support/Context Desk/`). Never copy or mutate the user's existing Codex or Claude credentials/state (`~/.codex`, `~/.claude`).
 - Context Desk may own Codex/Claude scheduled jobs in its dedicated home. Imports outside the standing transfer scope require explicit selection and confirmation that the source is disabled. Preserve permissions; no raw writes to external schedules/state, credential/session copying or uncertain retries.
 - Standing transfer scope: agents may select ongoing recurring routines, pause originals through a supported source-scheduler tool and enable verified Context Desk copies without repeated confirmation. Verify source pause before enabling. One-time tasks and finite pilots are excluded; without supported source control, keep the copy disabled and report the blocker.
 - Preserve project permissions. Never auto-approve commands or retry a turn after an ambiguous transport failure.
 - Standing user preference (2026-09-27), for every agent: carry an authorized task or plan through implementation and proportionate verification without asking whether to continue. Resolve routine reversible choices from context and state reasonable assumptions. Ask only when unresolved ambiguity materially changes the goal, scope, cost or consequences, or necessary authorization is missing; finish independent work first. Respect plan-only requests, explicit approval boundaries, budgets and user stops, and pass these constraints to any authorized delegates.
-- Standing user authorization (2026-10-07), browser sign-in: when an authorized task needs a website or account the agent's browser is not signed in to, the agent may import that site's session from the user's main Chrome without asking. This covers website cookies for the Context Desk browser only and does not relax the Codex credential rule above.
+- Standing user authorization (2026-10-07), browser sign-in: when an authorized task needs a website or account the agent's browser is not signed in to, the agent may import that site's session from the user's main Chrome without asking. This covers website cookies for the Context Desk browser only and does not relax the agent credential rule above.
   1. Confirm missing sign-in by reading the page (login form, logged-out view, access denied for the account). Network errors, CAPTCHA and site blocks are not reasons to import.
   2. Call `browser_import_session` (Claude Code: `mcp__context_desk_browser__browser_import_session`) once, with your own tab's session and its current `expectedURL`. Import only the site the task needs, into your own chat browser; never copy cookies into files, output, logs or other tools.
   3. Reload once with a separate action and verify protected content; cookie counts do not prove sign-in.
