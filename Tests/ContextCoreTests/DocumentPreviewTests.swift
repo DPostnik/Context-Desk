@@ -298,3 +298,31 @@ private func temporaryDirectory() throws -> URL {
     #expect(session.current == nil)
     #expect(!session.expanded)
 }
+
+@Test @MainActor func streamingUpdatesWaitUntilALinkClickEnds() throws {
+    let view = TranscriptScrollView()
+    view.frame = NSRect(x: 0, y: 0, width: 700, height: 400)
+    let items = [TranscriptItem(id: "u", kind: "user", text: "Question"),
+                 TranscriptItem(id: "t1", kind: "activity", text: "First tool")]
+    view.update(items: items, conversationID: "c", followOutput: false, isWorking: true)
+    let storage = try #require(view.transcript.textStorage)
+    var index = NSNotFound, toggle: Any?
+    storage.enumerateAttribute(.link, in: NSRange(location: 0, length: storage.length)) { value, range, stop in
+        if (value as? String)?.hasPrefix("contextdesk-action:") == true { index = range.location; toggle = value; stop.pointee = true }
+    }
+    let link = try #require(toggle)
+    // AppKit's click tracking still runs streaming updates; they must not replace the clicked row until it ends.
+    var duringClick = ""
+    view.holdingEdits {
+        view.update(items: items + [TranscriptItem(id: "t2", kind: "activity", text: "Second tool")],
+                    conversationID: "c", followOutput: false, isWorking: true)
+        duringClick = view.transcript.string
+        _ = view.textView(view.transcript, clickedOnLink: link, at: index)
+        #expect(view.transcript.string.contains("First tool"))
+    }
+    #expect(!duringClick.contains("Second tool"))
+    #expect(view.transcript.string.contains("Second tool"))
+    // Without a click updates apply at once.
+    view.update(items: items, conversationID: "c", followOutput: false, isWorking: true)
+    #expect(!view.transcript.string.contains("Second tool"))
+}

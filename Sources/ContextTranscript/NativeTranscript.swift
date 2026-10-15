@@ -78,6 +78,9 @@ public struct NativeTranscript: NSViewRepresentable {
     private var workingStatus: String?
     private var workingSince: Date?
     private var workingTimer: Timer?
+    /// Storage edits that arrived while AppKit tracked a click, keyed so the latest of each kind wins.
+    private var afterClick: [(key: String, work: () -> Void)] = []
+    private var clickDepth = 0
     /// Message whose copy control is shown; controls of other messages stay hidden until hovered.
     public private(set) var hoveredItemID: String?
     /// Transcript text keeps a readable column; wider windows add margins instead of longer lines.
@@ -135,11 +138,19 @@ public struct NativeTranscript: NSViewRepresentable {
         transcript.addSubview(workingIndicator)
         (transcript as? TranscriptTextView)?.didDrawText = { [weak self] in self?.positionWorkingIndicator() }
         (transcript as? TranscriptTextView)?.hoverChanged = { [weak self] point in self?.updateHover(at: point) }
+        (transcript as? TranscriptTextView)?.trackClick = { [weak self] click in
+            if let self { self.holdingEdits(during: click) } else { click() }
+        }
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     public func update(items: [TranscriptItem], conversationID: String?, followOutput: Bool, isWorking: Bool = false, workingStatus: String? = nil,
                        workingSince: Date? = nil, unreadCompletionID: String? = nil, unreadResponseItemID: String? = nil, projectPath: String? = nil) {
+        if deferWhileClicking("update", { [weak self] in
+            self?.update(items: items, conversationID: conversationID, followOutput: followOutput, isWorking: isWorking, workingStatus: workingStatus,
+                         workingSince: workingSince, unreadCompletionID: unreadCompletionID, unreadResponseItemID: unreadResponseItemID,
+                         projectPath: projectPath)
+        }) { return }
         // Relative file links resolve against the project; a different project re-renders everything.
         let projectChanged = self.projectPath != projectPath
         self.projectPath = projectPath
@@ -203,6 +214,28 @@ public struct NativeTranscript: NSViewRepresentable {
             if case .anchor = savedPosition { pendingPosition = savedPosition }
             contentView.scroll(to: oldOrigin); reflectScrolledClipView(contentView)
         }
+    }
+
+    /// NSTextView keeps the clicked link unretained between mouse-down and its delegate call, while its tracking loop
+    /// still runs timers and main-queue work. Replacing that text meanwhile (a streaming update) frees the link and
+    /// crashes the click, so transcript updates wait until `click` returns; the click's own edits apply at once.
+    public func holdingEdits(during click: () -> Void) {
+        clickDepth += 1
+        click()
+        clickDepth -= 1
+        guard clickDepth == 0 else { return }
+        let pending = afterClick
+        afterClick = []
+        for entry in pending { entry.work() }
+    }
+
+    private var isTrackingClick: Bool { clickDepth > 0 }
+
+    private func deferWhileClicking(_ key: String, _ work: @escaping () -> Void) -> Bool {
+        guard isTrackingClick else { return false }
+        afterClick.removeAll { $0.key == key }
+        afterClick.append((key, work))
+        return true
     }
 
     private func scrollToEnd() {
@@ -379,7 +412,7 @@ public struct NativeTranscript: NSViewRepresentable {
     private func refreshWorkingRow() {
         guard let window, window.isVisible, !window.isMiniaturized, window.occlusionState.contains(.visible), !isHiddenOrHasHiddenAncestor,
               let last = previous.last, last.kind == "loading", let range = ranges.last, let storage = transcript.textStorage,
-              NSMaxRange(range) == storage.length else { return }
+              NSMaxRange(range) == storage.length, !isTrackingClick else { return }
         let row = Self.workingRow(status: workingStatus, since: workingSince)
         guard row != last else { return }
         let wasAtEnd = followed && isAtTranscriptEnd
@@ -738,9 +771,14 @@ public struct NativeTranscript: NSViewRepresentable {
         copyFeedbackTask = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(2)) } catch { return }
             guard let self else { return }
-            self.copyFeedback = nil
-            self.rerenderItem(id: id)
+            if self.deferWhileClicking("copy-feedback:\(id)", { [weak self] in self?.endCopyFeedback(id: id) }) { return }
+            self.endCopyFeedback(id: id)
         }
+    }
+
+    private func endCopyFeedback(id: String) {
+        copyFeedback = nil
+        rerenderItem(id: id)
     }
 
     public func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
@@ -907,7 +945,12 @@ public struct NativeTranscript: NSViewRepresentable {
 private final class TranscriptTextView: NSTextView {
     var didDrawText: (() -> Void)?
     var hoverChanged: ((NSPoint?) -> Void)?
+    var trackClick: ((() -> Void) -> Void)?
     private var hoverArea: NSTrackingArea?
+    override func mouseDown(with event: NSEvent) {
+        guard let trackClick else { return super.mouseDown(with: event) }
+        trackClick { super.mouseDown(with: event) }
+    }
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         didDrawText?()
