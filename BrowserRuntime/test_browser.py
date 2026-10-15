@@ -67,6 +67,37 @@ class BrowserTests(unittest.TestCase):
         self.assertEqual([n for n, _ in self.calls].count('list_pages'), 2)
         self.assertIsNone(self.browser.session)
 
+    def test_idle_chrome_quits_once_only_when_blank_tabs_remain(self):
+        owner = {'pid': 123}
+        for targets, gone, expected in [
+                ({'A' * 32: 'about:blank'}, [True, True], 'quit'),
+                ({}, [False, True, True], 'quit'),
+                ({'A' * 32: 'about:blank', 'B' * 32: 'https://indeed.test/'}, [True], 'kept'),
+                (None, [True], 'kept'),
+                ({'A' * 32: 'about:blank'}, [False] * 1000, 'quit_unconfirmed')]:
+            with self.subTest(targets=targets, expected=expected):
+                browser = Browser(Path(self.directory.name), rpc=Mock())
+                chrome = browser.chrome = Mock(owner=owner)
+                chrome.page_targets.return_value = targets
+                chrome.process_gone.side_effect = gone
+                self.assertEqual(browser.quit_idle_chrome(seconds=0.3), expected)
+                self.assertEqual(chrome.graceful_close.call_count, 0 if expected == 'kept' else 1)
+                if expected == 'quit':
+                    self.assertIsNone(browser.chrome)
+        # A live task tab, a failed executor or an unverified close never sends a second close.
+        browser = Browser(Path(self.directory.name), rpc=Mock())
+        browser.chrome = Mock(owner=owner)
+        browser.chrome.page_targets.return_value = {}
+        browser.session = 'owner'
+        self.assertEqual(browser.quit_idle_chrome(), 'kept')
+        browser.session, browser.failed = None, True
+        self.assertEqual(browser.quit_idle_chrome(), 'kept')
+        browser.failed = False
+        browser.chrome.graceful_close.side_effect = server.Rejected('not verified')
+        self.assertEqual(browser.quit_idle_chrome(), 'quit_unconfirmed')
+        browser.chrome.process_gone.assert_not_called()
+        browser.chrome.graceful_close.assert_called_once()
+
     def test_unconfirmed_close_stops_executor_without_replay(self):
         def rpc(name, args):
             self.calls.append((name, args))

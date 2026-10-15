@@ -361,6 +361,11 @@ class Executor:
                     try:
                         result = server.dispatch(browser, message.get('name'), message.get('arguments'))
                         browser.persist()
+                        if message.get('name') == 'browser_close':
+                            with self.clients_lock:
+                                shared = any(c is not client and c.browser.session for c in self.clients)
+                            # Another task of this chat still works in the same Chrome: keep it.
+                            result['browserQuit'] = 'kept' if shared else browser.quit_idle_chrome()
                         response['result'] = result
                     finally:
                         if not browser.failed:

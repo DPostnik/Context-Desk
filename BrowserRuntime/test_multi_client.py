@@ -60,6 +60,11 @@ def serve_fake():
                     stream.write(json.dumps({'name': name, 'phase': 'end'}) + '\n')
                 return {'content': [{'type': 'text', 'text': text}]}
             super().__init__(root, rpc=rpc, **kwargs)
+
+        def quit_idle_chrome(self, seconds=8):
+            with (Path(self.root) / 'dispatch.jsonl').open('a') as stream:
+                stream.write(json.dumps({'name': 'quit_idle_chrome', 'phase': 'start'}) + '\n')
+            return 'quit'
     executor = broker.Executor(Path(sys.argv[2]), browser_factory=FakeBrowser, installation_root=Path(sys.argv[2]))
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: executor.stopped.set())
@@ -158,8 +163,15 @@ class MultiClientTests(unittest.TestCase):
         self.assertEqual(len(self.trace()), count)
         for client, opened in [(a, first), (b, second), (a, first)]:
             self.assertFalse(self.call(client, 'browser_snapshot', session=opened['session']).get('isError'))
-        self.assertFalse(self.call(a, 'browser_close', session=first['session']).get('isError'))
+        closed = self.call(a, 'browser_close', session=first['session'])
+        self.assertFalse(closed.get('isError'))
+        # The other task still has a tab in the same Chrome, so it is not asked to quit.
+        self.assertEqual(json.loads(closed['content'][0]['text'])['browserQuit'], 'kept')
+        self.assertFalse(any(r['name'] == 'quit_idle_chrome' for r in self.trace()))
         self.assertFalse(self.call(b, 'browser_snapshot', session=second['session']).get('isError'))
+        closed = self.call(b, 'browser_close', session=second['session'])
+        self.assertEqual(json.loads(closed['content'][0]['text'])['browserQuit'], 'quit')
+        self.assertEqual(sum(r['name'] == 'quit_idle_chrome' for r in self.trace()), 1)
         navigation = [row for row in self.trace() if row['name'] == 'navigate_page' and row['phase'] == 'start']
         self.assertEqual([r['workspace'] for r in navigation], [str(p.resolve()) for p in projects])
         self.assertEqual([r['args']['pageId'] for r in navigation], [first['pageId'], second['pageId']])
