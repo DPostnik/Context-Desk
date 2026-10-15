@@ -366,6 +366,8 @@ class Executor:
                                 shared = any(c is not client and c.browser.session for c in self.clients)
                             # Another task of this chat still works in the same Chrome: keep it.
                             result['browserQuit'] = 'kept' if shared else browser.quit_idle_chrome()
+                            if result['browserQuit'] == 'kept':
+                                result.update(browser.kept_reason(other_task=shared))
                         response['result'] = result
                     finally:
                         if not browser.failed:

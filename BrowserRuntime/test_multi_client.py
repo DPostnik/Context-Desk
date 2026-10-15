@@ -166,7 +166,9 @@ class MultiClientTests(unittest.TestCase):
         closed = self.call(a, 'browser_close', session=first['session'])
         self.assertFalse(closed.get('isError'))
         # The other task still has a tab in the same Chrome, so it is not asked to quit.
-        self.assertEqual(json.loads(closed['content'][0]['text'])['browserQuit'], 'kept')
+        kept = json.loads(closed['content'][0]['text'])
+        self.assertEqual((kept['browserQuit'], kept['keptReason']), ('kept', 'other_task'))
+        self.assertIn('keptNote', kept)
         self.assertFalse(any(r['name'] == 'quit_idle_chrome' for r in self.trace()))
         self.assertFalse(self.call(b, 'browser_snapshot', session=second['session']).get('isError'))
         closed = self.call(b, 'browser_close', session=second['session'])

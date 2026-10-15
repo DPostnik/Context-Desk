@@ -67,6 +67,22 @@ class BrowserTests(unittest.TestCase):
         self.assertEqual([n for n, _ in self.calls].count('list_pages'), 2)
         self.assertIsNone(self.browser.session)
 
+    def test_kept_reason_names_hosts_and_never_blames_another_chat(self):
+        browser = Browser(Path(self.directory.name), rpc=Mock())
+        browser.chrome = Mock(owner={'pid': 123})
+        server.save(browser.records / 'old.json', {'session': 'old', 'targetId': 'C' * 32, 'state': 'disconnected'})
+        browser.chrome.page_targets.return_value = {
+            'A' * 32: 'about:blank', 'B' * 32: 'https://www.pracuj.pl/praca/x?token=secret', 'C' * 32: 'https://linkedin.test/feed/'}
+        kept = browser.kept_reason()
+        self.assertEqual(kept['keptReason'], 'other_tabs')
+        self.assertEqual(kept['keptTabs'], [{'host': 'www.pracuj.pl', 'openedBy': 'unknown'}, {'host': 'linkedin.test', 'openedBy': 'task'}])
+        self.assertNotIn('secret', json.dumps(kept))
+        self.assertEqual(browser.kept_reason(other_task=True)['keptReason'], 'other_task')
+        browser.chrome.page_targets.return_value = None
+        self.assertEqual(browser.kept_reason()['keptReason'], 'state_unknown')
+        browser.chrome.close_target.assert_not_called()
+        browser.chrome.graceful_close.assert_not_called()
+
     def test_idle_chrome_quits_once_only_when_blank_tabs_remain(self):
         owner = {'pid': 123}
         for targets, gone, expected in [
