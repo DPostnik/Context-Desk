@@ -164,7 +164,9 @@ class ChromeHostTests(unittest.TestCase):
 
     def test_foreign_live_process_is_not_adopted(self):
         self.host.persist(self.owner)
-        with patch.object(self.host, 'process_field', return_value='foreign'), patch('chrome_host.subprocess.Popen') as launch:
+        # Same start time (a reused PID within one second) but another command.
+        with patch.object(self.host, 'process_field', side_effect=lambda pid, field: 'birth' if field == 'lstart' else 'foreign'), \
+             patch('chrome_host.subprocess.Popen') as launch:
             with self.assertRaises(ChromeLaunchError):
                 self.host.ensure()
             launch.assert_not_called()
@@ -174,11 +176,16 @@ class ChromeHostTests(unittest.TestCase):
             self.host.close_created_for_test()
             launch.assert_not_called()
 
-    def test_zombie_requires_same_birth_and_foreign_pid_is_preserved(self):
+    def test_zombie_requires_same_birth_and_reused_pid_means_exit(self):
         with patch.object(self.host, 'process_field', side_effect=lambda pid, field: 'Z' if field == 'stat' else 'birth'):
             self.assertTrue(self.host.process_gone(self.owner))
-            self.assertFalse(self.host.process_gone(dict(self.owner, birth='other')))
-        with patch.object(self.host, 'process_field', return_value='S'):
+        with patch.object(self.host, 'process_field', side_effect=lambda pid, field: 'S' if field == 'stat' else 'birth'):
+            self.assertFalse(self.host.process_gone(self.owner))
+            # Another process now holds the PID: the recorded Chrome is gone
+            # and must not occupy a browser-limit slot.
+            self.assertTrue(self.host.process_gone(dict(self.owner, birth='earlier')))
+            self.assertFalse(self.host.process_gone(dict(self.owner, birth='')))
+        with patch.object(self.host, 'process_field', side_effect=lambda pid, field: 'S' if field == 'stat' else None):
             self.assertFalse(self.host.process_gone(self.owner))
         with patch.object(self.host, 'process_field', return_value=None):
             self.assertTrue(self.host.process_gone(self.owner))

@@ -42,3 +42,30 @@ class ChromeInstallTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'Unexpected Chrome for Testing'):
                 install.verify_chrome(app)
             run.assert_not_called()
+
+
+class NodeResolutionTests(unittest.TestCase):
+    def node(self, directory, version):
+        path = Path(directory) / 'node'
+        path.write_text('#!/bin/sh\necho ' + version + '\n')
+        path.chmod(0o755)
+        return path
+
+    def test_installed_node_is_used_without_searching(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(install, 'node_candidates') as candidates:
+            node = self.node(root, 'v24.0.0')
+            self.assertEqual(install.resolve_node(str(node)), node)
+            candidates.assert_not_called()
+
+    def test_removed_node_falls_back_to_first_compatible_candidate(self):
+        with tempfile.TemporaryDirectory() as old, tempfile.TemporaryDirectory() as new:
+            too_old = self.node(old, 'v20.11.0')
+            compatible = self.node(new, 'v24.20.0')
+            with patch.object(install, 'node_candidates',
+                              return_value=[Path(new) / 'missing', too_old, compatible]):
+                self.assertEqual(install.resolve_node('/nonexistent/v23.10.0/bin/node'), compatible.resolve())
+
+    def test_no_compatible_node_returns_none(self):
+        with tempfile.TemporaryDirectory() as root:
+            with patch.object(install, 'node_candidates', return_value=[self.node(root, 'v18.0.0')]):
+                self.assertIsNone(install.resolve_node('/nonexistent/node'))

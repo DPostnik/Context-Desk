@@ -105,11 +105,46 @@ def verify(root):
     return root / 'package/build/src/bin/chrome-devtools-mcp.js'
 
 
+MIN_NODE = (22, 12)
+
+
+def node_version(node):
+    try:
+        output = subprocess.run([str(node), '--version'], capture_output=True, text=True,
+                                timeout=10, check=True).stdout.strip()
+        return tuple(int(p) for p in output.lstrip('v').split('.')[:2])
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+def node_candidates():
+    """Common Node.js locations, newest nvm release first; the app's PATH may lack them."""
+    def release(path):
+        try:
+            return tuple(int(p) for p in path.parent.parent.name.lstrip('v').split('.'))
+        except ValueError:
+            return ()
+    found = [shutil.which('node')]
+    found += sorted((Path.home() / '.nvm/versions/node').glob('v*/bin/node'), key=release, reverse=True)
+    found += ['/opt/homebrew/bin/node', '/usr/local/bin/node',
+              '/opt/homebrew/opt/node/bin/node', '/usr/local/opt/node/bin/node']
+    return [Path(p) for p in found if p]
+
+
+def resolve_node(configured):
+    """The installed Node, or a compatible replacement when it was removed (e.g. nvm uninstall)."""
+    node = Path(configured)
+    if node.is_absolute() and os.access(node, os.X_OK):
+        return node
+    for candidate in node_candidates():
+        if candidate.is_absolute() and os.access(candidate, os.X_OK) and (node_version(candidate) or ()) >= MIN_NODE:
+            return candidate.resolve()
+    return None
+
+
 def install(destination, node):
     node = Path(node).resolve()
-    version = subprocess.check_output([str(node), '--version'], text=True).strip()
-    parts = tuple(int(p) for p in version.lstrip('v').split('.')[:2])
-    if parts < (22, 12):
+    if (node_version(node) or ()) < MIN_NODE:
         raise ValueError('Нужен Node.js 22.12 или новее / Node.js 22.12 or later is required')
     destination.mkdir(parents=True, exist_ok=True, mode=0o700)
     runtime = destination / ('chrome-devtools-' + LOCK['version'])

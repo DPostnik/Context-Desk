@@ -72,8 +72,13 @@ class ChromeHost:
         state = self.process_field(owner['pid'], 'stat')
         if state is None:
             return True
-        return (state.startswith('Z') and bool(owner.get('birth'))
-                and self.process_field(owner['pid'], 'lstart') == owner['birth'])
+        if not owner.get('birth'):
+            return False
+        birth = self.process_field(owner['pid'], 'lstart')
+        if birth and birth != owner['birth']:
+            # The PID was reused by another process: the recorded Chrome exited.
+            return True
+        return state.startswith('Z') and birth == owner['birth']
 
     def matches(self, owner):
         if not isinstance(owner, dict):

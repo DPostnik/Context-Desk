@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 # App resources are signed; never create __pycache__ inside the bundle.
 sys.dont_write_bytecode = True
 
-from install import LOCK, ROOT, verify
+from install import LOCK, ROOT, resolve_node, verify
 from transport import StdioRPC
 from chrome_host import ChromeHost
 from cdp import CDPError, CDPTransportError, PageSession, jpeg_size
@@ -119,8 +119,8 @@ class Browser:
         config = json.loads((self.installation_root / 'runtime.json').read_text())
         require(config['version'] == LOCK['version'], 'runtime_version_mismatch')
         entry = verify(self.installation_root / ('chrome-devtools-' + LOCK['version']))
-        node = Path(config['node'])
-        require(node.is_absolute() and os.access(node, os.X_OK), 'node_unavailable')
+        node = resolve_node(config['node'])
+        require(node is not None, 'node_unavailable')
         self.chrome = ChromeHost(self.root, language=LANGUAGE, max_browsers=self.max_browsers)
         endpoint = self.chrome.ensure(cancelled=self.stopped)
         env = {key: value for key, value in os.environ.items() if key in ('PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL')}
