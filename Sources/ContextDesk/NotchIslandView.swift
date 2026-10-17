@@ -371,8 +371,8 @@ struct NotchIslandSettings: View {
         Section(L10n.text("Остров в нотче", "Notch island")) {
             Toggle(L10n.text("Показывать остров над нотчем", "Show the island over the notch"), isOn: $enabled)
                 .onChange(of: enabled) { _, value in NotchIslandController.setEnabled(value) }
-            Text(L10n.text("Только на встроенном экране MacBook. Выключенный остров не тратит память и процессор.",
-                           "Built-in MacBook display only. When off, the island uses no memory or CPU."))
+            Text(L10n.text("Только на встроенном экране MacBook. Выключенный остров не тратит память и процессор. Пока запущено приложение Fringe, нотч показывает оно, а остров скрыт.",
+                           "Built-in MacBook display only. When off, the island uses no memory or CPU. While the Fringe app runs, it owns the notch and the island stays hidden."))
                 .font(.caption).foregroundStyle(.secondary)
         }
         // The island's own button may have turned it off while Settings was open in the background.

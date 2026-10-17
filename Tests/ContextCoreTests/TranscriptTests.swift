@@ -492,6 +492,18 @@ import ContextTranscript
     #expect((heights.last ?? .infinity) < 30)
 }
 
+@Test @MainActor func composerReportsHeightSynchronouslyAfterInsertedText() throws {
+    let editor = ComposerTextView(frame: NSRect(x: 0, y: 0, width: 300, height: 22))
+    editor.isRichText = false; editor.font = .systemFont(ofSize: 14)
+    editor.isVerticallyResizable = true; editor.textContainer?.widthTracksTextView = true
+    var heights: [CGFloat] = []
+    editor.onContentHeight = { heights.append($0) }
+    // Dictation and paste insert text; the viewport must be able to grow before the next frame.
+    editor.insertText(Array(repeating: "Длинная продиктованная строка", count: 8).joined(separator: " "),
+                      replacementRange: NSRange(location: 0, length: 0))
+    #expect((heights.last ?? 0) > 60)
+}
+
 @Test @MainActor func zoomedTranscriptWidthDoesNotOscillateWhileStreaming() throws {
     // Under magnification the autoresizing width (unmagnified clip width) and the
     // document-point width used to reset each other on every pass, an endless layout loop.

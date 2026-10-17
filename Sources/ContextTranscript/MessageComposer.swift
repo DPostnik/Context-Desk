@@ -80,8 +80,12 @@ public struct MessageComposer: NSViewRepresentable {
         if abs(editor.frame.width - width) > 0.5 {
             editor.setFrameSize(NSSize(width: width, height: editor.frame.height))
         }
-        if contentView.bounds.origin.x != 0 {
-            contentView.scroll(to: NSPoint(x: 0, y: contentView.bounds.origin.y))
+        // A viewport that grew after an edit scrolled to the caret keeps its old offset;
+        // pin it inside the document so the text does not hang below its top edge.
+        let maxY = max(0, editor.frame.height - contentView.bounds.height)
+        let origin = contentView.bounds.origin
+        if origin.x != 0 || origin.y > maxY {
+            contentView.scroll(to: NSPoint(x: 0, y: min(origin.y, maxY)))
             reflectScrolledClipView(contentView)
         }
     }
@@ -98,18 +102,21 @@ public final class ComposerTextView: NSTextView {
     }
     public override func didChangeText() {
         super.didChangeText()
-        reportContentHeight()
+        // An edit is not inside AppKit layout, so the viewport can grow in this same pass.
+        // A deferred report drew one frame with the old viewport scrolled to the caret,
+        // then a taller one: the text jumped on every new line while dictating or pasting.
+        reportContentHeight(deferred: false)
     }
     /// The text's own height. The frame cannot be used: inside a scroll view it never
     /// shrinks below the viewport, so a cleared draft would keep the composer tall.
-    public func reportContentHeight() {
+    public func reportContentHeight(deferred: Bool = true) {
         guard let onContentHeight, let manager = layoutManager, let container = textContainer else { return }
         manager.ensureLayout(for: container)
         let height = (manager.usedRect(for: container).height + textContainerInset.height * 2).rounded(.up)
         guard abs(height - reportedHeight) > 0.5 else { return }
         reportedHeight = height
         // Never publish SwiftUI state during AppKit layout.
-        DispatchQueue.main.async { onContentHeight(height) }
+        if deferred { DispatchQueue.main.async { onContentHeight(height) } } else { onContentHeight(height) }
     }
     /// Files keep the native result (paths at the drop point), but are read while the drop is still on
     /// and temporary ones, such as a screenshot thumbnail's, are copied before their source deletes them.
