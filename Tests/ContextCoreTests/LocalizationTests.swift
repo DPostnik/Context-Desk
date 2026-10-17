@@ -3,14 +3,11 @@ import Testing
 @testable import ContextCore
 
 @Test func languagePreferenceRoundTripsAndFallsBack() throws {
-    let suite = "ContextDesk.LocalizationTests.\(UUID().uuidString)"
+    // A fixed name: cfprefsd writes an empty plist for a removed suite, so a per-run UUID left one behind each run.
+    let suite = "SwitchboardTests.Localization"
     let defaults = try #require(UserDefaults(suiteName: suite))
-    defer {
-        defaults.removePersistentDomain(forName: suite)
-        // cfprefsd keeps an empty plist for every removed suite; without this each run leaves one behind.
-        try? FileManager.default.removeItem(at: FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Preferences/\(suite).plist"))
-    }
+    defaults.removePersistentDomain(forName: suite)
+    defer { defaults.removePersistentDomain(forName: suite) }
 
     #expect(AppLanguage.load(from: defaults) == .russian)
     defaults.set("unsupported", forKey: AppLanguage.preferenceKey)

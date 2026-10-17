@@ -47,15 +47,12 @@ private func temporaryParent() throws -> URL {
 }
 
 @Test func preferencesAreCopiedFromTheOldBundleIdOnce() throws {
-    let legacy = "SwitchboardTests.legacy.\(UUID().uuidString)", current = "SwitchboardTests.current.\(UUID().uuidString)"
+    // Fixed names: cfprefsd keeps an empty plist for every removed domain, so unique names would pile up.
+    let legacy = "SwitchboardTests.LegacyPreferences.old", current = "SwitchboardTests.LegacyPreferences.new"
     let defaults = UserDefaults.standard
-    defer {
-        for domain in [legacy, current] {
-            defaults.removePersistentDomain(forName: domain)
-            try? FileManager.default.removeItem(at: FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent("Library/Preferences/\(domain).plist"))
-        }
-    }
+    let reset = { [legacy, current].forEach(defaults.removePersistentDomain(forName:)) }
+    reset()
+    defer { reset() }
     #expect(!LegacyPreferencesMigration.run(domain: current, legacyDomain: legacy, defaults: defaults))
 
     defaults.setPersistentDomain(["language": "en", "zoom": 1.1], forName: legacy)
