@@ -124,6 +124,7 @@ struct ContextDeskApp: App {
                 .task {
                     delegate.model = model
                     NotchIslandController.start(model: model, showMainWindow: { [weak delegate] in delegate?.showMainWindow() })
+                    FringeLinkServer.start(model: model, showMainWindow: { [weak delegate] in delegate?.showMainWindow() })
                     await model.boot()
                 }
         }

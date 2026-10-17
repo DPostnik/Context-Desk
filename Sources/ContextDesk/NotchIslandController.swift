@@ -48,10 +48,12 @@ import ContextCore
 
     private static var running: NotchIslandController?
     private static var launch: (model: DeskModel, showMainWindow: () -> Void)?
+    /// True while the Fringe app owns the notch; the island steps aside without changing the user's setting.
+    private static var handedOff = false
     /// Starts once per process when enabled; reopening the main window keeps the same island.
     static func start(model: DeskModel, showMainWindow: @escaping () -> Void) {
         launch = (model, showMainWindow)
-        guard running == nil, NotchPreferences.load().enabled else { return }
+        guard running == nil, !handedOff, NotchPreferences.load().enabled else { return }
         running = NotchIslandController(model: model, showMainWindow: showMainWindow)
         running?.start()
     }
@@ -62,6 +64,12 @@ import ContextCore
         preferences.save()
         if enabled, let launch { start(model: launch.model, showMainWindow: launch.showMainWindow) }
         if !enabled { running?.stop(); running = nil }
+    }
+    /// Fringe connected (true) or disconnected (false). Two panels never share the notch.
+    static func setHandedOff(_ value: Bool) {
+        guard handedOff != value else { return }
+        handedOff = value
+        if value { running?.stop(); running = nil } else if let launch { start(model: launch.model, showMainWindow: launch.showMainWindow) }
     }
 
     private init(model: DeskModel, showMainWindow: @escaping () -> Void) {
@@ -127,7 +135,19 @@ import ContextCore
 
     // MARK: Snapshot
 
-    private func refresh() {
+    /// The chats and requests worth showing over the notch; shared with the Fringe channel.
+    struct Snapshot {
+        /// Every chat with something to show, unordered.
+        var chats: [NotchChat]
+        /// At most eight, most urgent first.
+        var ordered: [NotchChat]
+        /// Pending requests of the ordered chats.
+        var actions: [PendingAction]
+        var working: Set<String>
+        var waitingChats: Set<String>
+    }
+
+    static func snapshot(model: DeskModel) -> Snapshot {
         let projects = Dictionary(model.state.projects.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
         let waitingChats = Set(model.pending.map(\.threadID))
         var chats: [NotchChat] = [], working: Set<String> = []
@@ -141,12 +161,18 @@ import ContextCore
         }
         let ordered = NotchChat.ordered(chats)
         let visible = Set(ordered.map(\.id))
-        if state.chats != ordered { state.chats = ordered }
-        let actions = model.pending.filter { visible.contains($0.threadID) }
-        if state.actions.map(\.id) != actions.map(\.id) { state.actions = actions }
-        let summary = NotchSummary(ordered)
+        return Snapshot(chats: chats, ordered: ordered, actions: model.pending.filter { visible.contains($0.threadID) },
+                        working: working, waitingChats: waitingChats)
+    }
+
+    private func refresh() {
+        let snapshot = Self.snapshot(model: model)
+        if state.chats != snapshot.ordered { state.chats = snapshot.ordered }
+        if state.actions.map(\.id) != snapshot.actions.map(\.id) { state.actions = snapshot.actions }
+        let summary = NotchSummary(snapshot.ordered)
         if state.summary != summary { state.summary = summary }
-        announce(tracker.update(working: working, waitingRequests: Set(model.pending.map(\.id)), waitingChats: waitingChats), chats: chats)
+        announce(tracker.update(working: snapshot.working, waitingRequests: Set(model.pending.map(\.id)), waitingChats: snapshot.waitingChats),
+                 chats: snapshot.chats)
         applyMode()
     }
 

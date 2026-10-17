@@ -11,13 +11,15 @@ let package = Package(
     dependencies: [.package(url: "https://github.com/dduan/TOMLDecoder.git", exact: "0.4.5")],
     targets: [
         .target(name: "AgentContract"),
+        // Vendored from github.com/DPostnik/fringe Packages/FringeProtocol; protocol version pinned by FringeProtocol.version.
+        .target(name: "FringeProtocol"),
         .systemLibrary(name: "CSQLite"),
         .target(name: "ContextCore", dependencies: ["AgentContract", "CSQLite", "TOMLDecoder"]),
         .target(name: "ClaudeAdapter", dependencies: ["AgentContract", "ContextCore"]),
         .target(name: "CodexAdapter", dependencies: ["AgentContract", "ContextCore"]),
         .target(name: "ContextTranscript", dependencies: ["ContextCore"]),
-        .executableTarget(name: "ContextDesk", dependencies: ["ContextCore", "ContextTranscript", "CodexAdapter", "ClaudeAdapter"]),
+        .executableTarget(name: "ContextDesk", dependencies: ["ContextCore", "ContextTranscript", "CodexAdapter", "ClaudeAdapter", "FringeProtocol"]),
         .executableTarget(name: "ContextProbe", dependencies: ["ContextCore", "CodexAdapter"]),
-        .testTarget(name: "ContextCoreTests", dependencies: ["AgentContract", "ContextCore", "CodexAdapter", "ClaudeAdapter", "ContextTranscript", "ContextDesk"])
+        .testTarget(name: "ContextCoreTests", dependencies: ["AgentContract", "ContextCore", "CodexAdapter", "ClaudeAdapter", "ContextTranscript", "ContextDesk", "FringeProtocol"])
     ]
 )
