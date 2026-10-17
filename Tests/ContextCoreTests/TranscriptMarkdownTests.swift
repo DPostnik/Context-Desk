@@ -244,6 +244,36 @@ $ swift test
     #expect(text.items.isEmpty)
 }
 
+@Test @MainActor func fileLinkMenuCopiesRelativeAndAbsolutePaths() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("md-paths-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let file = directory.appendingPathComponent("Sources/View.swift")
+    try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try "struct View {}".write(to: file, atomically: true, encoding: .utf8)
+    let pasteboard = NSPasteboard.withUniqueName()
+    defer { pasteboard.releaseGlobally() }
+    let view = renderedView("См. Sources/View.swift:12 и [tmp](/tmp)", project: directory.path, pasteboard: pasteboard)
+    let event = try #require(NSEvent.mouseEvent(with: .rightMouseDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                                windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+    func run(_ menu: NSMenu, _ title: String) throws -> String? {
+        let item = try #require(menu.items.first { $0.title == title })
+        _ = (item.target as AnyObject?)?.perform(item.action, with: item)
+        return pasteboard.string(forType: .string)
+    }
+    let relativeTitle = L10n.text("Скопировать относительный путь", "Copy Relative Path")
+    let absoluteTitle = L10n.text("Скопировать абсолютный путь", "Copy Absolute Path")
+    let menu = try #require(view.textView(view.transcript, menu: NSMenu(), for: event, at: location(of: "View.swift", in: view)))
+    #expect(try run(menu, relativeTitle) == "Sources/View.swift")
+    #expect(try run(menu, absoluteTitle).map { URL(fileURLWithPath: $0).standardizedFileURL.path } == file.standardizedFileURL.path)
+    // Files outside the project offer only the absolute path.
+    let outside = try #require(view.textView(view.transcript, menu: NSMenu(), for: event, at: location(of: "tmp", in: view)))
+    #expect(!outside.items.contains { $0.title == relativeTitle })
+    #expect(try run(outside, absoluteTitle) == "/tmp")
+    #expect(TranscriptScrollView.relativePath("/a/b", project: "/a/b") == nil)
+    #expect(TranscriptScrollView.relativePath("/a/bc/d", project: "/a/b") == nil)
+    #expect(TranscriptScrollView.relativePath("/a/b/c/d.swift", project: "/a/b/") == "c/d.swift")
+}
+
 @Test @MainActor func manyWebLinksAddACollapsedSourcesList() throws {
     let text = "См. [один](https://a.example/1), [два](https://b.example/2), https://c.example/3 и снова [один](https://a.example/1).\n```\nhttps://code.example\n```"
     #expect(TranscriptMarkdown.webSources(in: text).map(\.url.host) == ["a.example", "b.example", "c.example"])

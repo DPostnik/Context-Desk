@@ -895,6 +895,15 @@ public struct NativeTranscript: NSViewRepresentable {
         return .preview
     }
 
+    /// The path relative to the chat's project, or nil when the file lies outside it.
+    public static func relativePath(_ path: String, project: String?) -> String? {
+        guard let project else { return nil }
+        let base = URL(fileURLWithPath: project).standardizedFileURL.pathComponents
+        let target = URL(fileURLWithPath: path).standardizedFileURL.pathComponents
+        guard target.count > base.count, Array(target.prefix(base.count)) == base else { return nil }
+        return target.dropFirst(base.count).joined(separator: "/")
+    }
+
     /// Links get their own actions above the standard text menu.
     public func textView(_ view: NSTextView, menu: NSMenu, for event: NSEvent, at charIndex: Int) -> NSMenu? {
         guard let storage = transcript.textStorage, charIndex >= 0, charIndex < storage.length,
@@ -913,7 +922,14 @@ public struct NativeTranscript: NSViewRepresentable {
             let file = URL(fileURLWithPath: url.path)
             add(L10n.text("Открыть в программе по умолчанию", "Open in Default App")) { NSWorkspace.shared.open(file) }
             add(L10n.text("Показать в Finder", "Show in Finder")) { NSWorkspace.shared.activateFileViewerSelecting([file]) }
-            add(L10n.text("Скопировать путь", "Copy Path")) { pasteboard.clearContents(); pasteboard.setString(url.path, forType: .string) }
+            if let relative = Self.relativePath(url.path, project: projectPath) {
+                add(L10n.text("Скопировать относительный путь", "Copy Relative Path")) {
+                    pasteboard.clearContents(); pasteboard.setString(relative, forType: .string)
+                }
+            }
+            add(L10n.text("Скопировать абсолютный путь", "Copy Absolute Path")) {
+                pasteboard.clearContents(); pasteboard.setString(url.path, forType: .string)
+            }
         } else {
             add(L10n.text("Открыть ссылку", "Open Link")) { NSWorkspace.shared.open(url) }
             add(L10n.text("Скопировать ссылку", "Copy Link")) {
