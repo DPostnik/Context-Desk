@@ -28,7 +28,7 @@ minified bundle; behaviour only, no code reused):
 - Safety: per-domain permissions, plan approval, sensitive-field redaction. No
   per-action verify round-trip: the next observation is the check.
 
-## Current gaps in Context Desk
+## Current gaps in Switchboard
 
 - Only 7 upstream actions (`server.py` `browser_action`); no scroll, hover, drag,
   coordinates, JS evaluation, dialogs or waiting.

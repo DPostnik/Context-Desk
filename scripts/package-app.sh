@@ -1,7 +1,7 @@
 #!/bin/zsh
 set -euo pipefail
 cd "$(dirname "$0")/.."
-app="$PWD/build/Context Desk.app"
+app="$PWD/build/Switchboard.app"
 codesign --verify --deep --strict "$app"
 python3 - "$app" <<'PY'
 import hashlib, json, pathlib, sys

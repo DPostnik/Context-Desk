@@ -65,7 +65,7 @@ public actor ClaudeIntegration: AgentIntegration {
     private var meters: [String: ClaudeUsageMeter] = [:]
     private var generations: [UUID: ClaudeGenerationRunner] = [:]
     private var cancelledGenerations = Set<UUID>()
-    /// App bundle resources when the Context Desk browser is attached to chats; nil keeps chats browser-less.
+    /// App bundle resources when the Switchboard browser is attached to chats; nil keeps chats browser-less.
     private var browserResources: URL?
     /// Full-access interactive chats get the CLI's Claude in Chrome tools for the user's own Chrome.
     private var userChrome = false
@@ -386,7 +386,7 @@ public actor ClaudeIntegration: AgentIntegration {
     static func userChromeInstructions(language: AppLanguage = L10n.language) -> String {
         L10n.text(
             """
-            Chrome пользователя в Context Desk:
+            Chrome пользователя в Switchboard:
             - Инструменты `mcp__claude-in-chrome__*` управляют настоящим Chrome пользователя через расширение Claude in Chrome: его входы на сайты, его вкладки.
             - Если пользователь просит использовать его браузер или его Chrome («в моём браузере», «через мой Chrome»), работай этими инструментами, а не встроенным браузером.
             - Иначе начинай со встроенного браузера `context_desk_browser`, если он подключён. Когда он не может получить нужное, переходи в Chrome пользователя сам, без отдельного вопроса: нет входа на сайт (и импорт сессии недоступен или не помог), сайт блокирует встроенный браузер или не пускает дальше, нужное действие встроенный браузер не выполняет. Файлы встроенный браузер загружает сам (`browser_input` action=upload по ref поля или кнопки загрузки); в Chrome пользователя (`file_upload`) переходи, только если такая загрузка не удалась. Если встроенный браузер не подключён, сразу используй Chrome пользователя. Кратко сообщи пользователю, что перешёл в его Chrome и почему.
@@ -395,7 +395,7 @@ public actor ClaudeIntegration: AgentIntegration {
             - Вход на сайт не разрешает новых внешних действий: отправка сообщений, заявок, покупки и публикации требуют прежних подтверждений.
             """,
             """
-            The user's Chrome in Context Desk:
+            The user's Chrome in Switchboard:
             - The `mcp__claude-in-chrome__*` tools drive the user's real Chrome through the Claude in Chrome extension, with the user's site sign-ins and tabs.
             - When the user asks you to use their browser or their Chrome ("in my browser", "with my Chrome"), use these tools rather than the built-in browser.
             - Otherwise start with the built-in `context_desk_browser` when it is attached. When it cannot get what the task needs, switch to the user's Chrome on your own without asking: a missing site sign-in (and session import is unavailable or did not help), the site blocks the built-in browser or will not let it proceed, or an action the built-in browser cannot perform. The built-in browser uploads files itself (`browser_input` action=upload with the ref of the file field or upload button); switch to the user's Chrome (`file_upload`) only if that upload fails. If the built-in browser is not attached, use the user's Chrome directly. Briefly tell the user that you switched to their Chrome and why.
@@ -408,14 +408,14 @@ public actor ClaudeIntegration: AgentIntegration {
     static func delegationInstructions(language: AppLanguage = L10n.language) -> String {
         L10n.text(
             """
-            Подагенты в Context Desk:
-            - Независимых подагентов запускай с `run_in_background: true`. Пользователь видит их ход в Context Desk, а ты получаешь каждый результат сразу по готовности: Context Desk держит сессию и возобновляет тебя после завершения каждого подагента. Блокирующий запуск используй только для короткой работы, без результата которой делать нечего.
+            Подагенты в Switchboard:
+            - Независимых подагентов запускай с `run_in_background: true`. Пользователь видит их ход в Switchboard, а ты получаешь каждый результат сразу по готовности: Switchboard держит сессию и возобновляет тебя после завершения каждого подагента. Блокирующий запуск используй только для короткой работы, без результата которой делать нечего.
             - Решай по задаче, когда двигаться дальше. Если результат полезен сам по себе (его можно обработать, проверить, дать по нему следующий шаг), займись им сразу, не дожидаясь остальных. Если следующему шагу действительно нужны несколько результатов вместе (сравнение, объединение, общее решение), при промежуточных пробуждениях кратко отметь, что пришло и чего ещё ждёшь, и заверши ход до появления нужного набора. Начать можно и после части результатов, если её достаточно.
             - Если пользователь указал, каких результатов ждать перед следующим шагом, следуй его указанию.
             """,
             """
-            Sub-agents in Context Desk:
-            - Launch independent sub-agents with `run_in_background: true`. The user follows their progress in Context Desk, and you get each result as soon as it is ready: Context Desk keeps the session alive and resumes you each time a sub-agent finishes. Use blocking sub-agents only for short work you cannot do anything without.
+            Sub-agents in Switchboard:
+            - Launch independent sub-agents with `run_in_background: true`. The user follows their progress in Switchboard, and you get each result as soon as it is ready: Switchboard keeps the session alive and resumes you each time a sub-agent finishes. Use blocking sub-agents only for short work you cannot do anything without.
             - Decide per task when to move on. If a result is useful on its own (it can be processed, checked or acted on), handle it right away without waiting for the others. If the next step genuinely needs several results together (comparison, merge, a combined decision), on intermediate resumes briefly note what arrived and what you still wait for, then end the turn until the required set is in. You may also start once a sufficient subset has arrived.
             - If the user said which results to wait for before the next step, follow that.
             """, language: language)

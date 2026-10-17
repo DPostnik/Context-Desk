@@ -276,7 +276,7 @@ public enum RemoteFailure: Error, LocalizedError {
         }
     }
     static func keychainDescription(_ code: OSStatus, language: AppLanguage) -> String {
-        L10n.text("Не удалось получить доступ к сессии в Связке ключей (код \(code)). Проверь, что Связка ключей разблокирована и доступ для Context Desk разрешён.", "Could not access the session in Keychain (code \(code)). Check that Keychain is unlocked and Context Desk is allowed access.", language: language)
+        L10n.text("Не удалось получить доступ к сессии в Связке ключей (код \(code)). Проверь, что Связка ключей разблокирована и доступ для Switchboard разрешён.", "Could not access the session in Keychain (code \(code)). Check that Keychain is unlocked and Switchboard is allowed access.", language: language)
     }
 }
 public enum RemoteVault {

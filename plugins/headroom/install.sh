@@ -7,7 +7,7 @@ if [[ ! -x "$uv_bin" ]]; then uv_bin="$(command -v uv)"; fi
 # Install only while this plugin is stopped; do not mutate a live runtime.
 if [[ -d "$plugin_root/data" ]]; then
   for ready in "$plugin_root"/data/ready-*.json(N); do
-    print -u2 'Закрой Context Desk перед обновлением плагина. / Quit Context Desk before updating the plugin.'
+    print -u2 'Закрой Switchboard перед обновлением плагина. / Quit Switchboard before updating the plugin.'
     exit 1
   done
 fi

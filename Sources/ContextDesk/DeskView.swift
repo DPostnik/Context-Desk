@@ -104,7 +104,7 @@ struct DeskView: View {
     private var sidebar: some View {
             VStack(spacing: .ui(12)) {
                 HStack {
-                    Text("Context Desk").font(.ui(.headline))
+                    Text("Switchboard").font(.ui(.headline))
                     Spacer()
                     Button { showingNotifications.toggle() } label: {
                         Image(systemName: (model.notices.isEmpty && !model.state.chats.contains(where: \.hasUnreadResponse)) ? "bell" : "bell.badge.fill")
@@ -1085,7 +1085,7 @@ struct JobDetail: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 Text(job.name).font(.ui(.title2).bold())
-                Label(L10n.text("Исходное задание · ещё не управляется Context Desk", "Source task · not yet managed by Context Desk"), systemImage: "eye").foregroundStyle(.secondary)
+                Label(L10n.text("Исходное задание · ещё не управляется Switchboard", "Source task · not yet managed by Switchboard"), systemImage: "eye").foregroundStyle(.secondary)
                 LabeledContent(L10n.text("Состояние", "Status"), value: job.status == "ACTIVE" ? L10n.text("Включено", "Enabled") : job.status == "PAUSED" ? L10n.text("Приостановлено", "Paused") : L10n.text("Неизвестно", "Unknown"))
                 LabeledContent(L10n.text("Тип", "Type"), value: job.kind)
                 VStack(alignment: .leading, spacing: 8) { Text(L10n.text("Расписание", "Schedule")).font(.ui(.headline)); Text(job.schedule).textSelection(.enabled) }
@@ -1173,7 +1173,7 @@ struct SettingsView: View {
             }
             Section(L10n.text("Подписка Claude", "Claude subscription")) {
                 Text(model.claudeAuthenticated ? L10n.text("Вход выполнен", "Signed in") : L10n.text("Вход не выполнен", "Not signed in"))
-                Text(L10n.text("Официальный Claude Code 2.1.260. Вход открывается в Terminal, в отдельном профиле Context Desk. После входа нажми «Проверить вход». Существующий профиль Claude Code не изменяется.", "Official Claude Code 2.1.260. Sign-in opens in Terminal using a separate Context Desk profile. Afterwards, click Check sign-in. Your existing Claude Code profile is unchanged."))
+                Text(L10n.text("Официальный Claude Code 2.1.260. Вход открывается в Terminal, в отдельном профиле Switchboard. После входа нажми «Проверить вход». Существующий профиль Claude Code не изменяется.", "Official Claude Code 2.1.260. Sign-in opens in Terminal using a separate Switchboard profile. Afterwards, click Check sign-in. Your existing Claude Code profile is unchanged."))
                     .font(.ui(.caption)).foregroundStyle(.secondary)
                 Button(L10n.text("Войти по подписке Claude", "Sign in with Claude subscription")) { Task { await model.loginClaude() } }.disabled(model.anyBusy || model.claudeConnecting)
                 Button(L10n.text("Проверить вход", "Check sign-in")) { Task { if model.claudeConnected { await model.refreshClaudeAccount() } else { await model.connectClaude() } } }.disabled(model.claudeConnecting)
@@ -1214,7 +1214,7 @@ struct SettingsView: View {
             Section(L10n.text("Мой Chrome", "My Chrome")) {
                 Toggle(L10n.text("Разрешить чатам Claude управлять моим Chrome", "Let Claude chats control my Chrome"),
                        isOn: Binding(get: { model.state.userChromeEnabled != false }, set: { model.selectUserChromeEnabled($0) }))
-                Text(L10n.text("Чаты Claude с полным доступом получают инструменты расширения Claude in Chrome: агент открывает свои вкладки в твоём обычном Chrome с твоими входами на сайты и может загружать файлы. Нужны расширение Claude in Chrome, вход в нём в тот же аккаунт Claude, что и в Context Desk, и открытый Chrome. Пока агент работает, Chrome показывает полосу об отладке. Запланированные задачи и чаты Codex этот путь не используют.", "Full-access Claude chats get the Claude in Chrome extension tools: the agent opens its own tabs in your regular Chrome with your site sign-ins and can upload files. Requires the Claude in Chrome extension signed in to the same Claude account as Context Desk, and Chrome running. While the agent works, Chrome shows a debugging bar. Scheduled tasks and Codex chats do not use this path."))
+                Text(L10n.text("Чаты Claude с полным доступом получают инструменты расширения Claude in Chrome: агент открывает свои вкладки в твоём обычном Chrome с твоими входами на сайты и может загружать файлы. Нужны расширение Claude in Chrome, вход в нём в тот же аккаунт Claude, что и в Switchboard, и открытый Chrome. Пока агент работает, Chrome показывает полосу об отладке. Запланированные задачи и чаты Codex этот путь не используют.", "Full-access Claude chats get the Claude in Chrome extension tools: the agent opens its own tabs in your regular Chrome with your site sign-ins and can upload files. Requires the Claude in Chrome extension signed in to the same Claude account as Switchboard, and Chrome running. While the agent works, Chrome shows a debugging bar. Scheduled tasks and Codex chats do not use this path."))
                     .font(.ui(.callout)).foregroundStyle(.secondary)
                 Text(L10n.text("Применяется переподключением Claude сразу после переключения, если ни один чат Claude не выполняет задачу. Иначе переключи настройку ещё раз, когда задачи завершатся.", "Applied by reconnecting Claude right after the switch, if no Claude chat is running a task. Otherwise switch it again once those tasks finish."))
                     .font(.ui(.caption)).foregroundStyle(.secondary)

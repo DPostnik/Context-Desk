@@ -1,9 +1,9 @@
 ---
 name: schedule-control
-description: Inspect, import, edit, enable or pause Context Desk recurring tasks through the running scheduler. Transfer originals only through an available supported source-scheduler tool.
+description: Inspect, import, edit, enable or pause Switchboard recurring tasks through the running scheduler. Transfer originals only through an available supported source-scheduler tool.
 metadata:
-  description-ru: Импорт, изменение, включение и пауза постоянных рутин через планировщик Context Desk.
-  description-en: Import, edit, enable and pause ongoing routines through the Context Desk scheduler.
+  description-ru: Импорт, изменение, включение и пауза постоянных рутин через планировщик Switchboard.
+  description-en: Import, edit, enable and pause ongoing routines through the Switchboard scheduler.
 ---
 
 # Schedule control

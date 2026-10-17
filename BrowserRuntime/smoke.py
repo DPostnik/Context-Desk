@@ -14,7 +14,7 @@ sys.dont_write_bytecode = True
 from install import ROOT, LOCK
 from server import Browser, Rejected
 
-HTML = '''<!doctype html><title>Context Desk browser fixture</title>
+HTML = '''<!doctype html><title>Switchboard browser fixture</title>
 <style>#list{height:200px;overflow:auto}.card{height:80px}body{margin:20px}</style>
 <div id="loading">Loading</div><div id="list"></div>
 <button id="next">Next fixture page</button><button id="noop">No-op fixture</button>

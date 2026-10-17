@@ -47,7 +47,7 @@ import IOKit.pwr_mgt
         let result = IOPMAssertionCreateWithName(
             kIOPMAssertionTypePreventUserIdleSystemSleep as CFString,
             IOPMAssertionLevel(kIOPMAssertionLevelOn),
-            L10n.text("Context Desk: запрет автоматического сна", "Context Desk: prevent automatic sleep") as CFString,
+            L10n.text("Switchboard: запрет автоматического сна", "Switchboard: prevent automatic sleep") as CFString,
             &id)
         guard result == kIOReturnSuccess else { throw PowerError(code: result) }
         assertionID = id
@@ -78,8 +78,8 @@ struct KeepAwakeSettings: View {
             Toggle(L10n.text("Не давать Mac засыпать", "Keep Mac awake"),
                    isOn: Binding(get: { controller.enabled }, set: { controller.setEnabled($0) }))
             Text(L10n.text(
-                "Пока Context Desk запущен, Mac не засыпает от бездействия, даже если окно закрыто. Настройка сохраняется. Экран может гаснуть; закрытие крышки и ручной сон по-прежнему работают. Расход батареи может увеличиться.",
-                "While Context Desk is running, your Mac stays awake when idle, even with the window closed. This setting is saved. The display can sleep; closing the lid and manual sleep still work. Battery use may increase."))
+                "Пока Switchboard запущен, Mac не засыпает от бездействия, даже если окно закрыто. Настройка сохраняется. Экран может гаснуть; закрытие крышки и ручной сон по-прежнему работают. Расход батареи может увеличиться.",
+                "While Switchboard is running, your Mac stays awake when idle, even with the window closed. This setting is saved. The display can sleep; closing the lid and manual sleep still work. Battery use may increase."))
                 .font(.ui(.caption)).foregroundStyle(.secondary)
             if let error = controller.error {
                 Text(error).font(.ui(.caption)).foregroundStyle(.red)

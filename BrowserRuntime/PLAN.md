@@ -7,7 +7,7 @@ and authenticated LinkedIn benchmarks. This is an adapter, not a browser engine.
 
 1. Install and verify Chrome DevTools MCP 1.10.1 by published SHA-512; connect it
    through an app-bundled stdio adapter and an opt-in native settings control.
-   Keep browser data under Context Desk and leave Codex/project policies intact.
+   Keep browser data under Switchboard and leave Codex/project policies intact.
 2. Add compact selector-based card extraction, incremental scrolling, stable
    metadata checks, explicit partial results and bounded response sizes.
 3. Verify navigation and pagination postconditions. Persist private checkpoints,

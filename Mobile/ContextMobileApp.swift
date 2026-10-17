@@ -267,7 +267,7 @@ struct MobileRoot: View {
                     .overlay {
                         if model.devices.isEmpty {
                             ContentUnavailableView(L10n.text("Подключи Mac", "Connect your Mac"), systemImage: "desktopcomputer",
-                                description: Text(L10n.text("В настройках Context Desk на Mac выбери проекты и включи мобильный доступ.", "Select projects and enable mobile access in Context Desk settings on your Mac.")))
+                                description: Text(L10n.text("В настройках Switchboard на Mac выбери проекты и включи мобильный доступ.", "Select projects and enable mobile access in Switchboard settings on your Mac.")))
                         } else if !search.isEmpty && !model.devices.contains(where: { $0.snapshot.chats.contains(where: { $0.title.localizedCaseInsensitiveContains(search) }) }) {
                             ContentUnavailableView.search(text: search)
                         }
@@ -277,7 +277,7 @@ struct MobileRoot: View {
                         Section {
                             Label(L10n.text("Твои проекты всегда рядом", "Your projects, wherever you are"), systemImage: "macbook.and.iphone")
                                 .font(.title3.weight(.semibold)).padding(.vertical, 12)
-                            Text(L10n.text("Подключись к той же учётной записи, что и Context Desk на Mac.", "Connect with the same account as Context Desk on your Mac."))
+                            Text(L10n.text("Подключись к той же учётной записи, что и Switchboard на Mac.", "Connect with the same account as Switchboard on your Mac."))
                                 .foregroundStyle(.secondary)
                         }
                         Section(L10n.text("Подключение", "Connection")) {
@@ -292,7 +292,7 @@ struct MobileRoot: View {
                     }
                 }
             }
-            .navigationTitle(model.signedIn ? L10n.text("Чаты", "Chats") : "Context Desk")
+            .navigationTitle(model.signedIn ? L10n.text("Чаты", "Chats") : "Switchboard")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     if model.signedIn {
@@ -429,7 +429,7 @@ struct MobileNewChatView: View {
                 }
                 if let choice = choices.first(where: { $0.id == selection }) {
                     if choice.project.canCreateChat != true {
-                        Text(L10n.text("Обнови и открой Context Desk на Mac, подключи Codex или Claude и включи мобильный доступ.", "Update and open Context Desk on your Mac, connect Codex or Claude and enable mobile access."))
+                        Text(L10n.text("Обнови и открой Switchboard на Mac, подключи Codex или Claude и включи мобильный доступ.", "Update and open Switchboard on your Mac, connect Codex or Claude and enable mobile access."))
                             .font(.footnote).foregroundStyle(.secondary)
                     }
                     Button {
@@ -1075,7 +1075,7 @@ struct MessageBubble: View {
 #if targetEnvironment(simulator)
 extension MobileModel {
     func loadPreview() {
-        var project = RemoteProject(id: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", name: "Context Desk", canCreateChat: true)
+        var project = RemoteProject(id: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", name: "Switchboard", canCreateChat: true)
         project.models = [RemoteModelOption(id: "fixture-a", name: "Model A"), RemoteModelOption(id: "fixture-b", name: "Model B")]
         project.newChatModels = [RemoteModelOption(id: "fixture-a", name: "Model A", agent: RemoteModelOption.codexAgent),
                                  RemoteModelOption(id: "fixture-b", name: "Model B", agent: RemoteModelOption.codexAgent),

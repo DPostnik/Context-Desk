@@ -107,7 +107,7 @@ struct ContextDeskApp: App {
     }
 
     var body: some Scene {
-        Window("Context Desk", id: "main") {
+        Window("Switchboard", id: "main") {
             Group {
                 if model.isBootstrapping {
                     StartupLoadingView()
@@ -211,7 +211,7 @@ private struct StartupLoadingView: View {
     var body: some View {
         VStack(spacing: 16) {
             ProgressView().controlSize(.large)
-            Text(L10n.text("Загружаем Context Desk…", "Loading Context Desk…")).font(.ui(.headline))
+            Text(L10n.text("Загружаем Switchboard…", "Loading Switchboard…")).font(.ui(.headline))
             Text(L10n.text("Подключаемся и проверяем аккаунт", "Connecting and checking your account")).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

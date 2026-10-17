@@ -42,7 +42,7 @@ import Testing
         let panel = model.showingJobs ? AnyView(JobsView(model: model)) : AnyView(ChatView(model: model))
         let host = NSHostingView(rootView: panel.environment(\.locale, L10n.locale).preferredColorScheme(.light).background(Color.white))
         let window = NSWindow(contentRect: NSRect(x: 60, y: 60, width: 1000, height: 760), styleMask: [.titled, .resizable], backing: .buffered, defer: false)
-        window.title = "Context Desk · Synthetic demo"
+        window.title = "Switchboard · Synthetic demo"
         window.contentView = host; window.backgroundColor = .white
         host.frame = NSRect(x: 0, y: 0, width: 1000, height: 760)
         window.orderBack(nil)

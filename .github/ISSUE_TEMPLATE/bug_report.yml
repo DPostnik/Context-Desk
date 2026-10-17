@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a reproducible problem with Context Desk.
+description: Report a reproducible problem with Switchboard.
 title: "[Bug]: "
 body:
   - type: markdown
@@ -9,7 +9,7 @@ body:
     id: environment
     attributes:
       label: Environment
-      description: macOS, chip, Swift/Xcode version, Codex version, Context Desk commit, and optional integrations in use.
+      description: macOS, chip, Swift/Xcode version, Codex version, Switchboard commit, and optional integrations in use.
     validations:
       required: true
   - type: textarea

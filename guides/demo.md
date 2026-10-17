@@ -16,7 +16,7 @@ Window capture was attempted from this environment with macOS `screencapture -l`
 
 | Time | Screen and action | Spoken point |
 | --- | --- | --- |
-| 0–8 s | Context Desk open on the disposable code project; show the app name | A native Mac workspace shaped around everyday agent work |
+| 0–8 s | Switchboard open on the disposable code project; show the app name | A native Mac workspace shaped around everyday agent work |
 | 8–20 s | Show the tiny function and the two failing tests, then the example prompt in the composer | One specific, reproducible task, with acceptance tests |
 | 20–32 s | Send the prompt; show tool activity and inspect an approval if one occurs | The agent works in the selected project; requests remain visible |
 | 32–47 s | Show the changed function and final test result; rerun the tests in a terminal scoped to the demo folder | Five passing tests are the evidence, not the final chat sentence |
@@ -28,7 +28,7 @@ Model duration is variable. Record the whole run; if it exceeds the timing, cut 
 
 ## Suggested English narration
 
-> I built Context Desk because I wanted a Mac workspace I could shape around my everyday work with agents.
+> I built Switchboard because I wanted a Mac workspace I could shape around my everyday work with agents.
 >
 > Here is a small example: this Python function fails two whitespace tests. I open its folder, ask Codex to fix it, and keep the existing tests as the acceptance criteria.
 >
@@ -36,7 +36,7 @@ Model duration is variable. Record the whole run; if it exceeds the timing, cut 
 >
 > The app also shows context estimates and the active request route. These are visibility tools; I am not claiming lower subscription usage.
 >
-> Another example checks a local workshop catalog through a separate Chrome profile. Tasks can run on a schedule while Context Desk is open and the Mac is awake.
+> Another example checks a local workshop catalog through a separate Chrome profile. Tasks can run on a schedule while Switchboard is open and the Mac is awake.
 >
 > This is an early source preview. The repository includes build instructions and both examples. If you try it, I would like to hear what worked and where you got stuck through GitHub Issues.
 

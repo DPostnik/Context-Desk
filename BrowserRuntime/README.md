@@ -2,7 +2,7 @@
 
 ## English
 
-Chrome DevTools MCP 1.10.1 provides the browser executor. Context Desk adds compact
+Chrome DevTools MCP 1.10.1 provides the browser executor. Switchboard adds compact
 card extraction, readiness checks, verified pagination and private checkpoints.
 Install Node.js 22.12 or later, then run from the repository:
 
@@ -81,7 +81,7 @@ on a frame's submit buttons follow the same rules as on the page itself.
 
 ## Русский
 
-Исполнитель браузера — Chrome DevTools MCP 1.10.1. Context Desk добавляет компактное
+Исполнитель браузера — Chrome DevTools MCP 1.10.1. Switchboard добавляет компактное
 чтение карточек, проверку загрузки и переходов, а также локальные контрольные точки.
 Установи Node.js 22.12 или новее, затем выполни из папки проекта:
 
@@ -249,7 +249,7 @@ static traversal against an isolated two-page local fixture. See
 
 ## Parallel chat browsers / Параллельные браузеры чатов
 
-English: each Context Desk Codex chat receives a host-generated environment UUID
+English: each Switchboard Codex chat receives a host-generated environment UUID
 through its thread-specific MCP configuration. The saved native thread binding
 survives reconnects and app restarts. Browser files are under
 `environments/<UUID>/`; installation files remain shared. The old `testing-profile`
@@ -263,7 +263,7 @@ in one environment does not block another. There is no automatic action replay.
 Individual clients within an environment retain separate tokens and project file
 permissions. Subagents that inherit the parent's MCP configuration still share
 that environment; automatic per-subagent profile allocation is not implemented.
-The independent unit in this release is a Context Desk chat.
+The independent unit in this release is a Switchboard chat.
 
 Settings → Browser controls the maximum number of open managed environment
 browsers (default 2, range 1–8). Apply after current tasks finish. Admission is
@@ -281,7 +281,7 @@ close command. Profiles remain after close. The next explicit `browser_open`
 starts a new session; old tokens are not transferred. Native OS dialogs and
 system mouse/keyboard input still share the macOS desktop.
 
-Русский: каждому чату Codex в Context Desk приложение назначает собственную
+Русский: каждому чату Codex в Switchboard приложение назначает собственную
 браузерную среду. Привязка к сессии сохраняется после переподключения и перезапуска.
 У каждого чата отдельные профиль, процесс Chrome, исполнитель, очередь и журнал
 действий. Зависание или неопределённый результат в одной среде не блокируют другую.
@@ -305,9 +305,9 @@ system mouse/keyboard input still share the macOS desktop.
 профили для них автоматически не создаются. Системные диалоги, мышь и клавиатура
 macOS остаются общими.
 
-Activation: finish active tasks, quit Context Desk with Cmd+Q and reopen the rebuilt
+Activation: finish active tasks, quit Switchboard with Cmd+Q and reopen the rebuilt
 app. No running adapter or browser is killed automatically.
-Активация: заверши текущие задачи, выйди из Context Desk через Cmd+Q и открой новую
+Активация: заверши текущие задачи, выйди из Switchboard через Cmd+Q и открой новую
 сборку. Работающие адаптеры и браузеры автоматически не завершаются.
 
 Development: `parallel_smoke.py` verifies two real Chrome processes with separate

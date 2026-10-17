@@ -16,7 +16,7 @@ struct JobsView: View {
                 VStack(alignment: .leading, spacing: 16) { pageTitle; pageActions }.frame(maxWidth: .infinity, alignment: .leading)
             }.buttonStyle(DeskButtonStyle()).padding(24)
             Text(model.schedulerReady
-                 ? L10n.text("Запуски работают, пока Context Desk открыт и Mac не спит. После простоя выполняется одно пропущенное задание. До трёх запусков одновременно.", "Tasks run while Context Desk is open and your Mac is awake. After downtime, each due task runs once. Up to three runs at a time.")
+                 ? L10n.text("Запуски работают, пока Switchboard открыт и Mac не спит. После простоя выполняется одно пропущенное задание. До трёх запусков одновременно.", "Tasks run while Switchboard is open and your Mac is awake. After downtime, each due task runs once. Up to three runs at a time.")
                  : L10n.text("Планировщик недоступен. Проверь сообщение об ошибке и перезапусти приложение.", "The scheduler is unavailable. Check the error and restart the app."))
                 .font(.ui(.caption)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal).padding(.bottom)
             Divider()
@@ -27,7 +27,7 @@ struct JobsView: View {
                     TextField(L10n.text("Найти задание", "Find a task"), text: $search).textFieldStyle(.plain)
                 }.padding(12).background(DeskPalette.canvas, in: RoundedRectangle(cornerRadius: 10)).padding(12)
                 List(selection: $selection) {
-                    Section("Context Desk") {
+                    Section("Switchboard") {
                         ForEach(model.jobLedger.jobs.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) }) { job in
                             VStack(alignment: .leading, spacing: 6) {
                                 Text(job.name).font(.ui(.callout).weight(.medium))

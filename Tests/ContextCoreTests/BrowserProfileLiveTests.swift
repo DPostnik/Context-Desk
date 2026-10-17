@@ -9,7 +9,7 @@ func browserProfileLiveHandoffRetainsCookiesLocalStorageAndIndexedDB() async thr
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
     let repository = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-    let runtime = repository.appendingPathComponent("build/Context Desk.app/Contents/Resources/BrowserRuntime")
+    let runtime = repository.appendingPathComponent("build/Switchboard.app/Contents/Resources/BrowserRuntime")
     let server = Process(), pipe = Pipe(), serverExited = DispatchSemaphore(value: 0)
     server.terminationHandler = { _ in serverExited.signal() }
     server.executableURL = URL(fileURLWithPath: "/usr/bin/python3")

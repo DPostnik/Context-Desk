@@ -5,8 +5,8 @@ import ClaudeAdapter
 @Test func autonomyGuidanceIsLocalizedAndSeparateFromPermissionFlags() {
     let ru = AgentAutonomy.instructions(language: .russian)
     let en = AgentAutonomy.instructions(language: .english)
-    #expect(ru.contains("Автономность в Context Desk"))
-    #expect(en.contains("Autonomy in Context Desk"))
+    #expect(ru.contains("Автономность в Switchboard"))
+    #expect(en.contains("Autonomy in Switchboard"))
     #expect(ru.contains("Не считай молчание согласием"))
     #expect(en.contains("Silence is not consent"))
     let arguments = ClaudeJobRunner.arguments(model: "model", effort: nil)

@@ -236,8 +236,8 @@ class ChromeHost:
         end = time.monotonic() + seconds
         while time.monotonic() < end and not cancelled.is_set():
             if self.child and self.child.poll() is not None:
-                raise self.error('Chrome не запустился. Закрой старое окно браузера Context Desk и попробуй снова.',
-                                 'Chrome did not start. Close the previous Context Desk browser and try again.')
+                raise self.error('Chrome не запустился. Закрой старое окно браузера Switchboard и попробуй снова.',
+                                 'Chrome did not start. Close the previous Switchboard browser and try again.')
             endpoint = self.endpoint(owner)
             if endpoint:
                 self.persist(owner)

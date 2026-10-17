@@ -34,6 +34,6 @@ ln -sf "$log" "$LOGS/latest.log"
 ls -1t "$LOGS"/*.log(N) | tail -n +15 | xargs rm -f 2>/dev/null
 
 if [[ $result != passed ]]; then
-  osascript -e "display notification \"$commit: ${summary//\"/}\" with title \"Context Desk: nightly tests $result\"" >/dev/null 2>&1
+  osascript -e "display notification \"$commit: ${summary//\"/}\" with title \"Switchboard: nightly tests $result\"" >/dev/null 2>&1
 fi
 exit $code

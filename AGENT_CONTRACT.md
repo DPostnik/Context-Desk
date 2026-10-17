@@ -34,7 +34,7 @@ capability switch.
 | Isolated title/summary | Separate ephemeral runner, bounded recipes, tools disabled, schema checked, pinned version | Separate `--print --no-session-persistence` process with no tools, MCP servers, settings, skills or slash commands, `--json-schema` structured output re-validated by the app, pinned version; never delegated to Codex |
 | Models/effort discovery | Supported | No discovery; app-owned catalog over the configured model string. Documented `--effort` levels are forwarded; an unknown level is rejected |
 | Token usage/account limits | Available where exposed by engine | Context occupancy from stream usage; plan limits through the CLI's experimental `get_usage` control request |
-| Browser/workflow registration | App-owned browser launch settings and workflow roots; arbitrary live tool-server registration is explicitly unsupported | Context Desk browser as the only app MCP server; project `.claude/agents` in full access; claude.ai connectors and optional Claude in Chrome in full access; app workflow skills not registered |
+| Browser/workflow registration | App-owned browser launch settings and workflow roots; arbitrary live tool-server registration is explicitly unsupported | Switchboard browser as the only app MCP server; project `.claude/agents` in full access; claude.ai connectors and optional Claude in Chrome in full access; app workflow skills not registered |
 | Optimization route | Explicit direct or available Responses plugin; engine-specific configuration | Direct only; no app optimizer route |
 | Project permission intent | Standard workspace write/no network/ask; explicitly selected unrestricted/never | Standard: project file tools only (`--restricted`, no shell). Full access: `bypassPermissions`; attended turns hold claude.ai connector writing actions for approval, scheduled turns do not |
 
@@ -496,7 +496,7 @@ live. Changes since the original text below: processes stay warm between turns
 (restart with `--resume` when the launch changes, after failed/uncertain turns or
 idle); full-access chats drop `--safe-mode`, load the account's claude.ai connectors
 (writing actions ask in attended turns), the project's `.claude/agents` and optionally
-Claude in Chrome; both modes get the Context Desk browser; titles and archive summaries
+Claude in Chrome; both modes get the Switchboard browser; titles and archive summaries
 use the isolated Claude generation runner; the app passes the project's AGENTS.md, the
 profile's global `CLAUDE.md` and its commit attribution explicitly because setting
 sources stay empty; sub-agents are shown live and their results can resume the chat.

@@ -17,7 +17,7 @@ enum AgentIntegrationFactory {
         // Claude runs in the app's own Claude profile as a resumable chat, like an interactive Claude chat.
         .claude: { ChatScheduledExecutor(model: $0, agent: .appClaude, job: $1, run: $2, project: $3) }
     ]
-    /// Legacy print runner (the installed CLI's `~/.claude` profile); not used for new runs. Claude print runs get the same per-run Context Desk browser as Codex chats when it is enabled and installed.
+    /// Legacy print runner (the installed CLI's `~/.claude` profile); not used for new runs. Claude print runs get the same per-run Switchboard browser as Codex chats when it is enabled and installed.
     static func claudeRunner(browserEnabled: Bool, job: ManagedJob, resources: URL? = Bundle.main.resourceURL,
                              root: URL = BrowserEnvironmentStore.directory, executable: URL? = nil) -> ClaudeJobRunner {
         guard browserEnabled, let resources, FileManager.default.fileExists(atPath: root.appendingPathComponent("runtime.json").path),

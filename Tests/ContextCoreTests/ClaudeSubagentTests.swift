@@ -77,6 +77,6 @@ private func frame(_ json: String) throws -> JSONValue { try JSONDecoder().decod
     for language in [AppLanguage.russian, .english] {
         #expect(ClaudeIntegration.delegationInstructions(language: language).contains("run_in_background: true"))
     }
-    #expect(ClaudeIntegration.delegationInstructions(language: .russian).hasPrefix("Подагенты в Context Desk"))
-    #expect(ClaudeIntegration.delegationInstructions(language: .english).hasPrefix("Sub-agents in Context Desk"))
+    #expect(ClaudeIntegration.delegationInstructions(language: .russian).hasPrefix("Подагенты в Switchboard"))
+    #expect(ClaudeIntegration.delegationInstructions(language: .english).hasPrefix("Sub-agents in Switchboard"))
 }

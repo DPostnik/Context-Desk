@@ -33,8 +33,8 @@ public enum ScheduledBrowserImport {
     }
 
     public static var unavailable: ClientFailure {
-        ClientFailure(L10n.text("Для восстановления входа в задании включи браузер Context Desk и переподключи Codex или Claude Code.",
-                                "Enable the Context Desk browser and reconnect Codex or Claude Code to restore sign-in for this task."))
+        ClientFailure(L10n.text("Для восстановления входа в задании включи браузер Switchboard и переподключи Codex или Claude Code.",
+                                "Enable the Switchboard browser and reconnect Codex or Claude Code to restore sign-in for this task."))
     }
 
     /// Runs after the fresh chat is durably attached, before its first model turn.
@@ -117,16 +117,16 @@ extension ScheduledBrowserImport {
             return instructions(policy, tool: tool, language: language)
         case .imported(let verified):
             return L10n.text(
-                "Context Desk до начала запуска перенёс в браузер этой задачи cookies сайта \(site) из выбранного профиля Chrome (подтверждено: \(verified)). Вход на сайте ещё не проверен: открой \(site) обычным действием и проверь доступ к защищённому содержимому. Если сайт всё равно просит войти, значит сессия в обычном Chrome истекла — blocker: «войди в \(site) в обычном Chrome».",
-                "Before this run, Context Desk transferred \(site) cookies from the selected Chrome profile into this task's browser (\(verified) confirmed). Website sign-in is not verified yet: open \(site) normally and check access to protected content. If the site still asks to sign in, the session in regular Chrome has expired — blocker: \"sign in to \(site) in regular Chrome\".", language: language) + tail
+                "Switchboard до начала запуска перенёс в браузер этой задачи cookies сайта \(site) из выбранного профиля Chrome (подтверждено: \(verified)). Вход на сайте ещё не проверен: открой \(site) обычным действием и проверь доступ к защищённому содержимому. Если сайт всё равно просит войти, значит сессия в обычном Chrome истекла — blocker: «войди в \(site) в обычном Chrome».",
+                "Before this run, Switchboard transferred \(site) cookies from the selected Chrome profile into this task's browser (\(verified) confirmed). Website sign-in is not verified yet: open \(site) normally and check access to protected content. If the site still asks to sign in, the session in regular Chrome has expired — blocker: \"sign in to \(site) in regular Chrome\".", language: language) + tail
         case .uncertain:
             return L10n.text(
-                "Context Desk пытался до начала запуска перенести cookies сайта \(site), но результат не подтверждён; повтора не было. Проверь вход обычным чтением страницы.",
-                "Before this run, Context Desk attempted to transfer \(site) cookies, but the outcome is unconfirmed; it was not retried. Check sign-in by reading the page normally.", language: language) + tail
+                "Switchboard пытался до начала запуска перенести cookies сайта \(site), но результат не подтверждён; повтора не было. Проверь вход обычным чтением страницы.",
+                "Before this run, Switchboard attempted to transfer \(site) cookies, but the outcome is unconfirmed; it was not retried. Check sign-in by reading the page normally.", language: language) + tail
         case .blocked(let error):
             return L10n.text(
-                "Context Desk не смог до начала запуска перенести вход на сайт \(site): \(error.message(language: language)) Считай \(site) недоступным без входа в этом запуске.",
-                "Before this run, Context Desk could not transfer sign-in for \(site): \(error.message(language: language)) Treat \(site) as unavailable without sign-in in this run.", language: language) + tail
+                "Switchboard не смог до начала запуска перенести вход на сайт \(site): \(error.message(language: language)) Считай \(site) недоступным без входа в этом запуске.",
+                "Before this run, Switchboard could not transfer sign-in for \(site): \(error.message(language: language)) Treat \(site) as unavailable without sign-in in this run.", language: language) + tail
         }
     }
 

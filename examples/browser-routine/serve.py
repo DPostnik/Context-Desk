@@ -21,7 +21,7 @@ def page_html(snapshot, page):
     next_link = f'<a id="next" href="/?snapshot={snapshot}&amp;page=2">Next page →</a>' if page == 1 else '<p id="end">End of catalog</p>'
     return f'''<!doctype html><html lang="en"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Workshop Watch — Context Desk demo</title>
+<title>Workshop Watch — Switchboard demo</title>
 <style>body{{font:18px system-ui;max-width:780px;margin:60px auto;padding:0 24px;color:#242a32;background:#f5f6f8}}h1{{font-size:42px;letter-spacing:-1.5px}}.eyebrow,.identifier{{font-size:13px;color:#606978}}.card{{background:white;border:1px solid #e1e4e8;border-radius:14px;padding:24px;margin:16px 0}}h2{{margin:10px 0;font-size:24px}}a{{color:#244fba;text-decoration:none}}.badge{{background:#edf1fa;border-radius:6px;padding:4px 9px;font-size:14px}}footer{{margin-top:28px;color:#606978;font-size:14px}}</style>
 <div class="eyebrow">CONTEXT DESK · SYNTHETIC DEMO</div><h1>Workshop Watch</h1>
 <p>Snapshot {snapshot} · Page {page} of 2 · 4 fictional workshops</p>

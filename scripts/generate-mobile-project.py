@@ -28,7 +28,7 @@ for level in ['project', 'target']:
     for mode in ['Debug','Release']:
         settings = 'ALWAYS_SEARCH_USER_PATHS = NO; SDKROOT = iphoneos; IPHONEOS_DEPLOYMENT_TARGET = 17.0; SWIFT_VERSION = 6.0;'
         if level == 'target':
-            settings += ' PRODUCT_BUNDLE_IDENTIFIER = com.contextdesk.mobile; PRODUCT_NAME = ContextMobile; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = "Context Desk"; INFOPLIST_KEY_UILaunchScreen_Generation = YES; INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES; TARGETED_DEVICE_FAMILY = "1,2"; CODE_SIGN_STYLE = Automatic; ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; INFOPLIST_KEY_UIRequiresFullScreen = YES; CURRENT_PROJECT_VERSION = 2; MARKETING_VERSION = 0.1.0; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";'
+            settings += ' PRODUCT_BUNDLE_IDENTIFIER = com.contextdesk.mobile; PRODUCT_NAME = ContextMobile; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = "Switchboard"; INFOPLIST_KEY_UILaunchScreen_Generation = YES; INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES; TARGETED_DEVICE_FAMILY = "1,2"; CODE_SIGN_STYLE = Automatic; ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; INFOPLIST_KEY_UIRequiresFullScreen = YES; CURRENT_PROJECT_VERSION = 2; MARKETING_VERSION = 0.1.0; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";'
             if team: settings += f' DEVELOPMENT_TEAM = {team.group(1)};'
         settings += ' SWIFT_OPTIMIZATION_LEVEL = "'+('-Onone' if mode == 'Debug' else '-O')+'";'
         add(level+mode, f'isa = XCBuildConfiguration; buildSettings = {{ {settings} }}; name = {mode};')

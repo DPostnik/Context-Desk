@@ -5,9 +5,9 @@ python3 scripts/swift-task.py build "$@"
 zsh scripts/build-icon.sh
 staging="$(mktemp -d "$PWD/build/app-stage.XXXXXX")"
 trap 'rm -rf "$staging"' EXIT
-app="$staging/Context Desk.app"
+app="$staging/Switchboard.app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-cp .build/local-build/ContextDesk "$app/Contents/MacOS/ContextDesk"
+cp .build/local-build/ContextDesk "$app/Contents/MacOS/Switchboard"
 cp .build/local-build/build-info.json "$app/Contents/Resources/build-info.json"
 cp Assets/AppIcon/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
 mkdir -p "$app/Contents/Resources/BrowserRuntime"
@@ -17,10 +17,10 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-<key>CFBundleName</key><string>Context Desk</string>
-<key>CFBundleDisplayName</key><string>Context Desk</string>
+<key>CFBundleName</key><string>Switchboard</string>
+<key>CFBundleDisplayName</key><string>Switchboard</string>
 <key>CFBundleIdentifier</key><string>local.daniil.contextdesk</string>
-<key>CFBundleExecutable</key><string>ContextDesk</string>
+<key>CFBundleExecutable</key><string>Switchboard</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>0.2.1</string>
@@ -31,7 +31,7 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <key>NSHighResolutionCapable</key><true/>
 <key>UTExportedTypeDeclarations</key><array><dict>
 <key>UTTypeIdentifier</key><string>com.contextdesk.project-order</string>
-<key>UTTypeDescription</key><string>Context Desk project order</string>
+<key>UTTypeDescription</key><string>Switchboard project order</string>
 <key>UTTypeConformsTo</key><array><string>public.data</string></array>
 </dict><dict>
 <key>UTTypeIdentifier</key><string>com.contextdesk.chat-order</string>
@@ -58,7 +58,7 @@ from pathlib import Path
 import sys
 
 staged = Path(sys.argv[1])
-destination = Path('build/Context Desk.app')
+destination = Path('build/Switchboard.app')
 backup = staged.parent / 'previous.app'
 if destination.exists():
     destination.rename(backup)

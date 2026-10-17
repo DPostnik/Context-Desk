@@ -1355,8 +1355,8 @@ class Browser:
         require(endpoint, tr('Не удалось проверить подключение к браузеру чата.',
                              'Could not verify the connection to the chat browser.'))
         websocket = endpoint.replace('http://', 'ws://', 1) + self.chrome.owner['browserPath']
-        helper = Path(__file__).resolve().parents[2] / 'MacOS' / 'ContextDesk'
-        require(helper.is_file(), tr('Нужна собранная версия Context Desk.', 'A built Context Desk app is required.'))
+        helper = Path(__file__).resolve().parents[2] / 'MacOS' / 'Switchboard'
+        require(helper.is_file(), tr('Нужна собранная версия Switchboard.', 'A built Switchboard app is required.'))
         try:
             result = subprocess.run([str(helper), '--browser-import-session', str(self.root), site, websocket, LANGUAGE],
                                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=60, check=False)
@@ -1420,8 +1420,8 @@ class Browser:
         targets = self.chrome.page_targets(self.chrome.owner) if self.chrome is not None and self.chrome.owner is not None else None
         if self.failed or not isinstance(targets, dict):
             return {'keptReason': 'state_unknown', 'keptNote': tr(
-                'Не удалось проверить вкладки этого Chrome, поэтому он оставлен. Не ищи процессы и порты Chrome; сообщи пользователю, что браузер Context Desk остался открытым.',
-                'Could not inspect this Chrome’s tabs, so it was kept. Do not look up Chrome processes or ports; tell the user the Context Desk browser is still open.')}
+                'Не удалось проверить вкладки этого Chrome, поэтому он оставлен. Не ищи процессы и порты Chrome; сообщи пользователю, что браузер Switchboard остался открытым.',
+                'Could not inspect this Chrome’s tabs, so it was kept. Do not look up Chrome processes or ports; tell the user the Switchboard browser is still open.')}
         recorded = set()
         for path in self.records.glob('*.json'):
             try:

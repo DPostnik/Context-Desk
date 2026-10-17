@@ -268,7 +268,7 @@ import IOKit.ps
         let onAC = IOPSGetProvidingPowerSourceType(info).takeUnretainedValue() as String == kIOPSACPowerValue
         if onAC && assertion == 0 {
             IOPMAssertionCreateWithName(kIOPMAssertionTypePreventUserIdleSystemSleep as CFString,
-                IOPMAssertionLevel(kIOPMAssertionLevelOn), "Context Desk Remote Access" as CFString, &assertion)
+                IOPMAssertionLevel(kIOPMAssertionLevelOn), "Switchboard Remote Access" as CFString, &assertion)
         } else if !onAC { releaseSleepAssertion() }
     }
     private func releaseSleepAssertion() {
@@ -287,7 +287,7 @@ struct MobileRemoteSettings: View {
             TextField(L10n.text("Почта Supabase", "Supabase email"), text: $host.email)
             SecureField(L10n.text("Пароль Supabase", "Supabase password"), text: $host.password)
             }.disabled(host.enabled || host.transitioning)
-            Text(L10n.text("Если Связка ключей на Mac запрашивает доступ для Context Desk, выберите «Разрешать всегда», чтобы сохранить разрешение. После обновления приложения macOS может запросить его снова.", "If Keychain on your Mac asks to allow Context Desk access, choose Always Allow to save permission. macOS may ask again after an app update."))
+            Text(L10n.text("Если Связка ключей на Mac запрашивает доступ для Switchboard, выберите «Разрешать всегда», чтобы сохранить разрешение. После обновления приложения macOS может запросить его снова.", "If Keychain on your Mac asks to allow Switchboard access, choose Always Allow to save permission. macOS may ask again after an app update."))
                 .font(.ui(.caption)).foregroundStyle(.secondary)
             Text(L10n.text("Выбранные проекты: названия, последние сообщения и запросы подтверждения передаются в Supabase. Фото с телефона удаляются из облака примерно через час после обработки команды, а с Mac — через час после окончания работы чата. Очистка на Mac выполняется, пока приложение открыто. Вложения из истории Mac и учётные данные агентов не передаются. Облачная копия хранится до удаления ниже.", "Selected projects: names, recent messages and approval requests are sent to Supabase. Phone photos are removed from the cloud about an hour after the command is processed, and from your Mac an hour after the chat becomes idle. Mac cleanup runs while the app is open. Attachments from Mac history and agent credentials are excluded. The cloud copy remains until deleted below."))
                 .font(.ui(.caption)).foregroundStyle(.secondary)

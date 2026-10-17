@@ -1,4 +1,4 @@
-# Context Desk — project vision
+# Switchboard — project vision
 
 Date: 2026-09-25; revised 2026-09-27 and 2026-10-15.
 
@@ -8,7 +8,7 @@ Status: accepted direction and revised implementation plan. Stages 1–4 are imp
 
 ## Purpose
 
-Context Desk is a persistent, native macOS workspace for AI-assisted development, independent of a particular agent vendor. Users keep their projects, history, instructions and workflows in one application while choosing which supported agent and account performs the work.
+Switchboard is a persistent, native macOS workspace for AI-assisted development, independent of a particular agent vendor. Users keep their projects, history, instructions and workflows in one application while choosing which supported agent and account performs the work.
 
 The central use case is sequential choice: work through one subscription or account, then explicitly switch to another when needed. Simultaneous use of multiple agents or models is not required for this value proposition. This does not remove existing support for concurrent chats.
 
@@ -76,7 +76,7 @@ In particular, Claude standard access offers project-file tools only (no shell),
 
 Titles and archive summaries require separately verified isolated generation: bounded input, tools disabled, structured output, explicit model/route, and no retry after uncertain delivery. Disable this capability where its restrictions cannot be established. Never silently send one agent's conversation to another agent for background processing.
 
-Browser and workflow configuration should be app-owned descriptions that adapters register through supported mechanisms. The Context Desk browser is registered for both engines; workflow skill registration remains Codex-specific. Render agent identity dynamically, offer model/effort controls by capability, and distinguish unavailable usage or account-limit data from zero. New or changed app-owned copy must ship in Russian and English.
+Browser and workflow configuration should be app-owned descriptions that adapters register through supported mechanisms. The Switchboard browser is registered for both engines; workflow skill registration remains Codex-specific. Render agent identity dynamically, offer model/effort controls by capability, and distinguish unavailable usage or account-limit data from zero. New or changed app-owned copy must ship in Russian and English.
 
 ## Switching agents and transferring context
 
@@ -107,7 +107,7 @@ Currently shipped:
 - Interactive Claude Code chats in an app-owned subscription profile: streaming, questions, approvals, interruption, resume, live sub-agents, context/plan-limit display, project sub-agents, claude.ai connectors and optional Claude in Chrome in full-access projects.
 - App-owned schedules and persistent run history: Codex and Claude Code runs both create continuable app chats.
 - Semantic chat titles and archive summaries generated through isolated requests on either engine.
-- The Context Desk browser (per-chat Chrome for Testing profiles, element-tree refs, screenshots, uploads, explicit cookie import) for both engines; app-owned workflow skills registered with Codex.
+- The Switchboard browser (per-chat Chrome for Testing profiles, element-tree refs, screenshots, uploads, explicit cookie import) for both engines; app-owned workflow skills registered with Codex.
 - An experimental iPhone companion over the user's Supabase project that can read, answer and start Codex or Claude chats.
 - Explicit handoff into a fresh Codex or Claude session with a reviewable draft, durable source provenance and historical evidence separated from new instructions.
 - App-owned portable routine definitions with ordered steps, checks, constraints and capability requirements; frozen revisions map to existing Codex/Claude scheduled executors.

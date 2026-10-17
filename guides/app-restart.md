@@ -1,6 +1,6 @@
 # Agent-requested app restart
 
-Run `zsh scripts/request-app-restart.sh` from this checkout after an authorized restart is needed. It sends one request to the running instance of `build/Context Desk.app`. For another bundle, invoke that bundle's `Contents/MacOS/ContextDesk --request-restart` executable directly. The CLI exits without constructing a second application model or connecting to agent state.
+Run `zsh scripts/request-app-restart.sh` from this checkout after an authorized restart is needed. It sends one request to the running instance of `build/Switchboard.app`. For another bundle, invoke that bundle's `Contents/MacOS/Switchboard --request-restart` executable directly. The CLI exits without constructing a second application model or connecting to agent state.
 
 The receiving app waits for bootstrap, connections, active chats, handoffs, summaries, scheduled jobs and pending approvals to finish. Finish the requesting turn so it can become idle. The app saves its metadata, starts a bounded relaunch helper and follows its ordinary shutdown path. The helper waits for the old process to exit before opening the same bundle; it never force-kills an owner. Existing chat history is restored through normal startup; requests and turns are not replayed.
 

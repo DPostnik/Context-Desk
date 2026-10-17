@@ -1,4 +1,4 @@
-# Context Desk icon
+# Switchboard icon
 
 Generated with the built-in Imagegen tool on 2026-09-25. The design uses a charcoal macOS tile, two ivory conversation shapes and a blue unread accent. No third-party logo or source image was supplied.
 

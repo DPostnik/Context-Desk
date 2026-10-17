@@ -119,7 +119,7 @@ on Python's import path. The public two-page pilot is:
 
 ```sh
 python3 -B BrowserRuntime/workflow_benchmark.py \
-  --resources 'build/Context Desk.app/Contents/Resources/BrowserRuntime' \
+  --resources 'build/Switchboard.app/Contents/Resources/BrowserRuntime' \
   --output .runtime/workflow-optimization/new-run
 ```
 

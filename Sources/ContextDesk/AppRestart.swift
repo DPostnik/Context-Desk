@@ -16,8 +16,8 @@ struct RestartContinuation: Codable, Equatable {
     static let maximumAge: TimeInterval = 600
     static var file: URL { Locations.root.appendingPathComponent("restart-continuation.json") }
     static var message: String {
-        L10n.text("Context Desk перезапущен по твоему запросу. Продолжай задачу с того места, где остановился.",
-                  "Context Desk restarted at your request. Continue the task from where you left off.")
+        L10n.text("Switchboard перезапущен по твоему запросу. Продолжай задачу с того места, где остановился.",
+                  "Switchboard restarted at your request. Continue the task from where you left off.")
     }
     var chatIDs: [String]
     var requestedAt: Date
@@ -75,8 +75,8 @@ struct RestartContinuation: Codable, Equatable {
         print(L10n.text("Запрос отправлен. Приложение перезапустится после завершения задач. Доставка не подтверждена; не повторяйте запрос автоматически.",
                         "Request sent. The app will restart after tasks finish. Delivery is not acknowledged; do not automatically retry."))
         if !requester.isEmpty {
-            print(L10n.text("Если этот чат принадлежит Context Desk, после перезапуска он получит сообщение о продолжении задачи.",
-                            "If this chat belongs to Context Desk, it will receive a message to continue the task after the restart."))
+            print(L10n.text("Если этот чат принадлежит Switchboard, после перезапуска он получит сообщение о продолжении задачи.",
+                            "If this chat belongs to Switchboard, it will receive a message to continue the task after the restart."))
         }
         return true
     }
@@ -162,7 +162,7 @@ struct RestartContinuation: Codable, Equatable {
     func launchHelper() throws {
         let bundle = Bundle.main.bundleURL
         guard bundle.pathExtension == "app", FileManager.default.isExecutableFile(
-            atPath: bundle.appendingPathComponent("Contents/MacOS/ContextDesk").path) else { throw RestartFailure.unavailable }
+            atPath: bundle.appendingPathComponent("Contents/MacOS/Switchboard").path) else { throw RestartFailure.unavailable }
         let helper = Process()
         helper.executableURL = URL(fileURLWithPath: "/bin/sh")
         helper.arguments = ["-c", Self.helperScript, "contextdesk-relaunch",

@@ -1,4 +1,4 @@
-"""Standalone Context Desk provider plugin, protocol v1. No credential handling."""
+"""Standalone Switchboard provider plugin, protocol v1. No credential handling."""
 import argparse
 import asyncio
 import importlib.metadata

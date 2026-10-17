@@ -9,7 +9,7 @@ func chromeCookieLiveTransmissionPersistenceAndIsolation() async throws {
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
     let repository = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-    let runtime = repository.appendingPathComponent("build/Context Desk.app/Contents/Resources/BrowserRuntime")
+    let runtime = repository.appendingPathComponent("build/Switchboard.app/Contents/Resources/BrowserRuntime")
     #expect(FileManager.default.fileExists(atPath: runtime.appendingPathComponent("chrome_host.py").path))
     let fixtureScript = #"""
 import http.server, json, pathlib, sys, urllib.parse

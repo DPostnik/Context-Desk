@@ -9,7 +9,7 @@ import ContextCore
     @Published var x: CGFloat = 0
 }
 
-/// Context Desk's own island character: a coral squircle whose face follows the agents.
+/// Switchboard's own island character: a coral squircle whose face follows the agents.
 /// Sleepy when idle, reading while they work, wide-eyed and wiggling when one needs the user,
 /// happy with a jump when a turn finishes. Core Animation runs every loop in the render server,
 /// so a busy main thread never makes it stutter and it keeps the display's full frame rate.

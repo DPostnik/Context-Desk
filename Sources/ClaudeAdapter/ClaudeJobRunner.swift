@@ -13,7 +13,7 @@ public actor ClaudeJobRunner: AgentScheduledExecutor {
     private var process: Process?
     private var stopped = false
     private let browser: Browser?
-    /// Context Desk browser for one print run: a fresh per-run profile served over stdio MCP.
+    /// Switchboard browser for one print run: a fresh per-run profile served over stdio MCP.
     public struct Browser: Sendable {
         public let resources: URL
         public let root: URL
@@ -130,7 +130,7 @@ public actor ClaudeJobRunner: AgentScheduledExecutor {
         defer { try? stdin.close(); try? stdout.close(); try? stderr.close() }
         let child = Process(); child.executableURL = executable; child.arguments = arguments; child.currentDirectoryURL = cwd
         var environment = ProcessInfo.processInfo.environment
-        // Running Context Desk from an agent must not mark this independent print session as nested.
+        // Running Switchboard from an agent must not mark this independent print session as nested.
         environment.removeValue(forKey: "CLAUDECODE")
         environment["PATH"] = [FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin").path, "/opt/homebrew/bin", "/usr/local/bin", environment["PATH"] ?? "/usr/bin:/bin"].joined(separator: ":")
         environment.merge(extraEnvironment) { _, new in new }

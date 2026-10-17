@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Same-user client for Context Desk's running scheduler; never edits its ledger."""
+"""Same-user client for Switchboard's running scheduler; never edits its ledger."""
 import argparse
 import json
 import os
@@ -48,7 +48,7 @@ def send(payload):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=message('Управление расписаниями открытого Context Desk', 'Control schedules in the running Context Desk'))
+    parser = argparse.ArgumentParser(description=message('Управление расписаниями открытого Switchboard', 'Control schedules in the running Switchboard'))
     sub = parser.add_subparsers(dest='command', required=True)
     sub.add_parser('list', help=message('Прочитать задания', 'Read tasks'))
     sub.add_parser('catalog', help=message('Прочитать источники и проекты для импорта', 'Read import sources and projects'))

@@ -1,4 +1,4 @@
-# Context Desk for iPhone — native preview
+# Switchboard for iPhone — native preview
 
 The 2026-09-27 decision is native SwiftUI first, backed by Supabase; evaluate it
 for a week after the first working device installation. PWA is a possible later

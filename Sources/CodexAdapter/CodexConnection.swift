@@ -81,7 +81,7 @@ import ContextCore
         }
         do {
             let initialized = try await request("initialize", params: .object([
-                "clientInfo": .object(["name": .string("context_desk"), "title": .string("Context Desk"), "version": .string("0.1.0")]),
+                "clientInfo": .object(["name": .string("context_desk"), "title": .string("Switchboard"), "version": .string("0.1.0")]),
                 "capabilities": .object(["experimentalApi": .bool(true)])
             ]))
             serverUserAgent = initialized["userAgent"].string
