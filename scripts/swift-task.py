@@ -62,6 +62,10 @@ def run_tests(execute, command, filters, serial=False):
     rerunning the whole suite.
     """
     flags = [x for value in filters for x in ('--filter', value)] + (['--no-parallel'] if serial else [])
+    # Tests that build a default DeskModel would otherwise create files in the user's real data folder.
+    # Opt-in live tests that need the real Codex home can set SWITCHBOARD_DATA_ROOT themselves.
+    if 'SWITCHBOARD_DATA_ROOT' not in os.environ:
+        os.environ['SWITCHBOARD_DATA_ROOT'] = tempfile.mkdtemp(prefix='switchboard-test-data-')
     try:
         execute(command + flags)
         return

@@ -137,10 +137,21 @@ public struct SavedState: Codable, Sendable {
 }
 
 public enum Locations {
-    public static var root: URL { applicationSupport.appendingPathComponent("Switchboard", isDirectory: true) }
+    /// `SWITCHBOARD_DATA_ROOT` replaces the folder; the test runner sets it so tests never touch the user's data.
+    public static var root: URL {
+        if let override { return override }
+        return applicationSupport.appendingPathComponent("Switchboard", isDirectory: true)
+    }
     /// The data folder before the rename to Switchboard (2026-10-17). `LegacyDataMigration` moves it to `root`
     /// once and leaves a symbolic link here, so paths recorded in chats and other projects keep resolving.
-    public static var legacyRoot: URL { applicationSupport.appendingPathComponent("Context Desk", isDirectory: true) }
+    public static var legacyRoot: URL {
+        if let override { return override.deletingLastPathComponent().appendingPathComponent("Context Desk", isDirectory: true) }
+        return applicationSupport.appendingPathComponent("Context Desk", isDirectory: true)
+    }
+    private static var override: URL? {
+        guard let path = ProcessInfo.processInfo.environment["SWITCHBOARD_DATA_ROOT"], !path.isEmpty else { return nil }
+        return URL(fileURLWithPath: path, isDirectory: true)
+    }
     private static var applicationSupport: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
     }
