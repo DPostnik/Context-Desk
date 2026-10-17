@@ -3,7 +3,7 @@ import Testing
 @testable import ContextCore
 
 /// Opt-in real-browser verification. All cookies, profiles and pages are fixtures.
-@Test(.enabled(if: ProcessInfo.processInfo.environment["CONTEXTDESK_COOKIE_SMOKE"] == "1"))
+@Test(.enabled(if: ProcessInfo.processInfo.environment["SWITCHBOARD_COOKIE_SMOKE"] == "1"))
 func chromeCookieLiveTransmissionPersistenceAndIsolation() async throws {
     let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("cookie-live-" + UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

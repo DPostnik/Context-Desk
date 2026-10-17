@@ -10,7 +10,7 @@ Requirements: macOS, `uv`, and Python 3.12 (installed by uv when needed).
 zsh install.sh
 ```
 
-From the app repository the equivalent command is `zsh plugins/headroom/install.sh`; `scripts/install-headroom.sh` remains a compatibility wrapper. Installation publishes to `~/Library/Application Support/Context Desk/plugins/headroom`. `CONTEXTDESK_PLUGINS_DIR` overrides the parent directory for isolated installation tests.
+From the app repository the equivalent command is `zsh plugins/headroom/install.sh`; `scripts/install-headroom.sh` remains a compatibility wrapper. Installation publishes to `~/Library/Application Support/Switchboard/plugins/headroom`. `SWITCHBOARD_PLUGINS_DIR` overrides the parent directory for isolated installation tests.
 
 In Switchboard, open Settings → Плагины / Plugins, refresh the plugin list, select Headroom for new conversations, and click **Применить выбор / Apply selection**. Existing conversations with route `headroom` keep that route. Direct conversations stay Direct.
 

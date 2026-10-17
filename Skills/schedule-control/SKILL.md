@@ -38,7 +38,7 @@ job first. This stores permission metadata only; it never imports cookies immedi
 changes the prompt/schedule/model/project permissions, enables a task, or runs it.
 Every new Codex or Claude Code run receives the site permission in its own browser environment
 and conditional sign-in recovery instructions (Claude Code calls the tool as
-`mcp__context_desk_browser__browser_import_session`; with the browser disabled the run is blocked). Regular Chrome may stay open;
+`mcp__switchboard_browser__browser_import_session`; with the browser disabled the run is blocked). Regular Chrome may stay open;
 Keychain may need a user grant. Cookie readback is not website sign-in verification.
 Never auto-close Chrome, retry an uncertain import, or expand the site's action scope.
 An old running app rejects `browser-import`; ask for Cmd+Q/reopen of the verified

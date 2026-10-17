@@ -113,7 +113,7 @@ def run(executable):
     version = subprocess.check_output([str(executable), "--version"], text=True).strip()
     if version != PIN:
         raise RuntimeError("Protocol pin mismatch: " + version)
-    root = Path.home() / "Library/Application Support/Context Desk/browser-gate"
+    root = Path.home() / "Library/Application Support/Switchboard/browser-gate"
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     work = Path(tempfile.mkdtemp(prefix="scope-", dir=root))
     home = work / "home"

@@ -4,9 +4,9 @@
 # launchd (scripts/install-nightly-tests.sh); safe to run by hand.
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-BRANCH="${CONTEXTDESK_NIGHTLY_BRANCH:-main}"
-WORK="$HOME/Library/Caches/ContextDesk/nightly-tests/worktree"
-LOGS="$HOME/Library/Logs/ContextDesk/nightly-tests"
+BRANCH="${SWITCHBOARD_NIGHTLY_BRANCH:-main}"
+WORK="$HOME/Library/Caches/Switchboard/nightly-tests/worktree"
+LOGS="$HOME/Library/Logs/Switchboard/nightly-tests"
 mkdir -p "$LOGS" "${WORK:h}"
 stamp=$(date +%Y-%m-%d_%H%M)
 log="$LOGS/$stamp.log"

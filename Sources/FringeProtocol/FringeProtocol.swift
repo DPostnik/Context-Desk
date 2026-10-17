@@ -1,20 +1,24 @@
 import Foundation
 
-/// Wire format of the Fringe ↔ Switchboard (Context Desk) channel: one JSON object per line over a
+/// Wire format of the Fringe ↔ Switchboard channel: one JSON object per line over a
 /// Unix socket. Every message carries `version`; a peer that sees another version or an unknown
 /// message type closes the connection instead of guessing.
 public enum FringeProtocol {
     public static let version = 1
     /// Bundle id of the only client Switchboard accepts.
     public static let clientBundleID = "local.daniil.fringe"
-    /// Bundle id of Switchboard, which keeps its Context Desk identifier.
-    public static let serverBundleID = "local.daniil.contextdesk"
+    /// Bundle id of Switchboard.
+    public static let serverBundleID = "local.daniil.switchboard"
+    /// Bundle id of Switchboard builds from before the rename (Context Desk); still accepted as the server.
+    public static let legacyServerBundleID = "local.daniil.contextdesk"
+    public static let serverBundleIDs = [serverBundleID, legacyServerBundleID]
     /// One line may not exceed this; a longer line is a protocol error.
     public static let maxLineBytes = 1 << 20
 
-    /// `~/Library/Application Support/Context Desk/fringe.sock`; Switchboard keeps its old data directory name.
+    /// `~/Library/Application Support/Switchboard/fringe.sock`. The pre-rename folder `Context Desk` is a link to
+    /// this one, so clients that still use the old path reach the same socket.
     public static func socketURL(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
-        home.appending(path: "Library/Application Support/Context Desk/fringe.sock")
+        home.appending(path: "Library/Application Support/Switchboard/fringe.sock")
     }
 }
 

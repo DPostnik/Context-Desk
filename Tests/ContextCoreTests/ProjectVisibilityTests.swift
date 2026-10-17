@@ -4,9 +4,9 @@ import SwiftUI
 import Testing
 @testable import ContextDesk
 
-@Test(.enabled(if: ProcessInfo.processInfo.environment["CONTEXTDESK_PROJECT_RENDER_DIR"] != nil))
+@Test(.enabled(if: ProcessInfo.processInfo.environment["SWITCHBOARD_PROJECT_RENDER_DIR"] != nil))
 @MainActor func projectVisibilityRenderProbe() throws {
-    let language = ProcessInfo.processInfo.environment["CONTEXTDESK_PROJECT_RENDER_LANGUAGE"] ?? "ru"
+    let language = ProcessInfo.processInfo.environment["SWITCHBOARD_PROJECT_RENDER_LANGUAGE"] ?? "ru"
     UserDefaults.standard.setVolatileDomain([AppLanguage.preferenceKey: language], forName: UserDefaults.argumentDomain)
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -35,7 +35,7 @@ import Testing
     #expect(L10n.language.rawValue == language)
     let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
     host.cacheDisplay(in: host.bounds, to: bitmap)
-    let folder = URL(fileURLWithPath: ProcessInfo.processInfo.environment["CONTEXTDESK_PROJECT_RENDER_DIR"]!)
+    let folder = URL(fileURLWithPath: ProcessInfo.processInfo.environment["SWITCHBOARD_PROJECT_RENDER_DIR"]!)
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     try #require(bitmap.representation(using: .png, properties: [:])).write(to: folder.appendingPathComponent("projects-\(language).png"))
     try projectContextMenuRemovesThroughItsCallback()

@@ -19,7 +19,7 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <plist version="1.0"><dict>
 <key>CFBundleName</key><string>Switchboard</string>
 <key>CFBundleDisplayName</key><string>Switchboard</string>
-<key>CFBundleIdentifier</key><string>local.daniil.contextdesk</string>
+<key>CFBundleIdentifier</key><string>local.daniil.switchboard</string>
 <key>CFBundleExecutable</key><string>Switchboard</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundlePackageType</key><string>APPL</string>
@@ -30,11 +30,11 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>UTExportedTypeDeclarations</key><array><dict>
-<key>UTTypeIdentifier</key><string>com.contextdesk.project-order</string>
+<key>UTTypeIdentifier</key><string>local.daniil.switchboard.project-order</string>
 <key>UTTypeDescription</key><string>Switchboard project order</string>
 <key>UTTypeConformsTo</key><array><string>public.data</string></array>
 </dict><dict>
-<key>UTTypeIdentifier</key><string>com.contextdesk.chat-order</string>
+<key>UTTypeIdentifier</key><string>local.daniil.switchboard.chat-order</string>
 <key>UTTypeConformsTo</key><array><string>public.data</string></array>
 </dict></array>
 </dict></plist>
@@ -42,7 +42,7 @@ PLIST
 # A stable identity keeps the designated requirement unchanged across builds, so macOS
 # privacy grants (Screen Recording, Accessibility, Keychain "Always Allow") survive rebuilds.
 # Ad-hoc signatures pin grants to the cdhash, which changes on every build.
-identity="${CONTEXT_DESK_SIGN_IDENTITY:-}"
+identity="${SWITCHBOARD_SIGN_IDENTITY:-}"
 if [[ -z "$identity" ]]; then
   identity="$(security find-identity -v -p codesigning | awk '/"Apple Development: /{print $2; exit}')"
 fi

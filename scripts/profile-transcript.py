@@ -56,7 +56,7 @@ def main():
                     ROOT / 'scripts/TranscriptCPUProbe.swift', *objects, '-lsqlite3', '-o', executable]
         run(command)
         output = args.output.resolve()
-        run([executable], env={**os.environ, 'CONTEXTDESK_CPU_REPORT': str(output)})
+        run([executable], env={**os.environ, 'SWITCHBOARD_CPU_REPORT': str(output)})
         report = json.loads(output.read_text())
         digest = hashlib.sha256()
         for source in sorted((ROOT / 'Sources').rglob('*.swift')):

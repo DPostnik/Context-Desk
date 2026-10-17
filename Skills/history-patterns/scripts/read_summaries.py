@@ -37,7 +37,7 @@ def read(database, since=None):
 
 def main():
     parser = argparse.ArgumentParser(description='Read chat summaries / Прочитать итоги чатов')
-    parser.add_argument('--database', type=Path, default=Path.home() / 'Library/Application Support/Context Desk/metadata.sqlite')
+    parser.add_argument('--database', type=Path, default=Path.home() / 'Library/Application Support/Switchboard/metadata.sqlite')
     parser.add_argument('--since', type=lambda value: datetime.datetime.strptime(value, '%Y-%m-%d').replace(tzinfo=datetime.timezone.utc))
     args = parser.parse_args()
     try:

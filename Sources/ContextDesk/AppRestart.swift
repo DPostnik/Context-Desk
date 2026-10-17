@@ -57,6 +57,7 @@ struct RestartContinuation: Codable, Equatable {
 
 /// A same-login-session request channel. It accepts no commands, paths or approval overrides.
 @MainActor enum RestartCommand {
+    /// Keeps the pre-rename id so a new build can still ask an older running instance to restart.
     static let notification = Notification.Name("local.daniil.contextdesk.restart-when-idle.v1")
 
     static func run(arguments: [String]) -> Bool {

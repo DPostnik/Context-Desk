@@ -8,7 +8,7 @@ import sys
 import time
 import uuid
 
-ROOT = Path.home() / 'Library/Application Support/Context Desk/schedule-control'
+ROOT = Path.home() / 'Library/Application Support/Switchboard/schedule-control'
 EPOCH = 978307200  # Foundation Date's reference epoch.
 
 

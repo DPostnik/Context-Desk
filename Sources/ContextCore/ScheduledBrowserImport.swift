@@ -21,7 +21,7 @@ extension ManagedJob {
 
 public enum ScheduledBrowserImport {
     /// Claude Code exposes MCP tools as `mcp__<server>__<tool>`; Codex uses the plain tool name.
-    public static let claudeImportTool = "mcp__context_desk_browser__browser_import_session"
+    public static let claudeImportTool = "mcp__switchboard_browser__browser_import_session"
 
     public static func instructions(_ policy: ChromeSessionImportPolicy, tool: String = "browser_import_session",
                                     language: AppLanguage = L10n.language) -> String {

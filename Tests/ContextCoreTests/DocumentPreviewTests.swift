@@ -134,7 +134,7 @@ private func temporaryDirectory() throws -> URL {
     #expect(document.isDocument)
     #expect(document.transcript.string.hasPrefix("Guide"))
     #expect(!document.transcript.string.contains("# Guide"))
-    if let directory = ProcessInfo.processInfo.environment["CONTEXTDESK_MARKDOWN_RENDER_DIR"] {
+    if let directory = ProcessInfo.processInfo.environment["SWITCHBOARD_MARKDOWN_RENDER_DIR"] {
         let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
         host.cacheDisplay(in: host.bounds, to: bitmap)
         try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: directory).appendingPathComponent("preview-pane.png"))

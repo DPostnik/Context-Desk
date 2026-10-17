@@ -6,7 +6,7 @@ import Testing
 @testable import ContextDesk
 
 // Media capture, not a live-agent acceptance test. Run alone via scripts/capture-demo.sh.
-@Test(.enabled(if: ProcessInfo.processInfo.environment["CONTEXTDESK_PUBLIC_CAPTURE"] != nil))
+@Test(.enabled(if: ProcessInfo.processInfo.environment["SWITCHBOARD_PUBLIC_CAPTURE"] != nil))
 @MainActor func publicDemoRenderProbe() throws {
     UserDefaults.standard.setVolatileDomain([AppLanguage.preferenceKey: "en"], forName: UserDefaults.argumentDomain)
     _ = NSApplication.shared
@@ -34,7 +34,7 @@ import Testing
         TranscriptItem(id: "tools", kind: "activity", text: "python3 -m unittest -v\nBaseline: 5 tests, 2 failures.\nAfter the reference fix: 5 tests, OK."),
         TranscriptItem(id: "result", kind: "assistant", text: "The reference fix splits on any whitespace and rejoins words with a single hyphen.\n\n```python\ndef slugify(title: str) -> str:\n    return \"-\".join(title.lower().split())\n```\n\nFive tests pass. Tests are unchanged.\n\n**Synthetic UI fixture — not a live agent response.**")
     ]
-    let folder = URL(fileURLWithPath: ProcessInfo.processInfo.environment["CONTEXTDESK_PUBLIC_CAPTURE"]!)
+    let folder = URL(fileURLWithPath: ProcessInfo.processInfo.environment["SWITCHBOARD_PUBLIC_CAPTURE"]!)
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     func capture(_ filename: String) throws {
         // Render the production content panels directly. NavigationSplitView's

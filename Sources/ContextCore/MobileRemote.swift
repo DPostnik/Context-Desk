@@ -285,6 +285,7 @@ public enum RemoteVault {
     }
     public static func readChecked(_ account: String) throws -> Data? {
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+            // Pre-rename service name: renaming it would mean copying the stored session secret.
             kSecAttrService as String: "ContextDesk.MobileRemote.v1", kSecAttrAccount as String: account,
             kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
         var result: CFTypeRef?

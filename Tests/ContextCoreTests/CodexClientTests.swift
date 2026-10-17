@@ -144,9 +144,9 @@ private func commandFixture() throws -> (URL, URL) {
     let session = try await first.createSession(projectPath: root.path, access: .standard, model: "", route: .direct)
     let calls = try await wire.request("test/calls").array
     let config = try #require(calls.first { $0["method"].string == "thread/start" })["params"]["config"]
-    let args = config["mcp_servers.context_desk_browser"]["args"].array
+    let args = config["mcp_servers.switchboard_browser"]["args"].array
     #expect(args.contains(.string("--environment")))
-    #expect(config["mcp_servers.context_desk_browser"]["required"].bool == true)
+    #expect(config["mcp_servers.switchboard_browser"]["required"].bool == true)
     await first.stop()
     // New client object, same saved native session: resolve from disk.
     let resumedWire = CodexConnection(), resumed: CodexClient
@@ -162,7 +162,7 @@ private func commandFixture() throws -> (URL, URL) {
     try await disabled.start(executable: executable, home: root)
     try await disabled.resume(session, projectPath: root.path, access: .standard, route: .direct)
     let disabledCalls = try await disabledWire.request("test/calls").array
-    #expect(disabledCalls.first { $0["method"].string == "thread/resume" }?["params"]["config"]["mcp_servers.context_desk_browser"]["enabled"].bool == false)
+    #expect(disabledCalls.first { $0["method"].string == "thread/resume" }?["params"]["config"]["mcp_servers.switchboard_browser"]["enabled"].bool == false)
     await disabled.stop()
 }
 
@@ -190,7 +190,7 @@ private func commandFixture() throws -> (URL, URL) {
     let reused = try store.ownedGrant(session: second)
     #expect(reused.environment == initial.environment && reused.generation != initial.generation)
     let calls = try await wire.request("test/calls").array.filter { $0["method"].string == "thread/start" }
-    let args = calls.map { $0["params"]["config"]["mcp_servers.context_desk_browser"]["args"].array }
+    let args = calls.map { $0["params"]["config"]["mcp_servers.switchboard_browser"]["args"].array }
     #expect(args.count == 2)
     #expect(args.allSatisfy { $0.contains(.string(initial.environment.uuidString.lowercased())) })
     #expect(args[1].contains(.string(reused.generation.uuidString.lowercased())))

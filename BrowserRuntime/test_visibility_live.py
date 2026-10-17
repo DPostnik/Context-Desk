@@ -13,7 +13,7 @@ from install import ROOT
 from server import Browser
 
 
-@unittest.skipUnless(os.environ.get('CONTEXTDESK_BROWSER_VISIBILITY_LIVE') == '1', 'opt-in live Chrome check')
+@unittest.skipUnless(os.environ.get('SWITCHBOARD_BROWSER_VISIBILITY_LIVE') == '1', 'opt-in live Chrome check')
 class BrowserVisibilityTests(unittest.TestCase):
     def test_hidden_navigation_and_manual_visibility_survive_reattachment(self):
         class Page(BaseHTTPRequestHandler):

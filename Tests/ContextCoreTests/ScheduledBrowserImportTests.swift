@@ -19,9 +19,9 @@ import Testing
     job.engine = .claude
     try job.validate()
     let claude = ScheduledBrowserImport.instructions(try #require(job.browserSessionImport), tool: ScheduledBrowserImport.claudeImportTool, language: .english)
-    #expect(claude.contains("call mcp__context_desk_browser__browser_import_session with"))
+    #expect(claude.contains("call mcp__switchboard_browser__browser_import_session with"))
     #expect(ScheduledBrowserImport.instructions(try #require(job.browserSessionImport), tool: ScheduledBrowserImport.claudeImportTool, language: .russian)
-        .contains("вызови mcp__context_desk_browser__browser_import_session"))
+        .contains("вызови mcp__switchboard_browser__browser_import_session"))
     let any = try ChromeSessionImportPolicy(profile: "Default", site: ChromeSessionImportPolicy.anySite)
     #expect(ScheduledBrowserImport.instructions(any, language: .english).contains("any site where sign-in is missing"))
     #expect(ScheduledBrowserImport.instructions(any, language: .russian).contains("любого сайта"))

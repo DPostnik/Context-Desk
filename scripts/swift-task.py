@@ -118,8 +118,8 @@ def main():
     developer = Path(capture(['xcode-select', '-p']))
     version = capture([compiler, '--version'])
     target = platform.machine() + '-apple-macosx14.0'
-    candidates = [Path(os.environ.get('CONTEXTDESK_SDK', capture(['xcrun', '--show-sdk-path'])))]
-    if 'CONTEXTDESK_SDK' not in os.environ:
+    candidates = [Path(os.environ.get('SWITCHBOARD_SDK', capture(['xcrun', '--show-sdk-path'])))]
+    if 'SWITCHBOARD_SDK' not in os.environ:
         sdk_dirs = [developer / 'SDKs', developer / 'Platforms/MacOSX.platform/Developer/SDKs']
         installed = [p for folder in sdk_dirs for p in folder.glob('MacOSX[0-9]*.sdk')]
         candidates += sorted(installed, key=lambda p: tuple(map(int, re.findall(r'\d+', p.name))), reverse=True)
@@ -144,7 +144,7 @@ def main():
             print(f'SDK incompatible: {candidate}', file=sys.stderr)
             (OUT / 'sdk-probe-error.log').write_text(result.stderr)
     if sdk is None:
-        raise RuntimeError('No compatible SDK. See .build/local-build/sdk-probe-error.log. Install a matching Xcode/Command Line Tools release or set CONTEXTDESK_SDK.')
+        raise RuntimeError('No compatible SDK. See .build/local-build/sdk-probe-error.log. Install a matching Xcode/Command Line Tools release or set SWITCHBOARD_SDK.')
     if args.task == 'build' or args.verbose:
         print(f'Compiler: {version}\nSDK: {sdk}', flush=True)
     if args.task == 'test':

@@ -58,7 +58,7 @@ import ContextTranscript
         let afterRect = manager.boundingRect(forGlyphRange: manager.glyphRange(forCharacterRange: NSRange(location: after, length: 1), actualCharacterRange: nil), in: container)
         let cellRect = manager.boundingRect(forGlyphRange: manager.glyphRange(forCharacterRange: NSRange(location: lastCell, length: 1), actualCharacterRange: nil), in: container)
         #expect(afterRect.minY > cellRect.maxY)
-        if let directory = ProcessInfo.processInfo.environment["CONTEXTDESK_TABLE_RENDER_DIR"] {
+        if let directory = ProcessInfo.processInfo.environment["SWITCHBOARD_TABLE_RENDER_DIR"] {
             view.drawsBackground = true
             view.backgroundColor = .textBackgroundColor
             let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))

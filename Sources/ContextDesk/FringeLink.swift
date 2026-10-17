@@ -48,12 +48,12 @@ enum FringeLinkMapping {
     }
 }
 
-/// Serves the Fringe notch app over `~/Library/Application Support/Context Desk/fringe.sock`.
+/// Serves the Fringe notch app over `~/Library/Application Support/Switchboard/fringe.sock`.
 /// Only a peer signed as `local.daniil.fringe` by the same team is accepted. While Fringe is
 /// connected the built-in island steps aside; when the connection ends it returns.
 @MainActor final class FringeLinkServer {
     private static var running: FringeLinkServer?
-    private static let log = Logger(subsystem: "local.daniil.contextdesk", category: "fringe")
+    private static let log = Logger(subsystem: "local.daniil.switchboard", category: "fringe")
 
     static func start(model: DeskModel, showMainWindow: @escaping () -> Void) {
         guard running == nil else { return }
@@ -64,7 +64,7 @@ enum FringeLinkMapping {
 
     private let model: DeskModel
     private let showMainWindow: () -> Void
-    private let queue = DispatchQueue(label: "local.daniil.contextdesk.fringe")
+    private let queue = DispatchQueue(label: "local.daniil.switchboard.fringe")
     private var acceptSource: DispatchSourceRead?
     private var client: FringeClientConnection?
     private var greeted = false

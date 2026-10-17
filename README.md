@@ -76,7 +76,7 @@ Archive summaries make additional model requests and consume allowance. Context 
 
 ## Data and permissions
 
-Private state lives in `~/Library/Application Support/Context Desk/`: metadata, the dedicated Codex home and Claude profile, conversations, schedules, optional browser profiles/checkpoints and installed plugins. Agent requests still go to the configured provider; this is not an offline model. The optional mobile integration has its own data path and setup.
+Private state lives in `~/Library/Application Support/Switchboard/`: metadata, the dedicated Codex home and Claude profile, conversations, schedules, optional browser profiles/checkpoints and installed plugins. Agent requests still go to the configured provider; this is not an offline model. The optional mobile integration has its own data path and setup.
 
 Switchboard does not copy your existing Codex or Claude credentials. Project permissions and approval requests still apply. Review the scope before approving a command. Never publish the application data directory, auth files, raw conversations or browser profiles. Use the synthetic examples for screenshots and issue reports.
 

@@ -137,9 +137,12 @@ public struct SavedState: Codable, Sendable {
 }
 
 public enum Locations {
-    public static var root: URL {
+    public static var root: URL { applicationSupport.appendingPathComponent("Switchboard", isDirectory: true) }
+    /// The data folder before the rename to Switchboard (2026-10-17). `LegacyDataMigration` moves it to `root`
+    /// once and leaves a symbolic link here, so paths recorded in chats and other projects keep resolving.
+    public static var legacyRoot: URL { applicationSupport.appendingPathComponent("Context Desk", isDirectory: true) }
+    private static var applicationSupport: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Context Desk", isDirectory: true)
     }
     public static var codexHome: URL { root.appendingPathComponent("codex", isDirectory: true) }
     public static var claudeHome: URL { root.appendingPathComponent("claude", isDirectory: true) }

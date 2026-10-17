@@ -1,7 +1,7 @@
 #!/bin/zsh
 set -euo pipefail
 cd "$(dirname "$0")"
-plugin_root="${CONTEXTDESK_PLUGINS_DIR:-$HOME/Library/Application Support/Context Desk/plugins}/headroom"
+plugin_root="${SWITCHBOARD_PLUGINS_DIR:-$HOME/Library/Application Support/Switchboard/plugins}/headroom"
 uv_bin="${UV_BIN:-$HOME/.local/bin/uv}"
 if [[ ! -x "$uv_bin" ]]; then uv_bin="$(command -v uv)"; fi
 # Install only while this plugin is stopped; do not mutate a live runtime.

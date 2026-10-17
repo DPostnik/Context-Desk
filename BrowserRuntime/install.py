@@ -15,7 +15,7 @@ import tempfile
 import urllib.request
 import zipfile
 
-ROOT = Path.home() / 'Library/Application Support/Context Desk/browser'
+ROOT = Path.home() / 'Library/Application Support/Switchboard/browser'
 LOCK = json.loads(Path(__file__).with_name('runtime.lock.json').read_text())
 
 

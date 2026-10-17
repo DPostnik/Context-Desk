@@ -322,9 +322,9 @@ func schedulerRecoveryPreservesNextOccurrenceWithoutReplaying(activeStatus: JobR
 }
 
 // Opt-in rendering uses synthetic data and process-local language defaults, never the running app.
-@Test(.enabled(if: ProcessInfo.processInfo.environment["CONTEXTDESK_SCHEDULE_RENDER_DIR"] != nil))
+@Test(.enabled(if: ProcessInfo.processInfo.environment["SWITCHBOARD_SCHEDULE_RENDER_DIR"] != nil))
 @MainActor func schedulerEditorRenderProbe() throws {
-    let language = ProcessInfo.processInfo.environment["CONTEXTDESK_SCHEDULE_RENDER_LANGUAGE"] ?? "ru"
+    let language = ProcessInfo.processInfo.environment["SWITCHBOARD_SCHEDULE_RENDER_LANGUAGE"] ?? "ru"
     UserDefaults.standard.setVolatileDomain([AppLanguage.preferenceKey: language], forName: UserDefaults.argumentDomain)
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -341,7 +341,7 @@ func schedulerRecoveryPreservesNextOccurrenceWithoutReplaying(activeStatus: JobR
     let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
     host.cacheDisplay(in: host.bounds, to: bitmap)
     let data = try #require(bitmap.representation(using: .png, properties: [:]))
-    let folder = URL(fileURLWithPath: ProcessInfo.processInfo.environment["CONTEXTDESK_SCHEDULE_RENDER_DIR"]!)
+    let folder = URL(fileURLWithPath: ProcessInfo.processInfo.environment["SWITCHBOARD_SCHEDULE_RENDER_DIR"]!)
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     try data.write(to: folder.appendingPathComponent("schedule-editor-" + language + ".png"))
     #expect(L10n.language.rawValue == language)

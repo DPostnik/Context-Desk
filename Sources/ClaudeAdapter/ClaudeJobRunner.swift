@@ -74,12 +74,12 @@ public actor ClaudeJobRunner: AgentScheduledExecutor {
     }
     /// Argv after the base print flags. Variadic CLI options are each followed by another flag or end of argv.
     public static func browserArguments(_ server: [String]) throws -> [String] {
-        let config: JSONValue = .object(["mcpServers": .object(["context_desk_browser": .object([
+        let config: JSONValue = .object(["mcpServers": .object(["switchboard_browser": .object([
             "type": .string("stdio"), "command": .string("/usr/bin/python3"), "args": .array(server.map(JSONValue.string))
         ])])])
         let encoder = JSONEncoder(); encoder.outputFormatting = [.withoutEscapingSlashes, .sortedKeys]
         return ["--mcp-config", String(decoding: try encoder.encode(config), as: UTF8.self),
-                "--allowedTools", "mcp__context_desk_browser"]
+                "--allowedTools", "mcp__switchboard_browser"]
     }
     private struct Lease { let session: AgentSessionReference; let grant: BrowserProfileGrant; let browser: Browser }
     /// Reserve, acknowledge and (optionally) authorize a fresh profile before dispatch. Nothing launches Chrome here.

@@ -3,7 +3,7 @@ import Testing
 @testable import ContextCore
 
 /// Actual pinned Chrome, disposable profiles, loopback website only. No provider call.
-@Test(.enabled(if: ProcessInfo.processInfo.environment["CONTEXTDESK_PROFILE_SMOKE"] == "1"))
+@Test(.enabled(if: ProcessInfo.processInfo.environment["SWITCHBOARD_PROFILE_SMOKE"] == "1"))
 func browserProfileLiveHandoffRetainsCookiesLocalStorageAndIndexedDB() async throws {
     let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("profile-live-" + UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

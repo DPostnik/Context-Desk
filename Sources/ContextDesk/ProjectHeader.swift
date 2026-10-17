@@ -49,7 +49,7 @@ struct ProjectHeader<Content: View>: NSViewRepresentable {
 }
 
 class SidebarRowView: NSView, NSDraggingSource {
-    var dragType: NSPasteboard.PasteboardType { .init("com.contextdesk.sidebar-row") }
+    var dragType: NSPasteboard.PasteboardType { .init("local.daniil.switchboard.sidebar-row") }
     var dragID: String { "" }
     var dragGroup: String { "" }
     var isInteractionEnabled = true {
@@ -158,7 +158,7 @@ class SidebarRowView: NSView, NSDraggingSource {
 class ProjectHeaderView: SidebarRowView {
     var remove: (() -> Void)?
     var rename: (() -> Void)?
-    static let pasteboardType = NSPasteboard.PasteboardType("com.contextdesk.project-order")
+    static let pasteboardType = NSPasteboard.PasteboardType("local.daniil.switchboard.project-order")
     var projectID = UUID()
     var move: (UUID) -> Bool = { _ in false }
     var moveUp: (() -> Void)?

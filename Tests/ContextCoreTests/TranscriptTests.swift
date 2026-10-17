@@ -84,7 +84,7 @@ import ContextTranscript
     #expect(storage.attribute(.foregroundColor, at: actionIndex, effectiveRange: nil) as? NSColor == .secondaryLabelColor)
     let action = try #require(storage.attribute(.paragraphStyle, at: actionIndex, effectiveRange: nil) as? NSParagraphStyle)
     #expect(action.lineSpacing < assistant.lineSpacing)
-    if let path = ProcessInfo.processInfo.environment["CONTEXTDESK_RENDER_PATH"] {
+    if let path = ProcessInfo.processInfo.environment["SWITCHBOARD_RENDER_PATH"] {
         view.drawsBackground = true
         view.backgroundColor = .windowBackgroundColor
         view.layoutSubtreeIfNeeded()
@@ -260,7 +260,7 @@ import ContextTranscript
     let storage = try #require(view.transcript.textStorage)
     let timingIndex = (storage.string as NSString).range(of: timing.label()).location
     #expect(storage.attribute(NSAttributedString.Key("ContextDeskResponseSeparator"), at: timingIndex, effectiveRange: nil) as? Bool == true)
-    if let path = ProcessInfo.processInfo.environment["CONTEXTDESK_RENDER_PATH"] {
+    if let path = ProcessInfo.processInfo.environment["SWITCHBOARD_RENDER_PATH"] {
         view.drawsBackground = true
         view.backgroundColor = .windowBackgroundColor
         let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
@@ -313,7 +313,7 @@ import ContextTranscript
     _ = view.textView(view.transcript, clickedOnLink: "contextdesk-copy:tool", at: 0)
     _ = view.textView(view.transcript, clickedOnLink: "contextdesk-copy:unknown", at: 0)
     #expect(pasteboard.changeCount == changes)
-    if let path = ProcessInfo.processInfo.environment["CONTEXTDESK_RENDER_PATH"] {
+    if let path = ProcessInfo.processInfo.environment["SWITCHBOARD_RENDER_PATH"] {
         view.drawsBackground = true; view.backgroundColor = .windowBackgroundColor
         view.layoutSubtreeIfNeeded()
         let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
@@ -427,7 +427,7 @@ import ContextTranscript
         let container = try #require(view.transcript.textContainer)
         manager.ensureLayout(for: container)
         #expect(manager.usedRect(for: container).maxX <= container.containerSize.width + 1)
-        if let path = ProcessInfo.processInfo.environment["CONTEXTDESK_RENDER_PATH"] {
+        if let path = ProcessInfo.processInfo.environment["SWITCHBOARD_RENDER_PATH"] {
             view.drawsBackground = true; view.backgroundColor = .windowBackgroundColor
             let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
             view.cacheDisplay(in: view.bounds, to: bitmap)

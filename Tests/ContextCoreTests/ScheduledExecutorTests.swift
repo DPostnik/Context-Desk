@@ -238,10 +238,10 @@ private func makeRequest(_ runner: any AgentScheduledExecutor, root: URL) async 
     let executable = try claudeFixture(root, body: #"""
     a=sys.argv
     assert '--strict-mcp-config' not in a
-    assert a[a.index('--allowedTools')+1]=='mcp__context_desk_browser'
+    assert a[a.index('--allowedTools')+1]=='mcp__switchboard_browser'
     import os
     assert os.environ.get('MCP_TIMEOUT')=='30000' and os.environ.get('MCP_TOOL_TIMEOUT')=='90000'
-    server=json.loads(a[a.index('--mcp-config')+1])['mcpServers']['context_desk_browser']
+    server=json.loads(a[a.index('--mcp-config')+1])['mcpServers']['switchboard_browser']
     assert server['type']=='stdio' and server['command']=='/usr/bin/python3'
     args=server['args']; assert args[0].endswith('BrowserRuntime/server.py')
     env=args[args.index('--environment')+1]; lease=args[args.index('--profile-lease')+1]
@@ -250,7 +250,7 @@ private func makeRequest(_ runner: any AgentScheduledExecutor, root: URL) async 
     assert profile['generation'].lower()==lease and profile['state']=='active' and profile['owner']
     assert json.loads((root/'environments'/env/'chrome-session-import.json').read_text())
     sent=pathlib.Path('sent').read_text()
-    assert sent.startswith('test') and 'mcp__context_desk_browser__browser_import_session' in sent
+    assert sent.startswith('test') and 'mcp__switchboard_browser__browser_import_session' in sent
     pathlib.Path('environment').write_text(env)
     print(json.dumps({'type':'result','is_error':False,'result':'done'}))
     """#)

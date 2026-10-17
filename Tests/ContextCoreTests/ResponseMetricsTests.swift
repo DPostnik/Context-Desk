@@ -106,7 +106,7 @@ import ContextTranscript
         manager.ensureLayout(for: container)
         #expect(manager.usedRect(for: container).maxX + view.transcript.textContainerOrigin.x <= view.contentSize.width)
     }
-    if let path = ProcessInfo.processInfo.environment["CONTEXTDESK_RENDER_PATH"] {
+    if let path = ProcessInfo.processInfo.environment["SWITCHBOARD_RENDER_PATH"] {
         view.drawsBackground = true; view.backgroundColor = .windowBackgroundColor
         let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
         view.cacheDisplay(in: view.bounds, to: bitmap)

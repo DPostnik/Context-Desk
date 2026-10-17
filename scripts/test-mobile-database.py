@@ -5,9 +5,9 @@ from pathlib import Path
 import subprocess
 import tempfile
 root = Path(__file__).resolve().parents[1]
-bindir = Path(os.environ.get('CONTEXTDESK_POSTGRES_BIN', '/opt/homebrew/opt/postgresql@17/bin'))
+bindir = Path(os.environ.get('SWITCHBOARD_POSTGRES_BIN', '/opt/homebrew/opt/postgresql@17/bin'))
 if not (bindir/'initdb').exists():
-    raise SystemExit('Set CONTEXTDESK_POSTGRES_BIN to a PostgreSQL bin directory.')
+    raise SystemExit('Set SWITCHBOARD_POSTGRES_BIN to a PostgreSQL bin directory.')
 with tempfile.TemporaryDirectory(prefix='context-remote-db-', dir='/tmp') as directory:
     folder = Path(directory)
     def run(name, *args, **kwargs):

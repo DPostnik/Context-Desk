@@ -42,7 +42,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer zsh scripts/build-mobil
 ```
 
 The PostgreSQL test creates and removes its own temporary cluster. Set
-`CONTEXTDESK_POSTGRES_BIN` to a working PostgreSQL bin directory when needed.
+`SWITCHBOARD_POSTGRES_BIN` to a working PostgreSQL bin directory when needed.
 It never accesses an existing database. The checked-in iOS project includes the UI-test target. The generator is only for
 initial scaffolding and refuses to overwrite an existing project; there are no
 third-party dependencies.

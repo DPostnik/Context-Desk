@@ -19,7 +19,7 @@ import TOMLDecoder
         struct Server: Decodable { let command: String; let args: [String]; let enabled: Bool }
         struct Config: Decodable { let mcp_servers: [String: Server] }
         let decoded = try TOMLDecoder().decode(Config.self, from: toml)
-        let server = try #require(decoded.mcp_servers["context_desk_browser"])
+        let server = try #require(decoded.mcp_servers["switchboard_browser"])
         #expect(server.command == "/usr/bin/python3")
         #expect(server.args == [scripts.appendingPathComponent("server.py").path, "--root", root.path, "--language", language.rawValue])
         #expect(server.enabled)

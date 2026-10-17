@@ -30,7 +30,7 @@ stays open across adapter reconnects; close its window yourself when finished.
 Existing profiles are never adopted. Website cookies are copied only by an explicit native import; Codex authentication files are never copied.
 The component is disabled by default. Turning it off also requires Apply or restart.
 
-Browser data lives in `~/Library/Application Support/Context Desk/browser/`.
+Browser data lives in `~/Library/Application Support/Switchboard/browser/`.
 File uploads also accept files inside the current thread's project directory,
 supplied by the host as the MCP process working directory. The adapter forwards
 that canonical directory separately from browser storage to Chrome DevTools;
@@ -110,7 +110,7 @@ python3 BrowserRuntime/install.py
 Chrome остаётся открытым при переподключении адаптера; закрой его окно, когда закончишь. Cookies сайтов можно импортировать явно через меню браузера чата. Файлы авторизации Codex не копируются. По умолчанию компонент выключен. Отключение
 тоже применяется кнопкой или после перезапуска.
 
-Данные находятся в `~/Library/Application Support/Context Desk/browser/`.
+Данные находятся в `~/Library/Application Support/Switchboard/browser/`.
 Загрузка файлов также доступна из папки проекта текущего чата, которую приложение
 задаёт как рабочий каталог MCP-процесса. Адаптер передаёт её канонический путь
 в Chrome DevTools отдельно от служебной папки браузера. Проверки путей и симлинков
@@ -414,7 +414,7 @@ Cookies сеанса сохраняют свой срок жизни. Новом
 
 Development: ChromeCookieTests uses synthetic encrypted SQLite fixtures and
 known OpenSSL vectors. ChromeCookieLiveTests is opt-in with
-`CONTEXTDESK_COOKIE_SMOKE=1 zsh scripts/test.sh`; it uses isolated Chrome for
+`SWITCHBOARD_COOKIE_SMOKE=1 zsh scripts/test.sh`; it uses isolated Chrome for
 Testing profiles and a loopback HTTP fixture only, never the user's Chrome data
 or Keychain. It checks cookie transmission, HttpOnly, restart persistence and
 chat isolation.
@@ -479,7 +479,7 @@ Sync сюда не входят. «Взять управление вручну�
 по расписанию и поддержки Claude. При неподтверждённом закрытии или подключении
 автоматического повтора нет.
 
-Development: `CONTEXTDESK_PROFILE_SMOKE=1 zsh scripts/test.sh` exercises real
+Development: `SWITCHBOARD_PROFILE_SMOKE=1 zsh scripts/test.sh` exercises real
 Chrome against a loopback site, verifies cookies/localStorage/IndexedDB after
 closed-profile handoff, and checks that a different profile remains signed out.
 Unit/process fixtures cover migration, provider/project scope, exclusive control,

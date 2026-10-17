@@ -43,7 +43,7 @@ struct ChatRowAction {
 }
 
 final class ChatRowView: SidebarRowView {
-    static let pasteboardType = NSPasteboard.PasteboardType("com.contextdesk.chat-order")
+    static let pasteboardType = NSPasteboard.PasteboardType("local.daniil.switchboard.chat-order")
     var chatID = ""
     var projectID = UUID()
     var archived = false

@@ -34,7 +34,7 @@ import Foundation
         throw Failure.check("Timed out: " + label)
     }
     static func run() async throws {
-        let directory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Context Desk/mobile-setup")
+        let directory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Switchboard/mobile-setup")
         let setup = try JSONDecoder().decode(Setup.self, from: Data(contentsOf: directory.appendingPathComponent("project.json")))
         let secrets = try JSONDecoder().decode(Secrets.self, from: Data(contentsOf: directory.appendingPathComponent("setup-secrets.json")))
         let owner = try JSONDecoder().decode(Auth.self, from: await request(setup, "auth/v1/token?grant_type=password", method: "POST", body: ["email":setup.email,"password":secrets.ownerPassword]))

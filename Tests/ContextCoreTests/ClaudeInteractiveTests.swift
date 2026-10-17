@@ -72,7 +72,7 @@ private func interactiveFixture(_ root: URL) throws -> URL {
         if mode=='error':
             print(json.dumps({'type':'result','subtype':'error_during_execution','is_error':True,'result':'boom','usage':usage,'permission_denials':[]})); sys.exit(1)
         print(json.dumps({'type':'result','subtype':'success','is_error':False,'result':json.dumps(value),'structured_output':value,'usage':usage,'permission_denials':[]})); sys.exit(0)
-    browser='--mcp-config' in sys.argv and 'context_desk_browser' in sys.argv[sys.argv.index('--mcp-config')+1]
+    browser='--mcp-config' in sys.argv and 'switchboard_browser' in sys.argv[sys.argv.index('--mcp-config')+1]
     full=sys.argv[sys.argv.index('--permission-mode')+1]=='bypassPermissions'
     assert ('--safe-mode' in sys.argv) == (not browser and not full) and '--setting-sources' in sys.argv
     # Scheduled full-access turns run without connector approval rules.
@@ -249,7 +249,7 @@ private func interactiveRequest(context: AgentContext, root: URL, session: Agent
         let args = try #require(record["args"] as? [String])
         let config = args[try #require(args.firstIndex(of: "--mcp-config")) + 1]
         let server = try #require(JSONSerialization.jsonObject(with: Data(config.utf8)) as? [String: Any])
-        let browser = try #require((server["mcpServers"] as? [String: Any])?["context_desk_browser"] as? [String: Any])
+        let browser = try #require((server["mcpServers"] as? [String: Any])?["switchboard_browser"] as? [String: Any])
         let argv = try #require(browser["args"] as? [String])
         #expect(argv.first == resources.appendingPathComponent("BrowserRuntime/server.py").path)
         return argv[try #require(argv.firstIndex(of: "--profile-lease")) + 1]
@@ -257,7 +257,7 @@ private func interactiveRequest(context: AgentContext, root: URL, session: Agent
     let one = try await turn(1)
     let args = try #require(one["args"] as? [String])
     #expect(!args.contains("--safe-mode") && args.contains("--disable-slash-commands"))
-    #expect(args[args.firstIndex(of: "--allowedTools")! + 1] == "mcp__context_desk_browser")
+    #expect(args[args.firstIndex(of: "--allowedTools")! + 1] == "mcp__switchboard_browser")
     #expect(one["env"] as? [String: String] == ["MCP_TIMEOUT": "30000", "MCP_TOOL_TIMEOUT": "90000", "CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1",
                                                    "CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES": "1"])
     #expect(try lease(one) == first.generation.uuidString.lowercased())

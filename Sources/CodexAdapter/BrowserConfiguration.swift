@@ -12,7 +12,7 @@ public enum BrowserConfiguration {
 
     public static func arguments(enabled: Bool, resources: URL?, root: URL = directory,
                                  language: AppLanguage = L10n.language) throws -> [String] {
-        let prefix = "mcp_servers.context_desk_browser"
+        let prefix = "mcp_servers.switchboard_browser"
         // No persistent MCP entry is written. Omitting our launch arguments is
         // sufficient when disabled; a transport-less disabled table is invalid.
         guard enabled else { return [] }
@@ -44,13 +44,13 @@ public enum BrowserConfiguration {
         guard let resources, let environment else {
             // A disabled table still needs a valid transport. Override saved
             // thread configuration explicitly without launching any process.
-            return .object(["mcp_servers.context_desk_browser": .object([
+            return .object(["mcp_servers.switchboard_browser": .object([
                 "command": .string("/usr/bin/false"), "args": .array([]),
                 "enabled": .bool(false), "required": .bool(false)
             ])])
         }
         _ = try arguments(enabled: true, resources: resources, root: root)
-        return .object(["mcp_servers.context_desk_browser": .object([
+        return .object(["mcp_servers.switchboard_browser": .object([
             "command": .string("/usr/bin/python3"),
             "args": .array(BrowserEnvironmentStore.serverArguments(resources: resources, root: root, environment: environment,
                                                                    grant: grant).map(JSONValue.string)),

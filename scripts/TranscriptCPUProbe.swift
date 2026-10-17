@@ -17,7 +17,7 @@ import Darwin
         app.run()
     }
     @MainActor static func measure() async throws {
-        guard let path = ProcessInfo.processInfo.environment["CONTEXTDESK_CPU_REPORT"] else { return }
+        guard let path = ProcessInfo.processInfo.environment["SWITCHBOARD_CPU_REPORT"] else { return }
         _ = NSApplication.shared
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

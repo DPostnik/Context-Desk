@@ -61,7 +61,7 @@ Chrome uses a separate profile; no login is needed for the included loopback fix
 
 ## Troubleshooting and validation scope
 
-- **SDK or Swift Testing error:** use a matching Xcode/CLT installation. Inspect `.build/local-build/sdk-probe-error.log` or `testing-probe-error.log` locally. `CONTEXTDESK_SDK` can select an already installed compatible SDK; it does not repair a mismatched toolchain.
+- **SDK or Swift Testing error:** use a matching Xcode/CLT installation. Inspect `.build/local-build/sdk-probe-error.log` or `testing-probe-error.log` locally. `SWITCHBOARD_SDK` can select an already installed compatible SDK; it does not repair a mismatched toolchain.
 - **Dependency download fails:** check GitHub connectivity. The direct-compiler fallback requires an existing clean TOMLDecoder checkout at the locked revision, so it cannot bootstrap a fresh checkout offline.
 - **Compiler/test failure:** report the exact failure. The scripts do not hide a real compilation failure behind the fallback.
 - **Codex missing or sign-in unavailable:** check discovery/version separately from build success. Do not copy `auth.json` from another client.

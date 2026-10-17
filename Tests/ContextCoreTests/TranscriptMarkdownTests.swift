@@ -27,7 +27,7 @@ import ContextCore
 }
 
 @MainActor private func writeRender(_ view: TranscriptScrollView, name: String) throws {
-    guard let directory = ProcessInfo.processInfo.environment["CONTEXTDESK_MARKDOWN_RENDER_DIR"] else { return }
+    guard let directory = ProcessInfo.processInfo.environment["SWITCHBOARD_MARKDOWN_RENDER_DIR"] else { return }
     view.drawsBackground = true
     view.backgroundColor = .textBackgroundColor
     let manager = try #require(view.transcript.layoutManager)

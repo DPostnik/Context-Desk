@@ -220,7 +220,7 @@ class StdioRPC:
         try:
             initialized = self.rpc('initialize', {
                 'protocolVersion': protocol_version, 'capabilities': {},
-                'clientInfo': {'name': 'context-desk-browser', 'version': '1.0.0'}},
+                'clientInfo': {'name': 'switchboard-browser', 'version': '1.0.0'}},
                 'initialize-' + uuid.uuid4().hex, deadline)
             if (not isinstance(initialized, dict)
                     or initialized.get('protocolVersion') != protocol_version

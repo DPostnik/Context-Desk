@@ -53,7 +53,7 @@ fixture tabs, minting a new run or transferring the target. Never kill a shared
 browser/driver. Self-tests do not open browsers and therefore need no browser reset.
 
 The lab stores generated artifacts/evidence in the app-owned directory
-`~/Library/Application Support/Context Desk/browser-gate/stage3/` with owner-only
+`~/Library/Application Support/Switchboard/browser-gate/stage3/` with owner-only
 permissions. It never accesses Codex homes, credentials, schedules or personal
 browser data. Evidence is intentionally outside Git. `--root` may redirect fixture
 storage, but the caller must select an app-owned private location. Preserve evidence

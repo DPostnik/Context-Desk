@@ -16,7 +16,7 @@ import Testing
 
 /// Explicit opt-in: uses a temporary unauthenticated home and never sends a model turn.
 @Test func installedCodexCompatibilityWithoutInference() async throws {
-    guard ProcessInfo.processInfo.environment["CONTEXTDESK_CODEX_COMPATIBILITY_LIVE"] == "1" else { return }
+    guard ProcessInfo.processInfo.environment["SWITCHBOARD_CODEX_COMPATIBILITY_LIVE"] == "1" else { return }
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let wire = CodexConnection()
@@ -60,7 +60,7 @@ import Testing
 
 /// Real per-thread MCP startup and resume. Helper writes only its own launch identity.
 @Test func installedCodexRoutesBrowserEnvironmentsWithoutInference() async throws {
-    guard ProcessInfo.processInfo.environment["CONTEXTDESK_CODEX_COMPATIBILITY_LIVE"] == "1" else { return }
+    guard ProcessInfo.processInfo.environment["SWITCHBOARD_CODEX_COMPATIBILITY_LIVE"] == "1" else { return }
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let resources = root.appendingPathComponent("Resources")

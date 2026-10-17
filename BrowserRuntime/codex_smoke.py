@@ -20,7 +20,7 @@ def main():
         root = Path(temporary)
         home = root / 'codex'
         home.mkdir()
-        prefix = 'mcp_servers.context_desk_browser'
+        prefix = 'mcp_servers.switchboard_browser'
         settings = [prefix + '.command="/usr/bin/python3"', prefix + '.args=' + json.dumps([
             str(args.resources.resolve() / 'server.py'), '--root', str(root / 'browser'), '--language', 'en']),
             prefix + '.enabled=true', prefix + '.startup_timeout_sec=30', 'analytics.enabled=false']
@@ -66,17 +66,17 @@ def main():
             raise TimeoutError('No replay after response timeout')
 
         try:
-            send({'id': 'init', 'method': 'initialize', 'params': {'clientInfo': {'name': 'context_desk_browser_check', 'version': '1'}, 'capabilities': {'experimentalApi': True}}})
+            send({'id': 'init', 'method': 'initialize', 'params': {'clientInfo': {'name': 'switchboard_browser_check', 'version': '1'}, 'capabilities': {'experimentalApi': True}}})
             receive('init')
             send({'method': 'initialized', 'params': {}})
             send({'id': 'mcp', 'method': 'mcpServerStatus/list', 'params': {}})
             result = receive('mcp')
             entries = result.get('data', [])
             if args.disabled:
-                assert not any(x['name'] == 'context_desk_browser' for x in entries)
+                assert not any(x['name'] == 'switchboard_browser' for x in entries)
                 print(json.dumps({'result': 'passed', 'disabled': True, 'modelCalls': 0}))
                 return
-            server = next(x for x in entries if x['name'] == 'context_desk_browser')
+            server = next(x for x in entries if x['name'] == 'switchboard_browser')
             tools = server.get('tools', {})
             assert len(tools) == 8, {'toolCount': len(tools), 'runtimeStatus': server.get('runtimeStatus'), 'toolsError': server.get('toolsError')}
             assert not (root / 'browser/profile').exists(), 'Discovery must not launch Chrome'

@@ -6,7 +6,7 @@ from pathlib import Path
 import time
 import uuid
 
-ROOT = Path.home() / 'Library/Application Support/Context Desk/browser-gate/stage3'
+ROOT = Path.home() / 'Library/Application Support/Switchboard/browser-gate/stage3'
 STATUSES = {'passed', 'failed', 'not tested', 'blocked', 'not applicable'}
 
 
