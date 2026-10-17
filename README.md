@@ -44,8 +44,8 @@ Both use synthetic data and the Python standard library. The guide distinguishes
 You need a Mac, a matching **Swift 6 / Xcode or Command Line Tools** installation, **Python 3.10+**, Git and internet access for the pinned Swift dependency. The deployment target is macOS 14; validation so far is on Apple Silicon with macOS 26.6.2 and Xcode 27 / Swift 6.4. Intel and macOS 14 have not been tested.
 
 ```sh
-git clone https://github.com/DPostnik/Context-Desk.git
-cd Context-Desk
+git clone https://github.com/DPostnik/Switchboard.git
+cd Switchboard
 python3 --version
 xcrun swift --version
 zsh scripts/build-app.sh
@@ -91,7 +91,7 @@ This source preview includes screenshots and written examples. A recorded walkth
 
 ## Feedback
 
-[Open a GitHub Issue](https://github.com/DPostnik/Context-Desk/issues/new/choose) for a reproducible bug or a concrete workflow you tried. Include macOS/chip, Swift and Codex/Claude Code versions, the relevant demo step and redacted error text. Please review screenshots for account names, private project names and local paths. Issue templates are included in this repository.
+[Open a GitHub Issue](https://github.com/DPostnik/Switchboard/issues/new/choose) for a reproducible bug or a concrete workflow you tried. Include macOS/chip, Swift and Codex/Claude Code versions, the relevant demo step and redacted error text. Please review screenshots for account names, private project names and local paths. Issue templates are included in this repository.
 
 ## License
 

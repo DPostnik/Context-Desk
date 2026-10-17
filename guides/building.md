@@ -17,8 +17,8 @@ This is a source preview. There is no downloadable DMG in this walkthrough.
 Install a complete, matching [Apple toolchain](https://developer.apple.com/documentation/xcode/installing-the-command-line-tools). Do not mix SDKs and compilers from different installations. This project does not install or switch your toolchain.
 
 ```sh
-git clone https://github.com/DPostnik/Context-Desk.git
-cd Context-Desk
+git clone https://github.com/DPostnik/Switchboard.git
+cd Switchboard
 python3 --version
 xcode-select -p
 xcrun swift --version

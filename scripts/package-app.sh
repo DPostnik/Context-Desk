@@ -18,10 +18,10 @@ if digest.hexdigest() != metadata['sourceSHA256']:
     sys.exit('App does not match current sources. Run zsh scripts/build-app.sh first.')
 PY
 mkdir -p dist
-archive="$PWD/dist/Context-Desk-macOS.zip"
+archive="$PWD/dist/Switchboard-macOS.zip"
 staging="$(mktemp -d "$PWD/dist/package.XXXXXX")"
 trap 'rm -rf "$staging"' EXIT
-ditto -c -k --sequesterRsrc --keepParent "$app" "$staging/Context-Desk-macOS.zip"
-unzip -tq "$staging/Context-Desk-macOS.zip"
-mv "$staging/Context-Desk-macOS.zip" "$archive"
+ditto -c -k --sequesterRsrc --keepParent "$app" "$staging/Switchboard-macOS.zip"
+unzip -tq "$staging/Switchboard-macOS.zip"
+mv "$staging/Switchboard-macOS.zip" "$archive"
 shasum -a 256 "$archive"
