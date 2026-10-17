@@ -128,3 +128,39 @@ import Testing
     menu.performActionForItem(at: index)
     #expect(removed)
 }
+
+@Test func renamingAProjectChangesOnlyItsDisplayName() {
+    var state = SavedState()
+    let id = state.addProject(path: "/tmp/ExampleProject")
+    let path = state.projects.first?.path
+    var changed = state.renameProject(id, to: "  Client work \n")
+    #expect(changed)
+    #expect(state.projects.first?.name == "Client work")
+    #expect(state.projects.first?.path == path)
+    changed = state.renameProject(id, to: "Client work")
+    #expect(!changed)
+    changed = state.renameProject(UUID(), to: "Other")
+    #expect(!changed)
+    changed = state.renameProject(id, to: "   ")
+    #expect(changed)
+    #expect(state.projects.first?.name == "ExampleProject")
+    state.hideProject(id)
+    state.renameProject(id, to: "Kept")
+    let restored = state.addProject(path: "/tmp/ExampleProject")
+    #expect(restored == id)
+    #expect(state.projects.first?.name == "Kept") // Re-adding restores the custom name.
+}
+
+@Test @MainActor func projectHeaderMenuOffersRename() throws {
+    let view = ProjectHeaderView(frame: NSRect(x: 0, y: 0, width: 260, height: 32))
+    var renamed = 0
+    view.rename = { renamed += 1 }
+    let event = try #require(NSEvent.mouseEvent(with: .rightMouseDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                                windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+    let menu = try #require(view.menu(for: event))
+    let item = try #require(menu.items.first)
+    #expect(item.title == L10n.text("Переименовать…", "Rename…"))
+    #expect(item.isEnabled)
+    _ = (item.target as? NSObject)?.perform(item.action)
+    #expect(renamed == 1)
+}

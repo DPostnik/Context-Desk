@@ -8,6 +8,8 @@ struct DeskView: View {
     @ObservedObject var model: DeskModel
     @State private var search = ""
     @State private var renaming: Chat?
+    @State private var renamingProject: Project?
+    @State private var newProjectName = ""
     @State private var deleting: Chat?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var dropTargetProjectID: UUID?
@@ -84,6 +86,13 @@ struct DeskView: View {
             TextField(L10n.text("Название", "Title"), text: $newTitle)
             Button(L10n.text("Сохранить", "Save")) { if let chat = renaming { Task { await model.renameChat(chat.id, title: newTitle) } }; renaming = nil }
             Button(L10n.text("Отмена", "Cancel"), role: .cancel) { renaming = nil }
+        }
+        .alert(L10n.text("Название проекта", "Project name"), isPresented: Binding(get: { renamingProject != nil }, set: { if !$0 { renamingProject = nil } }), presenting: renamingProject) { project in
+            TextField(L10n.text("Название", "Name"), text: $newProjectName)
+            Button(L10n.text("Сохранить", "Save")) { model.renameProject(project.id, to: newProjectName); renamingProject = nil }
+            Button(L10n.text("Отмена", "Cancel"), role: .cancel) { renamingProject = nil }
+        } message: { project in
+            Text(L10n.text("Меняется только название в списке, папка «\(URL(fileURLWithPath: project.path).lastPathComponent)» остаётся прежней. Пустое название вернёт имя папки.", "Only the name in the list changes; the folder “\(URL(fileURLWithPath: project.path).lastPathComponent)” stays the same. An empty name restores the folder name."))
         }
         .alert(L10n.text("Удалить чат?", "Delete chat?"), isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), presenting: deleting) { chat in
             Button(L10n.text("Удалить", "Delete"), role: .destructive) { Task { await model.deleteChat(chat.id) } }
@@ -289,7 +298,8 @@ struct DeskView: View {
                     if targeted { dropTargetProjectID = project.id }
                     else if dropTargetProjectID == project.id { dropTargetProjectID = nil }
                 }, moveUp: adjacentProjectMove(project, offset: -1), moveDown: adjacentProjectMove(project, offset: 1),
-                   remove: { Task { await model.hideProject(project.id) } }) {
+                   remove: { Task { await model.hideProject(project.id) } },
+                   rename: { startRenaming(project) }) {
                     HStack(spacing: .ui(9)) {
                         Image(systemName: "chevron.right")
                             .font(.ui(.caption).weight(.semibold))
@@ -337,6 +347,9 @@ struct DeskView: View {
                     } label: {
                         Label(L10n.text("Выделить все чаты", "Select all chats"), systemImage: "checkmark.circle")
                     }.disabled(!model.state.chats.contains { $0.projectID == project.id && !$0.isArchived })
+                    Button { startRenaming(project) } label: {
+                        Label(L10n.text("Переименовать…", "Rename…"), systemImage: "pencil")
+                    }
                     Divider()
                     Button(L10n.text("Переместить выше", "Move up")) {
                         adjacentProjectMove(project, offset: -1)?()
@@ -383,6 +396,11 @@ struct DeskView: View {
                 }
             }
         }.animation(sidebarAnimation, value: isExpanded)
+    }
+
+    private func startRenaming(_ project: Project) {
+        newProjectName = project.name
+        renamingProject = project
     }
 
     private func startChat(in project: Project) {

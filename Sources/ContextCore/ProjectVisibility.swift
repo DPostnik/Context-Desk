@@ -14,6 +14,16 @@ extension SavedState {
         return true
     }
 
+    /// Display name only; the folder is never touched. An empty name restores the folder name.
+    @discardableResult public mutating func renameProject(_ id: UUID, to name: String) -> Bool {
+        guard let index = projects.firstIndex(where: { $0.id == id }) else { return false }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolved = trimmed.isEmpty ? URL(fileURLWithPath: projects[index].path).lastPathComponent : trimmed
+        guard projects[index].name != resolved else { return false }
+        projects[index].name = resolved
+        return true
+    }
+
     /// Re-adding a folder restores the same project, including its chat and job identities.
     @discardableResult public mutating func addProject(path: String) -> UUID {
         let canonicalPath = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path

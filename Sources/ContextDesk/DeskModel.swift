@@ -567,6 +567,9 @@ private struct ChatRunState {
         persist()
         if let firstID { selectProject(firstID) }
     }
+    func renameProject(_ id: UUID, to name: String) {
+        if state.renameProject(id, to: name) { persist() }
+    }
     func hideProject(_ id: UUID) async {
         guard state.hideProject(id) else { return }
         if projectID == id {

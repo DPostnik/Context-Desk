@@ -12,6 +12,7 @@ struct ProjectHeader<Content: View>: NSViewRepresentable {
     let moveUp: (() -> Void)?
     let moveDown: (() -> Void)?
     var remove: (() -> Void)? = nil
+    var rename: (() -> Void)? = nil
     @ViewBuilder var content: Content
 
     func makeNSView(context: Context) -> ProjectHeaderView {
@@ -39,6 +40,7 @@ struct ProjectHeader<Content: View>: NSViewRepresentable {
         view.moveUp = moveUp
         view.moveDown = moveDown
         view.remove = remove
+        view.rename = rename
         view.setAccessibilityElement(true)
         view.setAccessibilityRole(.button)
         view.setAccessibilityLabel(project.name)
@@ -155,6 +157,7 @@ class SidebarRowView: NSView, NSDraggingSource {
 
 class ProjectHeaderView: SidebarRowView {
     var remove: (() -> Void)?
+    var rename: (() -> Void)?
     static let pasteboardType = NSPasteboard.PasteboardType("com.contextdesk.project-order")
     var projectID = UUID()
     var move: (UUID) -> Bool = { _ in false }
@@ -173,6 +176,9 @@ class ProjectHeaderView: SidebarRowView {
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = NSMenu()
         menu.autoenablesItems = false
+        let renameItem = menu.addItem(withTitle: L10n.text("Переименовать…", "Rename…"), action: #selector(performRename), keyEquivalent: "")
+        renameItem.target = self; renameItem.isEnabled = rename != nil
+        menu.addItem(.separator())
         let up = menu.addItem(withTitle: L10n.text("Переместить выше", "Move up"), action: #selector(performMoveUp), keyEquivalent: "")
         up.target = self; up.isEnabled = moveUp != nil
         let down = menu.addItem(withTitle: L10n.text("Переместить ниже", "Move down"), action: #selector(performMoveDown), keyEquivalent: "")
@@ -186,4 +192,5 @@ class ProjectHeaderView: SidebarRowView {
     @objc private func performMoveUp() { moveUp?() }
     @objc private func performMoveDown() { moveDown?() }
     @objc private func performRemove() { remove?() }
+    @objc private func performRename() { rename?() }
 }
